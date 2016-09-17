@@ -198,3 +198,5 @@ wchar_t *ascii_to_unicode_dup(char *str);
 int is_stack_pivoted(void);
 
 LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
+
+PVOID get_process_image_base(HANDLE process_handle);

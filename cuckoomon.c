@@ -348,9 +348,8 @@ static hook_t g_hooks[] = {
     // Misc Hooks
     //
 
-	//HOOK(ntdll, memcpy),
-	HOOK(msvcrt, memcpy),
-    HOOK(msvcrt, srand),
+	//HOOK(msvcrt, memcpy),
+	//HOOK(ntdll, memcpy),  
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -923,7 +922,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
-        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif

@@ -1794,3 +1794,40 @@ unsigned int address_is_in_stack(DWORD Address)
 	}
 #endif
 }
+
+PVOID get_process_image_base(HANDLE process_handle)
+{
+	PROCESS_BASIC_INFORMATION pbi;
+	ULONG ulSize;
+	HANDLE dup_handle = process_handle;
+	PVOID pPEB = 0, ImageBase = 0;
+	PEB Peb;
+    SIZE_T dwBytesRead;
+	lasterror_t lasterror;
+
+	get_lasterrors(&lasterror);
+
+	if (process_handle == GetCurrentProcess())
+    {
+		ImageBase = GetModuleHandle(NULL);
+        goto out;
+	}
+
+	memset(&pbi, 0, sizeof(pbi));
+	
+    if(pNtQueryInformationProcess(process_handle, 0, &pbi, sizeof(pbi), &ulSize) >= 0 && ulSize == sizeof(pbi))
+    {
+        pPEB = pbi.PebBaseAddress;
+        
+        if (ReadProcessMemory(process_handle, pPEB, &Peb, sizeof(Peb), &dwBytesRead))
+        {
+            ImageBase = Peb.ImageBaseAddress;
+        }
+        else return NULL;
+    }
+    
+out:
+	set_lasterrors(&lasterror);
+
+	return ImageBase;
+}

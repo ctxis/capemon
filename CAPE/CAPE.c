@@ -37,6 +37,7 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void CapeOutputFile(LPCTSTR lpOutputFile);
 extern int ScyllaDumpCurrentProcess(DWORD NewOEP);
 extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
+extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
 extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP);
 
 static HMODULE s_hInst = NULL;
@@ -54,7 +55,7 @@ void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned in
 	
 	for (i=0; i<Count; i++)
 	{
-		sprintf_s((TextBuffer+2*i), Count, "%2.2x", (unsigned int)*(HexBuffer+i));	
+		sprintf_s((TextBuffer+2*i), Count, "%2.2x", (int)*(HexBuffer+i));	
 	}
 	
 	return;
@@ -69,51 +70,51 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
 	
 	if (!GetFileSizeEx(hFile, &LargeFileSize))
 	{
-		DoOutputErrorString("Cannot get file size");
+		DoOutputErrorString(TEXT("Cannot get file size"));
 		return FALSE;
 	}
 
     if (LargeFileSize.HighPart || LargeFileSize.LowPart > SIZE_OF_LARGEST_IMAGE)
 	{
-		DoOutputDebugString("MapFile: File too big");
+		DoOutputDebugString(TEXT("MapFile: File too big"));
 		return FALSE;
 	}
 
 	*FileSize = LargeFileSize.LowPart;
 	
-    DoOutputDebugString("File size: 0x%x", *FileSize);
+    DoOutputDebugString(TEXT("File size: 0x%x"), *FileSize);
 	
 	*Buffer = malloc(*FileSize);
 	
     if (SetFilePointer(hFile, 0, 0, FILE_BEGIN))
     {
- 		DoOutputErrorString("MapFile: Failed to set file pointer");
+ 		DoOutputErrorString(TEXT("MapFile: Failed to set file pointer"));
 		return FALSE;   
     }
     
 	if (*Buffer == NULL)
 	{
-		DoOutputErrorString("MapFile: Memory allocation error in MapFile");
+		DoOutputErrorString(TEXT("MapFile: Memory allocation error in MapFile"));
 		return FALSE;
 	}
 	
 	if (FALSE == ReadFile(hFile, (LPVOID)*Buffer, *FileSize, &dwBytesRead, NULL))
 	{
-		DoOutputErrorString("ReadFile error");
+		DoOutputErrorString(TEXT("ReadFile error"));
         free(Buffer);
 		return FALSE;
 	}
 
     if (dwBytesRead > 0 && dwBytesRead < *FileSize)
     {
-        DoOutputErrorString("MapFile: Unexpected size read in.");
+        DoOutputErrorString(TEXT("MapFile: Unexpected size read in."));
         free(Buffer);
 		return FALSE;
 
     }
     else if (dwBytesRead == 0)
     {
-        DoOutputErrorString("MapFile: No data read from file");
+        DoOutputErrorString(TEXT("MapFile: No data read from file"));
         free(Buffer);
 		return FALSE;
     }
@@ -183,7 +184,7 @@ char* GetHashFromHandle(HANDLE hFile)
 
 	if (!MapFile(hFile, &Buffer, &FileSize))
 	{	
-		DoOutputErrorString("MapFile error - check path!");
+		DoOutputErrorString(TEXT("MapFile error - check path!"));
 		return 0;
 	}
     
@@ -191,7 +192,7 @@ char* GetHashFromHandle(HANDLE hFile)
 
     if (OutputFilenameBuffer == NULL)
     {
-		DoOutputErrorString("Error allocating memory for hash string.");
+		DoOutputErrorString(TEXT("Error allocating memory for hash string."));
 		return 0;    
     }
     
@@ -494,7 +495,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
     if (OutputFilename == NULL || FullPathName == NULL)
     {
-		DoOutputErrorString("DumpMemory: Error allocating memory for strings");
+		DoOutputErrorString(TEXT("DumpMemory: Error allocating memory for strings"));
 		return 0;    
     }
     
@@ -511,7 +512,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
 	{
-		DoOutputDebugString("Error, CAPE destination path too long.");
+		DoOutputDebugString(TEXT("Error, CAPE destination path too long."));
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
@@ -522,7 +523,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		DoOutputDebugString("Error creating output directory");
+		DoOutputDebugString(TEXT("Error creating output directory"));
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
@@ -533,24 +534,24 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     
 	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
-	DoOutputDebugString("CreateFile returned: 0x%x", hOutputFile);
+	DoOutputDebugString(TEXT("CreateFile returned: 0x%x"), hOutputFile);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 	{
-		DoOutputDebugString("CAPE output filename exists already: %s", FullPathName);
+		DoOutputDebugString(TEXT("CAPE output filename exists already: %s"), FullPathName);
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
-	DoOutputDebugString("Passed file_exists check");
+	DoOutputDebugString(TEXT("Passed file_exists check"));
 	
 	if (hOutputFile == INVALID_HANDLE_VALUE)
 	{
-		DoOutputErrorString("Could not create CAPE output file");
+		DoOutputErrorString(TEXT("Could not create CAPE output file"));
         free(OutputFilename); free(FullPathName);
 		return 0;		
 	}	
-	DoOutputDebugString("Passed invalid_handle check");
+	DoOutputDebugString(TEXT("Passed invalid_handle check"));
 	
 	dwBytesWritten = 0;
     
@@ -558,12 +559,12 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (FALSE == WriteFile(hOutputFile, Buffer, Size, &dwBytesWritten, NULL))
 	{
-		DoOutputDebugString("WriteFile error on CAPE output file");
+		DoOutputDebugString(TEXT("WriteFile error on CAPE output file"));
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
-	DoOutputDebugString("CAPE output filename: %s", FullPathName);
+	DoOutputDebugString(TEXT("CAPE output filename: %s"), FullPathName);
 
 	CloseHandle(hOutputFile);
     
@@ -592,6 +593,7 @@ int DumpCurrentProcessNewEP(DWORD NewEP)
 //**************************************************************************************
 {
 	if (ScyllaDumpCurrentProcess(NewEP))
+
 	{
 		return 1;
 	}
@@ -617,7 +619,7 @@ int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase)
 {
 	if (ScyllaDumpProcess(hProcess, ImageBase, 0))
 	{
-		return 1;
+        return 1;
 	}
 
 	return 0;
@@ -638,12 +640,11 @@ int DumpPE(LPCVOID Buffer)
 void init_CAPE()
 {
     // Initialise CAPE global variables
-    //
     
-#ifndef _WIN64	 
-    // Start the debugger thread if required
-    //launch_debugger();
-#endif
+    RunPE_Handle = NULL;
+    RunPE_ImageBase = 0;
+    RunPE_EntryPoint = (DWORD_PTR)NULL;
+    RunPE_ProcessWriteDetected = FALSE;
     
     return;
 }

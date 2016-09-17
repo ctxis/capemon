@@ -47,7 +47,7 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v140_xp</PlatformToolset>
-    <CharacterSet>NotSet</CharacterSet>
+    <CharacterSet>MultiByte</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
@@ -78,15 +78,14 @@
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>CAPE</TargetName>
+    <TargetName>CAPE_Injection</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>CAPE_x64</TargetName>
-    <TargetExt>.dll</TargetExt>
+    <TargetName>CAPE_Injection_x64</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
