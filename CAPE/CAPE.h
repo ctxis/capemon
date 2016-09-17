@@ -8,6 +8,9 @@ extern int DumpPE(LPCVOID Buffer);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
 unsigned int DumpSize;
 
+BOOL PLUGX_DETECTED;
+unsigned int memcpy_count;
+
 //
 // MessageId: STATUS_SUCCESS
 //
@@ -34,3 +37,7 @@ unsigned int DumpSize;
 
 #define	DATA				0
 #define	EXECUTABLE			1
+#define	DLL			        2
+
+#define PLUGX_SIGNATURE		0x5658	// 'XV'
+#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer

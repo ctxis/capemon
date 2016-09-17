@@ -26,6 +26,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "config.h"
 #include "ignore.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int DumpPE(LPCVOID Buffer);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -554,13 +560,83 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	__in ULONG CompressedBufferSize,
 	__out PULONG FinalUncompressedSize
 ) {
+	long e_lfanew;
+    PBYTE PEImage;
+    PIMAGE_NT_HEADERS pNtHeader;
+
 	NTSTATUS ret = Old_RtlDecompressBuffer(CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
 		CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
 
+    if ((ret == STATUS_SUCCESS || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0))
+	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
+	{
+		// Check if we have a 'PlugX' sig where they overwrite DOS and PE headers with XV
+		if (*(WORD*)UncompressedBuffer == PLUGX_SIGNATURE)
+		{
+            PLUGX_DETECTED = TRUE;
+			DoOutputDebugString("PlugX payload detected.");
+			
+			e_lfanew = *(long*)(UncompressedBuffer+0x3c);
+		
+			if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+			{
+				// This check is possibly not appropriate here
+				// As long as we've got what's been compressed
+			}
+				
+			if (*(DWORD*)(UncompressedBuffer+e_lfanew) == PLUGX_SIGNATURE)
+			{
+                // We want to dump the file out with fixed PE header (for e.g. disassembly etc)
+				
+                PEImage = (BYTE*)malloc(UncompressedBufferSize);
+                memcpy(PEImage, UncompressedBuffer, UncompressedBufferSize);
+
+                *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                *(DWORD*)(PEImage+e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                DumpPE(PEImage);
+                
+                free(PEImage);
+
+                if (ret == STATUS_SUCCESS)
+                    DoOutputDebugString("Dumped PlugX payload.");
+				else
+                    DoOutputDebugString("Dumped PlugX payload with BAD COMPRESSION BUFFER - maybe incomplete/bloated.");
+			}
+			else
+			{
+                DoOutputDebugString("PlugX signature detected at MZ but not PE - dumping anyway.");
+                DumpMemory(UncompressedBuffer, UncompressedBufferSize);
+			}
+		}
+		
+		// Check if we have a valid DOS and PE header at the beginning of UncompressedBuffer
+		else if (*(WORD*)UncompressedBuffer == IMAGE_DOS_SIGNATURE)
+		{
+			DoOutputDebugString("Executable binary detected.");
+			
+			e_lfanew = *(long*)(UncompressedBuffer+0x3c);
+		
+			if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+			{
+				// This check is possibly not appropriate here
+				// As long as we've got what's been compressed
+			}
+				
+			if (*(DWORD*)(UncompressedBuffer+e_lfanew) == IMAGE_NT_SIGNATURE)
+			{
+                pNtHeader = (PIMAGE_NT_HEADERS)(UncompressedBuffer+e_lfanew);
+
+                DumpPE(UncompressedBuffer);
+                DoOutputDebugString("Dumped PE module.");
+			}
+		}
+	}
+        
 	LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
 		ret ? 0 : *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", ret ? 0 : *FinalUncompressedSize);
 
-	return ret;
+    return ret;
 }
 
 HOOKDEF(NTSTATUS, WINAPI, RtlCompressBuffer,
@@ -1030,6 +1106,43 @@ HOOKDEF(void, WINAPIV, memcpy,
 	Old_memcpy(dest, src, count);
 	
 	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+    
+	if (PLUGX_DETECTED)
+		memcpy_count++;
+	
+    //DoOutputDebugString("memcpy hook executed, memcpy_count = %d, count = %d", memcpy_count, count);
+	
+	if (PLUGX_DETECTED && 
+		count == 0xae4  || 
+		count == 0xbe4  || 
+        count == 0x150c ||
+        count == 0x1510 ||
+        count == 0x1516 ||
+        count == 0x170c ||
+		count == 0x1b18 ||
+        count == 0x1d18 ||
+        count == 0x2540 ||
+        count == 0x254c ||
+		count == 0x2d58 || 
+		count == 0x36a4 ||
+        count == 0x4ea4) 
+        //count > 0xa00 &&              //fuzzy matching
+		//count < 0x5000)               //fuzzy matching
+	{
+		DoOutputDebugString("memcpy detected (#%d, size 0x%d), dumping.", memcpy_count, count);
+		DumpMemory((BYTE*)src, count);
+    }
+	
+	//if (PLUGX_DETECTED && memcpy_count >= memcpy_limit)
+	//{
+	//	// We've lost the flow, so bail
+	//	DoOutputDebugString("Too many memcpys (%d), we have probably missed the config - bailing.", memcpy_count);
+    //
+    //    // Before bailing, allow logging to catch up
+    //    Sleep(1000);
+    //
+	//	ExitProcess(0);
+	//}
 	
 	return;
 }
