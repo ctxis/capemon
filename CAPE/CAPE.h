@@ -8,6 +8,15 @@ extern int DumpPE(LPCVOID Buffer);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
 unsigned int DumpSize;
 
+HANDLE RunPE_Handle;
+DWORD_PTR RunPE_ImageBase;
+
+DWORD_PTR RunPE_EntryPoint;
+BOOL RunPE_ProcessWriteDetected;
+BOOL RunPE_ImageDumped;
+
+HANDLE EvilGrabRegHandle;
+
 //
 // MessageId: STATUS_SUCCESS
 //

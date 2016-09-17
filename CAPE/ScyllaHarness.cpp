@@ -277,11 +277,11 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
         }
         
         //  IAT search - we'll try the simple search first
-        IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)modBase + entrypointRVA, (DWORD_PTR*)&addressIAT, &sizeIAT, FALSE);
+        IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)modBase + entrypointRVA, &addressIAT, &sizeIAT, FALSE);
         
         //  Let's try the advanced search now
         if (IAT_Found == FALSE)
-            IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)modBase + entrypointRVA, (DWORD_PTR*)&addressIAT, &sizeIAT, TRUE);
+            IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)modBase + entrypointRVA, &addressIAT, &sizeIAT, TRUE);
         
         if (addressIAT && sizeIAT)
         {

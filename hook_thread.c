@@ -25,6 +25,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "lookup.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 static lookup_t g_ignored_threads;
 
@@ -246,6 +249,16 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
 	pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
 
 	ret = Old_NtSetContextThread(ThreadHandle, Context);
+    
+    if (RunPE_Handle && RunPE_ImageBase)
+    {
+#ifdef _WIN64
+		RunPE_EntryPoint = Context->Rax - RunPE_ImageBase;
+#else
+		RunPE_EntryPoint = Context->Eax - RunPE_ImageBase;
+#endif
+        DoOutputDebugString("Set RunPE entry point via NtSetContextThread: 0x%x", RunPE_EntryPoint);
+    }
 	if (Context->ContextFlags & CONTEXT_CONTROL)
 #ifdef _WIN64
 		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rip);
@@ -295,6 +308,16 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
 	ENSURE_ULONG(SuspendCount);
 	pipe("RESUME:%d,%d", pid, tid);
 
+    if (RunPE_Handle && RunPE_ImageBase && RunPE_ProcessWriteDetected)
+    {
+        if (RunPE_ImageDumped == FALSE)
+        {
+            DoOutputDebugString("Dumping RunPE process image, handle 0x%x, image base 0x%x.", RunPE_Handle, RunPE_ImageBase);
+            DumpProcess(RunPE_Handle, RunPE_ImageBase);
+            RunPE_ImageDumped = TRUE;
+        }
+    }
+    
     ret = Old_NtResumeThread(ThreadHandle, SuspendCount);
     LOQ_ntstatus("threading", "pI", "ThreadHandle", ThreadHandle, "SuspendCount", SuspendCount);
     return ret;

@@ -22,6 +22,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "misc.h"
 #include "log.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 
 HOOKDEF(LONG, WINAPI, RegOpenKeyExA,
     __in        HKEY hKey,
@@ -107,6 +111,13 @@ HOOKDEF(LONG, WINAPI, RegCreateKeyExA,
 	ret = Old_RegCreateKeyExA(hKey, lpSubKey, Reserved, lpClass,
         dwOptions, samDesired, lpSecurityAttributes, phkResult,
         lpdwDisposition);
+        
+    if ((ret == ERROR_SUCCESS) && strcmp(lpSubKey, "Software\rar"))
+    {
+        EvilGrabRegHandle = hKey;
+        DoOutputDebugString("EvilGrab registry handle set: 0x%x", hKey);
+    }
+        
     LOQ_zero("registry", "psshPeI", "Registry", (DWORD)hKey, "SubKey", lpSubKey, "Class", lpClass,
         "Access", samDesired, "Handle", phkResult, "FullName", (DWORD)hKey, lpSubKey,
 		"Disposition", lpdwDisposition);
@@ -223,9 +234,9 @@ HOOKDEF(LONG, WINAPI, RegEnumValueA,
 			"FullName", (DWORD)hKey, lpValueName);
     }
     else {
-        LOQ_zero("registry", "pisIIe", "Handle", hKey, "Index", dwIndex,
-            "ValueName", ret == ERROR_SUCCESS ? lpValueName : "", "Type", lpType, "DataLength", lpcbData,
-			"FullName", hKey, ret == ERROR_SUCCESS ? lpValueName : "");
+        LOQ_zero("registry", "pisIIe", "Handle", (DWORD)hKey, "Index", dwIndex,
+            "ValueName", lpValueName, "Type", lpType, "DataLength", lpcbData,
+			"FullName", (DWORD)hKey, lpValueName);
     }
     return ret;
 }
@@ -251,9 +262,9 @@ HOOKDEF(LONG, WINAPI, RegEnumValueW,
 			"FullName", (DWORD)hKey, lpValueName);
     }
     else {
-        LOQ_zero("registry", "piuIIE", "Handle", hKey, "Index", dwIndex,
-            "ValueName", ret == ERROR_SUCCESS ? lpValueName : L"", "Type", lpType, "DataLength", lpcbData,
-			"FullName", hKey, ret == ERROR_SUCCESS ? lpValueName : L"");
+        LOQ_zero("registry", "piuIIE", "Handle", (DWORD)hKey, "Index", dwIndex,
+            "ValueName", lpValueName, "Type", lpType, "DataLength", lpcbData,
+			"FullName", (DWORD)hKey, lpValueName);
     }
     return ret;
 }
@@ -272,6 +283,18 @@ HOOKDEF(LONG, WINAPI, RegSetValueExA,
         LOQ_zero("registry", "psiriv", "Handle", (DWORD)hKey, "ValueName", lpValueName, "Type", dwType,
 			"Buffer", dwType, cbData, lpData, "BufferLength", cbData,
 			"FullName", (DWORD)hKey, lpValueName);
+            
+    if (hKey = EvilGrabRegHandle)
+    {
+        if (cbData > 0x1000)
+        {
+            if (DumpXorPE((LPBYTE)lpData, cbData) == 0)
+                DumpMemory(lpData, cbData);
+        }
+        else if (cbData > 0x10)
+            DumpMemory(lpData, cbData);
+    }
+    
     }
     else {
         LOQ_zero("registry", "psiv", "Handle", (DWORD)hKey, "ValueName", lpValueName, "Type", dwType,

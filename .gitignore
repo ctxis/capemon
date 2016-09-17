@@ -14,5 +14,3 @@ bson/Release
 objects
 Release
 tests/logging-test.*
-*.suo
-*.opendb

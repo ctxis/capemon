@@ -24,6 +24,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "misc.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in_opt    PWCHAR PathToFile,
@@ -153,7 +156,14 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
         if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
             ResumeThread(lpProcessInformation->hThread);
         }
-
+        else if (!called_by_hook()){
+            RunPE_Handle = lpProcessInformation->hProcess;
+            RunPE_ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
+            RunPE_EntryPoint = (DWORD)NULL;
+            RunPE_ImageDumped = FALSE;
+            DoOutputDebugString("RunPE process handle set: 0x%x, ImageBase: 0x%x", RunPE_Handle, RunPE_ImageBase);
+        }
+        
         disable_sleep_skip();
     }
 	

@@ -27,8 +27,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
 
-extern int DumpCurrentProcessFixImports(DWORD NewEP);
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -296,6 +298,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess,
         ObjectAttributes, ClientId);
+        
+    if (NT_SUCCESS(ret) && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
+        RunPE_Handle = ProcessHandle;
+        RunPE_ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
+        RunPE_EntryPoint = (DWORD)NULL;
+        RunPE_ImageDumped = FALSE;
+        DoOutputDebugString("NtOpenProcess: Open process handle set: 0x%x, ImageBase: 0x%x, DesiredAccess: 0x%x", RunPE_Handle, RunPE_ImageBase, DesiredAccess);
+    }    
+        
     LOQ_ntstatus("process", "Phi", "ProcessHandle", ProcessHandle,
         "DesiredAccess", DesiredAccess,
         "ProcessIdentifier", pid);
@@ -310,6 +321,16 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
 
+    if (RunPE_Handle && RunPE_ImageBase && RunPE_ProcessWriteDetected)
+    {
+        if (RunPE_ImageDumped == FALSE)
+        {
+            DoOutputDebugString("Dumping RunPE process image, handle 0x%x, image base 0x%x.", RunPE_Handle, RunPE_ImageBase);
+            DumpProcess(RunPE_Handle, RunPE_ImageBase);
+            RunPE_ImageDumped = TRUE;
+        }
+    }
+    
 	ret = Old_NtResumeProcess(ProcessHandle);
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
 	return ret;
@@ -331,12 +352,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-        DumpCurrentProcessFixImports(0);
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-        DumpCurrentProcessFixImports(0);
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
@@ -453,6 +472,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
+    
+    if (RunPE_Handle && (ProcessHandle == RunPE_Handle))
+    {
+        RunPE_ProcessWriteDetected = TRUE;
+    }
 
 	if ((pid != GetCurrentProcessId()) || Win32Protect != PAGE_READWRITE)
 		LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
@@ -516,7 +540,8 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     _In_    SIZE_T nSize,
     _Out_   PSIZE_T lpNumberOfBytesRead
 ) {
-	BOOL ret;
+    //long e_lfanew;
+    BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
     ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
@@ -539,10 +564,43 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 ) {
 	NTSTATUS ret;
 	DWORD pid;
+    long e_lfanew;
     ENSURE_SIZET(NumberOfBytesWritten);
 
     ret = Old_NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buffer,
         NumberOfBytesToWrite, NumberOfBytesWritten);
+
+    if (NT_SUCCESS(ret) && *NumberOfBytesWritten > 0)
+    {
+        // Check if we have a valid DOS and PE header at the beginning of Buffer
+        if (*(WORD*)Buffer == IMAGE_DOS_SIGNATURE)
+        {
+            DoOutputDebugString("Executable binary detected in NtWriteVirtualMemory buffer.");
+            
+            e_lfanew = *(long*)((unsigned char*)Buffer+0x3c);
+        
+            if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+            {
+                // This check is possibly not appropriate here
+                // As long as we've got what's been compressed
+            }
+                
+            if (*(DWORD*)((unsigned char*)Buffer+e_lfanew) == IMAGE_NT_SIGNATURE)
+            {
+                RunPE_ImageBase = (DWORD_PTR)BaseAddress;
+                DoOutputDebugString("RunPE ImageBase reset to: 0x%x (process handle: 0x%x)", RunPE_ImageBase, RunPE_Handle);
+
+                DoOutputDebugString("About to attempt to dump PE from memory.");
+                if (DumpPE(Buffer))
+                    RunPE_ImageDumped = TRUE;
+            }
+        }
+    }        
+        
+    if (RunPE_Handle && (ProcessHandle == RunPE_Handle))
+    {
+        RunPE_ProcessWriteDetected = TRUE;
+    }
 
 	pid = pid_from_process_handle(ProcessHandle);
 
@@ -556,7 +614,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 		}
 	}
 
-
 	return ret;
 }
 
@@ -569,12 +626,55 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 ) {
 	BOOL ret;
 	DWORD pid;
+	long e_lfanew;
     ENSURE_SIZET(lpNumberOfBytesWritten);
 
     ret = Old_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer,
         nSize, lpNumberOfBytesWritten);
 
-	pid = pid_from_process_handle(hProcess);
+    if (hProcess == RunPE_Handle && ret != 0 && *lpNumberOfBytesWritten > 0)
+    {
+        // Check if we have a valid DOS and PE header at the beginning of lpBuffer
+        if (*(WORD*)lpBuffer == IMAGE_DOS_SIGNATURE)
+        {
+            DoOutputDebugString("Executable binary detected in WriteProcessMemory buffer.");
+            
+            e_lfanew = *(long*)((unsigned char*)lpBuffer+0x3c);
+        
+            if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+            {
+                // This check is possibly not appropriate here
+                // As long as we've got what's been compressed
+            }
+                
+            if (*(DWORD*)((unsigned char*)lpBuffer+e_lfanew) == IMAGE_NT_SIGNATURE)
+            {
+                RunPE_ImageBase = (DWORD_PTR)lpBaseAddress;
+                DoOutputDebugString("RunPE ImageBase reset to: 0x%x (process handle: 0x%x)", RunPE_ImageBase, RunPE_Handle);
+
+                DoOutputDebugString("About to attempt to dump PE from memory.");
+                if (DumpPE(lpBuffer))
+                    RunPE_ImageDumped = TRUE;
+            }
+        }
+        else
+        {   
+            if (RunPE_Handle && (hProcess == RunPE_Handle))
+            {
+                RunPE_ProcessWriteDetected = TRUE;
+            }
+            //else if (*lpNumberOfBytesWritten > 0x10)
+            //{
+            //    // dump injected code to .bin file
+            //    if (DumpMemory(lpBuffer, nSize))
+            //        DoOutputDebugString("Dumped remotely injected code from memory.");
+            //    else
+            //        DoOutputDebugString("Failed to dump remotely injected code from memory.");
+            //}
+        }
+    }        
+    
+    pid = pid_from_process_handle(hProcess);
 
 	if (pid != GetCurrentProcessId()) {
 		LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
