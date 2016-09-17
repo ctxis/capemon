@@ -28,7 +28,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "unhook.h"
 #include "config.h"
 
-extern int DumpCurrentProcessFixImports(DWORD NewEP);
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -331,12 +332,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-        DumpCurrentProcessFixImports(0);
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-        DumpCurrentProcessFixImports(0);
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
@@ -480,6 +479,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
+	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && ProcessHandle == GetCurrentProcess())) {
+        DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x\n", *BaseAddress, *RegionSize);
+        SetInitialBreakpoint(*BaseAddress, *RegionSize);
+    }
+    
 	if (ret != STATUS_CONFLICTING_ADDRESSES && (Protect != PAGE_READWRITE || GetCurrentProcessId() != our_getprocessid(ProcessHandle))) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
@@ -663,6 +667,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	if (OldAccessProtection && *OldAccessProtection == NewAccessProtection)
 		return ret;
 
+	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE_READWRITE) && ProcessHandle == GetCurrentProcess())) {
+        DoOutputDebugString("NtProtectVirtualMemory hook, BaseAddress:0x%x, NumberOfBytesToProtect: 0x%x\n", *BaseAddress, *NumberOfBytesToProtect);
+        //SetInitialBreakpoint(*BaseAddress, *NumberOfBytesToProtect);
+    }
+    
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (NT_SUCCESS(ret)) {
 		lasterror_t lasterrors;
@@ -710,6 +719,11 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 	if (lpflOldProtect && *lpflOldProtect == flNewProtect)
 		return ret;
 
+	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE_READWRITE) && hProcess == GetCurrentProcess())) {
+        DoOutputDebugString("VirtualProtectEx hook, lpAddress:0x%x, dwSize: 0x%x\n", lpAddress, dwSize);
+        //SetInitialBreakpoint(lpAddress, dwSize);
+    }
+    
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
 		lasterror_t lasterrors;

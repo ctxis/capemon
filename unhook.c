@@ -28,8 +28,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNHOOK_MAXCOUNT 2048
 #define UNHOOK_BUFSIZE 32
 
-extern int DumpCurrentProcessFixImports(DWORD NewEP);
-
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
 
 // Index for adding new hooks and iterating all existing hooks.
@@ -249,11 +247,10 @@ static HANDLE g_terminate_event_handle;
 
 static DWORD WINAPI _terminate_event_thread(LPVOID param)
 {
-    hook_disable();
+	hook_disable();
 
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
-        DumpCurrentProcessFixImports(0);
 		log_flush();
 	}
 

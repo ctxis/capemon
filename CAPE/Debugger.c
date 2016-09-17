@@ -31,6 +31,9 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define FL_TF           0x00000100      // Trap flag
 #define FL_RF           0x00010000      // Resume flag
 
+#ifdef STANDALONE
+extern BOOL SetNtAllocateVirtualMemoryBP(void);
+#endif
 //
 // debug register DR7 bit fields
 //
@@ -76,6 +79,7 @@ DWORD WINAPI PipeThread(LPVOID lpParam);
 DWORD RemoteFuncAddress;
 HANDLE hParentPipe;
 
+extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
 extern BOOL WoW64PatchBreakpoint(unsigned int Register);
@@ -1198,6 +1202,12 @@ __declspec (naked dllexport) void DebuggerInit(void)
 	
 // Target specific code
 
+// No need for anything here,  
+// as we are setting initial bp in 
+// NtAllocateVirtualMemory hook
+#ifdef STANDALONE
+    SetNtAllocateVirtualMemoryBP();
+#endif
 // End of target specific code
 
 	DoOutputDebugString("Debugger initialised, about to execute OEP.\n");

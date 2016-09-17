@@ -286,7 +286,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary.");
                     return FALSE;
                 }
                 
@@ -307,6 +307,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 			}
 		}
 	}
+	
 #ifndef _WIN64
 	for (i=0; i<=0xffff; i++)
 	{
@@ -357,7 +358,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary.");
                     return FALSE;
                 }
                 
@@ -401,7 +402,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary.");
                         return FALSE;
                     }
                     
@@ -457,7 +458,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary.");
                         return FALSE;
                     }
                     
@@ -474,6 +475,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 			}
 		}
 	}
+
 #endif
     // We free can free DecryptedBuffer as it's no longer needed
     free(DecryptedBuffer);
@@ -638,11 +640,9 @@ int DumpPE(LPCVOID Buffer)
 void init_CAPE()
 {
     // Initialise CAPE global variables
-    //
-    
 #ifndef _WIN64	 
-    // Start the debugger thread if required
-    //launch_debugger();
+    // Start the debugger thread
+     launch_debugger();
 #endif
     
     return;

@@ -276,6 +276,9 @@
     <ClCompile Include="CAPE\Scylla\SystemInformation.cpp">
       <Filter>Source Files\CAPE\Scylla</Filter>
     </ClCompile>
+    <ClCompile Include="CAPE\CAPE_Extraction.c">
+      <Filter>Source Files\CAPE</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config.h">
@@ -407,5 +410,8 @@
     <ClInclude Include="CAPE\Scylla\Thunks.h">
       <Filter>Header Files\CAPE\Scylla</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

@@ -5,6 +5,8 @@
 #define BP_RESERVED    0x02
 #define BP_READWRITE   0x03
 
+DWORD Injection_ProcessId;
+
 typedef struct BreakpointInfo 
 {
 	HANDLE	ThreadHandle;
@@ -30,6 +32,7 @@ typedef BOOL (cdecl *SINGLE_STEP_HANDLER)(struct _EXCEPTION_POINTERS*);
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 
 BOOL SetHardwareBreakpoint
 (

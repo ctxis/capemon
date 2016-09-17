@@ -1001,6 +1001,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
         // initialize the log file
         log_init(CUCKOODBG);
 
+        // initialise CAPE
+        init_CAPE();
+
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
 
@@ -1029,9 +1032,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		// initialize context watchdog
 		//init_watchdog();
-
-        // initialise CAPE
-        init_CAPE();
 
 #ifndef _WIN64
 		if (!g_config.no_stealth) {
