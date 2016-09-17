@@ -255,6 +255,9 @@
     <ClCompile Include="CAPE\WoW64_fix.cpp">
       <Filter>Source Files\CAPE</Filter>
     </ClCompile>
+    <ClCompile Include="CAPE\CAPE_UPX.c">
+      <Filter>Source Files\CAPE</Filter>
+    </ClCompile>
     <ClCompile Include="CAPE\Scylla\ApiReader.cpp">
       <Filter>Source Files\CAPE\Scylla</Filter>
     </ClCompile>

@@ -76,6 +76,7 @@ DWORD WINAPI PipeThread(LPVOID lpParam);
 DWORD RemoteFuncAddress;
 HANDLE hParentPipe;
 
+extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
 extern BOOL WoW64PatchBreakpoint(unsigned int Register);
@@ -1197,6 +1198,14 @@ __declspec (naked dllexport) void DebuggerInit(void)
 	InitialiseDebugger();
 	
 // Target specific code
+
+// StackWriteCallback implemented in CAPE_UPX.c   
+    if (SetHardwareBreakpoint(MainThreadId, 3, 1, (BYTE*)StackPointer, BP_WRITE, StackWriteCallback))
+	{
+		DoOutputDebugString("SetHardwareBreakpoint (3) returned successfully!\n");
+    }
+	else	
+		DoOutputDebugString("SetHardwareBreakpoint (3) failed\n");	
 
 // End of target specific code
 
