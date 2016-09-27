@@ -479,7 +479,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && ProcessHandle == GetCurrentProcess())) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(ProcessHandle))) {
         DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x\n", *BaseAddress, *RegionSize);
         SetInitialBreakpoint(*BaseAddress, *RegionSize);
     }
@@ -667,7 +667,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	if (OldAccessProtection && *OldAccessProtection == NewAccessProtection)
 		return ret;
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE_READWRITE) && ProcessHandle == GetCurrentProcess())) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(ProcessHandle))) {
         DoOutputDebugString("NtProtectVirtualMemory hook, BaseAddress:0x%x, NumberOfBytesToProtect: 0x%x\n", *BaseAddress, *NumberOfBytesToProtect);
         //SetInitialBreakpoint(*BaseAddress, *NumberOfBytesToProtect);
     }
@@ -719,7 +719,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 	if (lpflOldProtect && *lpflOldProtect == flNewProtect)
 		return ret;
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE_READWRITE) && hProcess == GetCurrentProcess())) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(hProcess))) {
         DoOutputDebugString("VirtualProtectEx hook, lpAddress:0x%x, dwSize: 0x%x\n", lpAddress, dwSize);
         //SetInitialBreakpoint(lpAddress, dwSize);
     }

@@ -249,8 +249,8 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
 
 BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-    long e_lfanew;
-
+    PIMAGE_DOS_HEADER pDosHeader;
+    
 	if (pBreakpointInfo == NULL)
 	{
 		DoOutputDebugString("BaseAddressWriteCallback executed with pBreakpointInfo NULL.\n");
@@ -265,14 +265,13 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
 
 	DoOutputDebugString("BaseAddressWriteCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
     
-	ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
-    
     if (*(WORD*)pBreakpointInfo->Address == IMAGE_DOS_SIGNATURE)
     {
         DoOutputDebugString("BaseAddressWriteCallback: MZ header found.\n");
-        e_lfanew = *(long*)((unsigned char*)pBreakpointInfo->Address+0x3c);
-        
-        if (e_lfanew && (*(DWORD*)((unsigned char*)pBreakpointInfo->Address+e_lfanew) == IMAGE_NT_SIGNATURE))
+    
+        pDosHeader = (PIMAGE_DOS_HEADER)pBreakpointInfo->Address;
+
+        if (pDosHeader->e_lfanew && (*(DWORD*)((unsigned char*)pBreakpointInfo->Address + pDosHeader->e_lfanew) == IMAGE_NT_SIGNATURE))
         {
             //DoOutputDebugString("BaseAddressWriteCallback: PE header found.\n");
             
@@ -287,9 +286,9 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             }
         }
         //e_lfanew is a long, therefore dword in size
-        else if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 4, (BYTE*)pBreakpointInfo->Address+0x3c, BP_WRITE, PEPointerWriteCallback))
+        else if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 4, (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
         {
-            DoOutputDebugString("BaseAddressWriteCallback: set write bp (1) on e_lfanew write location: 0x%x\n", (BYTE*)pBreakpointInfo->Address+0x3c);
+            DoOutputDebugString("BaseAddressWriteCallback: set write bp (1) on e_lfanew write location: 0x%x\n", (BYTE*)&pDosHeader->e_lfanew);
         }
         else
         {
@@ -310,6 +309,8 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             return FALSE;
         }
     }
+   
+	ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
     
 	DoOutputDebugString("BaseAddressWriteCallback executed successfully.\n");
 
@@ -327,13 +328,19 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
     
     DoOutputDebugString("SetInitialBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
     
+    if (AllocationSize == NULL || AllocationBase == NULL || ThreadId == NULL)
+    {
+        DoOutputDebugString("SetInitialBreakpoint: Error, one of the following is NULL: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
+        return FALSE;
+    }
+    
     if (SetHardwareBreakpoint(ThreadId, 0, 2, (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
     {
-        DoOutputDebugString("Breakpoint (0) set write on word at base address: 0x%x\n", AllocationBase);
+        DoOutputDebugString("SetInitialBreakpoint: Breakpoint (0) set write on word at base address: 0x%x\n", AllocationBase);
     }
     else
 	{
-        DoOutputDebugString("SetHardwareBreakpoint (0) failed\n");
+        DoOutputDebugString("SetInitialBreakpoint: SetHardwareBreakpoint (0) failed\n");
         return FALSE;
 	}
     
