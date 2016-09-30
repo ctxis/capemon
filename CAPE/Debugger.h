@@ -6,6 +6,7 @@
 #define BP_READWRITE   0x03
 
 DWORD Injection_ProcessId;
+DWORD RemoteFuncAddress;
 
 typedef struct BreakpointInfo 
 {
@@ -46,7 +47,7 @@ BOOL SetHardwareBreakpoint
 
 BOOL ClearHardwareBreakpoint(DWORD ThreadId, int Register);
 
-BOOL SetExceptionHardwareBreakpoint
+BOOL ContextSetHardwareBreakpoint
 (
     PCONTEXT	Context,
     int			Register,
@@ -56,7 +57,12 @@ BOOL SetExceptionHardwareBreakpoint
 	PVOID		Callback
 );
 
-BOOL ClearExceptionHardwareBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
+BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register);
+BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register);
+BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+BOOL SetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+BOOL ContextClearHardwareBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
 BOOL ClearAllDebugRegisters(HANDLE hThread);

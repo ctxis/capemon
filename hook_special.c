@@ -142,10 +142,14 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
     if(ret != FALSE) {
-        if (DEBUGGER_ENABLED)
-        {
+        if (DEBUGGER_ENABLED) {
             DebugNewProcess(lpProcessInformation->dwProcessId, lpProcessInformation->dwThreadId, dwCreationFlags);
-            Injection_ProcessId = lpProcessInformation->dwProcessId;
+            if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
+                ResumeThread(lpProcessInformation->hThread);
+            }
+            else {
+                Injection_ProcessId = lpProcessInformation->dwProcessId;
+            }
         }
         else {
             BOOL dont_monitor = FALSE;

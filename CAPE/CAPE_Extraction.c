@@ -56,7 +56,7 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     if (DumpPE(AllocationBase))
     {
         DoOutputDebugString("EntryPointExecCallback: successfully dumped module.\n");
-        ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     }
     else
     {
@@ -85,14 +85,14 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
 
 	DoOutputDebugString("EntryPointWriteCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
-    if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 1, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
+    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
     {
-        DoOutputDebugString("EntryPointWriteCallback: set exec bp (1) on EntryPoint 0x%x.\n", (DWORD)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
-        ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+        DoOutputDebugString("EntryPointWriteCallback: Execution bp set on EntryPoint 0x%x.\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
     }
     else
     {
-        DoOutputDebugString("SetExceptionHardwareBreakpoint (1) failed\n");
+        DoOutputDebugString("EntryPointWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
         return FALSE;
     }
 	
@@ -123,33 +123,38 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
     
     if (*(DWORD*)pNtHeader == IMAGE_NT_SIGNATURE)
     {
-        if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 0, 4, (BYTE*)&(pNtHeader->OptionalHeader.AddressOfEntryPoint), BP_WRITE, EntryPointWriteCallback))
+        if (pNtHeader->OptionalHeader.AddressOfEntryPoint && pNtHeader->OptionalHeader.AddressOfEntryPoint < AllocationSize)
         {
-            DoOutputDebugString("PEHeaderWriteCallback: set write bp (0) on AddressOfEntryPoint location.\n");
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
+            {
+                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x.\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint);
+            }
+            else
+            {
+                DoOutputDebugString("PEHeaderWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+                ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+                return FALSE;
+            }            
         }
         else
         {
-            DoOutputDebugString("SetExceptionHardwareBreakpoint (0) failed\n");
-            return FALSE;
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 4, (BYTE*)&(pNtHeader->OptionalHeader.AddressOfEntryPoint), BP_WRITE, EntryPointWriteCallback))
+            {
+                DoOutputDebugString("PEHeaderWriteCallback: set write bp on AddressOfEntryPoint location.\n");
+            }   
+            else
+            {
+                DoOutputDebugString("PEHeaderWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+                ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+                return FALSE;
+            }
         }
-        
-        if (pNtHeader->OptionalHeader.AddressOfEntryPoint && SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 3, 1, (BYTE*)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
-        {
-            DoOutputDebugString("PEHeaderWriteCallback: set exec bp (3) on EntryPoint 0x%x.\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint);
-        }
-        else
-        {
-            DoOutputDebugString("SetExceptionHardwareBreakpoint (3) failed\n");
-            return FALSE;
-        }
-        
     }
     else
     {
         DoOutputDebugString("PEHeaderWriteCallback: PE header has: 0x%x.\n", *(DWORD*)pNtHeader);
     }    
 	
-    ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     
     DoOutputDebugString("PEHeaderWriteCallback executed successfully.\n");
 	
@@ -189,7 +194,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     {
         if (DumpPE(pBreakpointInfo->Address))
         {
-            ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+            ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
             DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
             return TRUE;
         }
@@ -199,14 +204,13 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         }
     }
     
-    if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 2, 4, (BYTE*)AllocationBase+e_lfanew, BP_WRITE, PEHeaderWriteCallback))
+    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 4, (BYTE*)AllocationBase+e_lfanew, BP_WRITE, PEHeaderWriteCallback))
     {
-        DoOutputDebugString("PEPointerWriteCallback: set write bp (2) on e_lfanew write location.\n");
-        ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location.\n");
     }
     else
     {
-        DoOutputDebugString("SetExceptionHardwareBreakpoint (2) failed\n");
+        DoOutputDebugString("PEPointerWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
         return FALSE;
     }     
         
@@ -234,7 +238,7 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
     if (DumpMemory(AllocationBase, AllocationSize))
     {
         DoOutputDebugString("ShellCodeExecCallback: Dumped region of execution.\n");
-        ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
     }
     else
     {
@@ -286,32 +290,36 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             }
         }
         //e_lfanew is a long, therefore dword in size
-        else if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 4, (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
+        else if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 4, (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
         {
-            DoOutputDebugString("BaseAddressWriteCallback: set write bp (1) on e_lfanew write location: 0x%x\n", (BYTE*)&pDosHeader->e_lfanew);
+            DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location: 0x%x\n", (BYTE*)&pDosHeader->e_lfanew);
         }
         else
         {
-            DoOutputDebugString("SetExceptionHardwareBreakpoint (1) failed\n");
+            DoOutputDebugString("BaseAddressWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
             return FALSE;
         }        
     }
+    else if (*(BYTE*)pBreakpointInfo->Address == 'M') 
+    {
+        // Cover the case where a PE file is being written a byte at a time
+        DoOutputDebugString("BaseAddressWriteCallback: M written to first byte, awaiting next byte.\n");
+        
+        // We do nothing and hope that the 4D byte isn't code!
+    }
     else 
     {
-        if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 3, 1, (BYTE*)AllocationBase, BP_EXEC, ShellCodeExecCallback))
+        if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)AllocationBase, BP_EXEC, ShellCodeExecCallback))
         {
-            DoOutputDebugString("Breakpoint (3) set exec on base address: 0x%x\n", AllocationBase);
-            ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint set base address: 0x%x\n", AllocationBase);
         }
         else
         {
-            DoOutputDebugString("SetExceptionHardwareBreakpoint (3) failed\n");
+            DoOutputDebugString("BaseAddressWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
             return FALSE;
         }
     }
-   
-	ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
-    
+
 	DoOutputDebugString("BaseAddressWriteCallback executed successfully.\n");
 
 	return TRUE;
@@ -320,6 +328,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
 BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
 {
     DWORD ThreadId;
+    unsigned int Register;
     
     ThreadId = GetCurrentThreadId();
  
@@ -334,13 +343,13 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
         return FALSE;
     }
     
-    if (SetHardwareBreakpoint(ThreadId, 0, 2, (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
+    if (SetNextAvailableBreakpoint(ThreadId, &Register, 2, (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
     {
-        DoOutputDebugString("SetInitialBreakpoint: Breakpoint (0) set write on word at base address: 0x%x\n", AllocationBase);
+        DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set write on word at base address: 0x%x\n", Register, AllocationBase);
     }
     else
 	{
-        DoOutputDebugString("SetInitialBreakpoint: SetHardwareBreakpoint (0) failed\n");
+        DoOutputDebugString("SetInitialBreakpoint: SetNextAvailableBreakpoint failed\n");
         return FALSE;
 	}
     
@@ -361,7 +370,7 @@ void ShowStack(DWORD StackPointer, unsigned int NumberOfRecords)
 
 BOOL NtAllocateVirtualMemoryReturnCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-    ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
     
 	if (pBreakpointInfo == NULL)
 	{
@@ -400,7 +409,7 @@ BOOL NtAllocateVirtualMemoryCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EX
 
 	DoOutputDebugString("NtAllocateVirtualMemoryCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
-    ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
 	ShowStack(ExceptionInfo->ContextRecord->Esp, 10);
     
@@ -411,13 +420,13 @@ BOOL NtAllocateVirtualMemoryCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EX
     DoOutputDebugString("pAllocationBase: 0x%x, pRegionSize: 0x%x, ReturnAddress: 0x%x\n", pAllocationBase, pRegionSize, ReturnAddress);
 /*    
     // We need to get the allocation address and size after the call, so let's bpe the return address
-    if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 0, (BYTE*)ReturnAddress, BP_EXEC, NtAllocateVirtualMemoryReturnCallback))
+    if (ContextSetHardwareBreakpoint(ExceptionInfo->ContextRecord, 1, 0, (BYTE*)ReturnAddress, BP_EXEC, NtAllocateVirtualMemoryReturnCallback))
     {
         DoOutputDebugString("Breakpoint (1) set pNtAllocateVirtualMemory return address: 0x%x\n", *(DWORD*)ExceptionInfo->ContextRecord->Esp);
     }
     else
 	{
-        DoOutputDebugString("SetExceptionHardwareBreakpoint (1) failed\n");
+        DoOutputDebugString("ContextSetHardwareBreakpoint (1) failed\n");
         return FALSE;
 	}    
 */

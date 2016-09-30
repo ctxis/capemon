@@ -157,7 +157,7 @@ static unsigned int get_shellcode(unsigned char *buf, PVOID injstruct)
 static int inject(int pid, int tid, const char *dllpath, BOOLEAN suspended, int injectmode)
 {
     HANDLE prochandle = NULL;
-    HANDLE ThreadHandlele = NULL;
+    HANDLE ThreadHandle = NULL;
     LPVOID dllpathbuf;
     LPVOID injstructbuf;
     LPVOID loadlibraryaddr;
@@ -172,9 +172,12 @@ static int inject(int pid, int tid, const char *dllpath, BOOLEAN suspended, int 
     SIZE_T byteswritten = 0;
     int ret = ERROR_INVALID_PARAM;
 
-    if (pid <= 0 || tid < 0 || (tid == 0 && suspended))
+    if (pid <= 0 || tid < 0)
         goto out;
 
+    if (injectmode == INJECT_QUEUEUSERAPC && tid == 0 && suspended)    
+        goto out;
+        
     if (tid == 0)
         injectmode = INJECT_CREATEREMOTETHREAD;
 
@@ -185,8 +188,8 @@ static int inject(int pid, int tid, const char *dllpath, BOOLEAN suspended, int 
     }
 
     if (tid > 0) {
-        ThreadHandlele = OpenThread(THREAD_ALL_ACCESS, FALSE, tid);
-        if (ThreadHandlele == NULL) {
+        ThreadHandle = OpenThread(THREAD_ALL_ACCESS, FALSE, tid);
+        if (ThreadHandle == NULL) {
             ret = ERROR_THREAD_OPEN;
             goto out;
         }
@@ -244,7 +247,7 @@ static int inject(int pid, int tid, const char *dllpath, BOOLEAN suspended, int 
     }
 
     if (injectmode == INJECT_QUEUEUSERAPC) {
-        if (!QueueUserAPC(shellcodeaddr, ThreadHandlele, (ULONG_PTR)injstructbuf)) {
+        if (!QueueUserAPC(shellcodeaddr, ThreadHandle, (ULONG_PTR)injstructbuf)) {
             ret = ERROR_QUEUEUSERAPC;
             goto out;
         }
@@ -307,8 +310,8 @@ success:
 out:
     if (prochandle)
         CloseHandle(prochandle);
-    if (ThreadHandlele)
-        CloseHandle(ThreadHandlele);
+    if (ThreadHandle)
+        CloseHandle(ThreadHandle);
     if (wbuf)
         free(wbuf);
 
@@ -568,6 +571,44 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     {
         // usage: loader.exe debug <binary> <commandline> <dll debugger>
         int pid, tid;
+        int RetVal;
+        TCHAR DebugOutput[MAX_PATH];
+        HANDLE hProcess, hThread; 
+
+        if (__argc != 7)
+            return ERROR_ARGCOUNT;
+        pid = atoi(__argv[2]);
+        tid = atoi(__argv[3]);
+    
+        hProcess = OpenProcess(PROCESS_ALL_ACCESS, TRUE, pid);
+        if (hProcess == NULL) 
+        {
+            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("OpenProcess failed, GLE=%d.\n"), GetLastError());
+            OutputDebugString(DebugOutput);
+            return -18;
+        }
+        
+        hThread = OpenThread(THREAD_ALL_ACCESS, TRUE, tid);
+        if (hThread == NULL) 
+        {
+            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("OpenThread failed, GLE=%d.\n"), GetLastError());
+            OutputDebugString(DebugOutput);
+            return -19;
+        }
+    
+        RetVal = inject(pid, tid, __argv[6], TRUE, INJECT_CREATEREMOTETHREAD);
+
+        CloseHandle(hProcess);
+        CloseHandle(hThread);
+        
+        return RetVal;
+    } 
+    else if (!strcmp(__argv[1], "debug_load")) 
+    {
+        // usage: loader.exe debug <binary> <commandline> <dll debugger>
+        int pid, tid;
         //PROCESS_INFORMATION pi;
         //STARTUPINFOA si;
         BOOL fSuccess, fConnected;
@@ -775,7 +816,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         return 1;
         
-    } else if (!strcmp(__argv[1], "test")) 
+    } 
+    else if (!strcmp(__argv[1], "test")) 
     {
         // usage: loader.exe test <binary> <commandline> <dll debugger>
         PROCESS_INFORMATION pi;
