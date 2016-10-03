@@ -8,6 +8,9 @@ extern int DumpPE(LPCVOID Buffer);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
 unsigned int DumpSize;
 
+//Global switch for debugger
+#define DEBUGGER_ENABLED    1
+
 //
 // MessageId: STATUS_SUCCESS
 //

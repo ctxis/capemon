@@ -82,7 +82,7 @@ BOOL StackReadCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTE
 
 	DoOutputDebugString("StackReadCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
-    ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+    ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     
 	// Turn on single-step mode which will dump on OEP (in handler)
     SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepToOEP);
@@ -110,18 +110,15 @@ BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
 	DoOutputDebugString("StackWriteCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
     
-    if (SetExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, 2, 1, (BYTE*)pBreakpointInfo->Address, BP_READWRITE, StackReadCallback))
+    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)pBreakpointInfo->Address, BP_READWRITE, StackReadCallback))
     {
-        DoOutputDebugString("SetExceptionHardwareBreakpoint (2) returned successfully!\n");
+        DoOutputDebugString("StackWriteCallback: Updated breakpoint to break on read & write.\n");
     }
     else
 	{
-        DoOutputDebugString("SetExceptionHardwareBreakpoint (2) failed\n");
+        DoOutputDebugString("StackWriteCallback: ContextUpdateCurrentBreakpoint failed.\n");
         return FALSE;
 	}
-
-    // This needs to be done after setting any new bps
-    ClearExceptionHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
 	DoOutputDebugString("StackWriteCallback executed successfully.\n");
 
