@@ -367,7 +367,8 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
             }
             else
             {
-                DoOutputDebugString("Import table rebuild failed.\n");
+                DoOutputDebugString("Import table rebuild failed, falling back to unfixed dump.\n");
+                peFile->savePeFileToDisk(NULL);
             }           
         }
         else

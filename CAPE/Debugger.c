@@ -21,6 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <windows.h>
 #include <assert.h>
 #include <Aclapi.h>
+#include <psapi.h>
 #include "Debugger.h"
 #include "..\config.h"
 #include "..\pipe.h"
@@ -89,6 +90,7 @@ DWORD RemoteFuncAddress;
 HANDLE hParentPipe;
 
 extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
+extern MODULEINFO modinfo;
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
 extern BOOL WoW64PatchBreakpoint(unsigned int Register);
@@ -355,7 +357,6 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         // If not it's a single-step
         if (BreakpointFlag == FALSE)
         {            
-            //if (SingleStepHandler(ExceptionInfo))
             SingleStepHandler(ExceptionInfo);
             return EXCEPTION_CONTINUE_EXECUTION;
         }
@@ -1119,9 +1120,6 @@ DWORD WINAPI SetBreakpointThread(LPVOID lpParam)
     else
         DoOutputDebugString("SetBreakpointThread: Current thread suspended.\n");
 
-    //debug
-    DoOutputDebugString("SetBreakpointThread: ABbout to call SetDebugRegister.\n");
-    
 	if (SetDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
 	{
 		DoOutputErrorString("Call to SetDebugRegister failed");
@@ -1356,7 +1354,8 @@ BOOL InitialiseDebugger(void)
     }
     
     // Initialise any global variables
-    
+    memset(&modinfo, 0, sizeof(MODULEINFO));
+
     // Ensure wow64 patch is installed if needed
     WoW64fix();
     

@@ -16,7 +16,13 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
 #include <windows.h>
+#include <psapi.h>
 #include "Debugger.h"
+
+#define SINGLE_STEP_LIMIT 0x100
+#define MINIMUM_EIP_DELTA 0x2000
+
+extern ULONG_PTR base_of_dll_of_interest;
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -24,13 +30,36 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpCurrentProcessFixImports(DWORD NewEP);
 
 DWORD LastEIP, CurrentEIP, EIPDelta, UPX_OEP;
+MODULEINFO modinfo;
 
 //**************************************************************************************
 BOOL SingleStepToOEP(struct _EXCEPTION_POINTERS* ExceptionInfo)
 //**************************************************************************************
 {
+    unsigned int StepCount;
+    
+    if ((DWORD)modinfo.lpBaseOfDll == 0)
+    {
+		DoOutputDebugString("SingleStepToOEP: module information not present for the module of interest.\n");
+		return FALSE;    
+    }
+    
+    if (ExceptionInfo->ContextRecord->Eip < (DWORD)modinfo.lpBaseOfDll || ExceptionInfo->ContextRecord->Eip > (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage)
+    {
+		DoOutputDebugString("SingleStepToOEP: EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
+		return FALSE;    
+    }
+
     if (LastEIP)
     {
+        StepCount++;
+        
+        if (StepCount > SINGLE_STEP_LIMIT)
+        {
+            DoOutputDebugString("Single-step mode: single step limit reached, giving up.");
+            return TRUE;
+        }
+        
         CurrentEIP = ExceptionInfo->ContextRecord->Eip;
         
         if (CurrentEIP > LastEIP)
@@ -38,7 +67,7 @@ BOOL SingleStepToOEP(struct _EXCEPTION_POINTERS* ExceptionInfo)
         else
             EIPDelta = (unsigned int)(LastEIP - CurrentEIP);
         
-        if (EIPDelta > 0x100)
+        if (EIPDelta > MINIMUM_EIP_DELTA && EIPDelta < modinfo.SizeOfImage)
         {
             UPX_OEP = CurrentEIP;
             DoOutputDebugString("Single-step mode: found OEP = 0x%x, dumping.\n", UPX_OEP);
@@ -58,6 +87,7 @@ BOOL SingleStepToOEP(struct _EXCEPTION_POINTERS* ExceptionInfo)
     else
     {
         LastEIP = ExceptionInfo->ContextRecord->Eip;
+        StepCount = 0;
         DoOutputDebugString("Entering single-step mode until OEP\n");
         SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepToOEP);
         return TRUE;
@@ -80,8 +110,20 @@ BOOL StackReadCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTE
 		return FALSE;
 	}
 
-	DoOutputDebugString("StackReadCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("StackReadCallback: Hardware breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
 
+    if ((DWORD)modinfo.lpBaseOfDll == 0)
+    {
+		DoOutputDebugString("StackReadCallback: module information not present for the module of interest.\n");
+		return FALSE;    
+    }
+    
+    if (ExceptionInfo->ContextRecord->Eip < (DWORD)modinfo.lpBaseOfDll || ExceptionInfo->ContextRecord->Eip > (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage)
+    {
+		DoOutputDebugString("StackReadCallback: breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
+		return FALSE;    
+    }
+    
     ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     
 	// Turn on single-step mode which will dump on OEP (in handler)
@@ -108,11 +150,33 @@ BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 		return FALSE;
 	}
 
-	DoOutputDebugString("StackWriteCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("StackWriteCallback: Hardware breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
+    
+    // Let's find out the size of the module in memory, to enable a sanity check for the eip values
+    if (base_of_dll_of_interest == 0)
+    {
+        GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &modinfo, sizeof(MODULEINFO));
+    }
+    else
+    {
+        GetModuleInformation(GetCurrentProcess(), (HMODULE)base_of_dll_of_interest, &modinfo, sizeof(MODULEINFO));
+    }
+
+    if ((DWORD)modinfo.lpBaseOfDll == 0)
+    {
+		DoOutputDebugString("StackWriteCallback: failed to get module information for the module of interest.\n");
+		return FALSE;    
+    }
+    
+    if (ExceptionInfo->ContextRecord->Eip < (DWORD)modinfo.lpBaseOfDll || ExceptionInfo->ContextRecord->Eip > (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage)
+    {
+		DoOutputDebugString("StackWriteCallback: breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
+		return FALSE;    
+    }
     
     if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)pBreakpointInfo->Address, BP_READWRITE, StackReadCallback))
     {
-        DoOutputDebugString("StackWriteCallback: Updated breakpoint to break on read & write.\n");
+        DoOutputDebugString("StackWriteCallback: Updated breakpoint to break on read (& write).\n");        
     }
     else
 	{
