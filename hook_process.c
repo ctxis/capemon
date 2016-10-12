@@ -663,14 +663,14 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
             {
                 RunPE_ProcessWriteDetected = TRUE;
             }
-            //else if (*lpNumberOfBytesWritten > 0x10)
-            //{
-            //    // dump injected code to .bin file
-            //    if (DumpMemory(lpBuffer, nSize))
-            //        DoOutputDebugString("Dumped remotely injected code from memory.");
-            //    else
-            //        DoOutputDebugString("Failed to dump remotely injected code from memory.");
-            //}
+            else if (*lpNumberOfBytesWritten > 0x10)
+            {
+                // dump injected code to .bin file
+                if (DumpMemory(lpBuffer, nSize))
+                    DoOutputDebugString("Dumped remotely injected code from memory.");
+                else
+                    DoOutputDebugString("Failed to dump remotely injected code from memory.");
+            }
         }
     }        
     
