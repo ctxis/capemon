@@ -1129,7 +1129,7 @@ DWORD WINAPI SetBreakpointThread(LPVOID lpParam)
         DoOutputDebugString("SetBreakpointThread: Current thread suspended.\n");
 
     //debug
-    DoOutputDebugString("SetBreakpointThread: ABbout to call SetDebugRegister.\n");
+    DoOutputDebugString("SetBreakpointThread: About to call SetDebugRegister.\n");
     
 	if (SetDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
 	{

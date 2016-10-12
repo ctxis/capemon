@@ -30,12 +30,15 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 extern int DumpPE(LPCVOID Buffer);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 
 SIZE_T AllocationSize;
 PVOID AllocationBase;
 
 PVOID *pAllocationBase;
 PSIZE_T pRegionSize;
+
+static BOOL AllocationBaseExecBpSet;
 
 BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
@@ -221,7 +224,9 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
 BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	if (pBreakpointInfo == NULL)
+	LPCVOID PEPointer;
+    
+    if (pBreakpointInfo == NULL)
 	{
 		DoOutputDebugString("ShellCodeExecCallback executed with pBreakpointInfo NULL.\n");
 		return FALSE;
@@ -235,7 +240,19 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
 
 	DoOutputDebugString("ShellCodeExecCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
-    if (DumpMemory(AllocationBase, AllocationSize))
+    if (ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+    {
+        if (DumpPE(PEPointer))
+        {
+            DoOutputDebugString("ShellCodeExecCallback: Found and dumped a PE image.\n");
+            ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+        }
+        else
+        {
+            DoOutputDebugString("ShellCodeExecCallback: Found a PE image but failed to dump it.\n");
+        }
+    }
+    else if (DumpMemory(AllocationBase, AllocationSize))
     {
         DoOutputDebugString("ShellCodeExecCallback: Dumped region of execution.\n");
         ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
@@ -254,6 +271,7 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
 BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
     PIMAGE_DOS_HEADER pDosHeader;
+    unsigned int Register;
     
 	if (pBreakpointInfo == NULL)
 	{
@@ -282,6 +300,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             if (DumpPE(pBreakpointInfo->Address))
             {
                 DoOutputDebugString("BaseAddressWriteCallback: successfully dumped module.\n");
+                ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
                 return TRUE;
             }
             else
@@ -309,13 +328,21 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
     }
     else 
     {
-        if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 1, (BYTE*)AllocationBase, BP_EXEC, ShellCodeExecCallback))
+        if (AllocationBaseExecBpSet == TRUE)
         {
-            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint set base address: 0x%x\n", AllocationBase);
+            DoOutputDebugString("BaseAddressWriteCallback: allocation exec bp already set, doing nothing.\n");
+            return TRUE;
+        }
+        
+        // we add an exec breakpoint on address 0 in case it's shellcode, but leave the write bp in case it's an encrypted PE
+        if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, 1, (BYTE*)AllocationBase, BP_EXEC, ShellCodeExecCallback))
+        {
+            AllocationBaseExecBpSet = TRUE;
+            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, AllocationBase, AllocationBaseExecBpSet);
         }
         else
         {
-            DoOutputDebugString("BaseAddressWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+            DoOutputDebugString("BaseAddressWriteCallback: ContextSetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
             return FALSE;
         }
     }
@@ -335,6 +362,8 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
     AllocationSize = RegionSize;
     AllocationBase = Address;
     
+    AllocationBaseExecBpSet = FALSE;
+    
     DoOutputDebugString("SetInitialBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
     
     if (AllocationSize == NULL || AllocationBase == NULL || ThreadId == NULL)
@@ -343,6 +372,7 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
         return FALSE;
     }
     
+    //if (SetNextAvailableBreakpoint(ThreadId, &Register, 1, (BYTE*)AllocationBase, BP_EXEC, ShellCodeExecCallback))
     if (SetNextAvailableBreakpoint(ThreadId, &Register, 2, (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
     {
         DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set write on word at base address: 0x%x\n", Register, AllocationBase);
@@ -366,7 +396,6 @@ void ShowStack(DWORD StackPointer, unsigned int NumberOfRecords)
     for (i=0; i<NumberOfRecords; i++)
         DoOutputDebugString("0x%x ([esp+0x%x]): 0x%x\n", StackPointer+4*i, (4*i), *(DWORD*)((BYTE*)StackPointer+4*i));
 }
-
 
 BOOL NtAllocateVirtualMemoryReturnCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {

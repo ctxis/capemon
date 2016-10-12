@@ -484,6 +484,58 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
+int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
+//**************************************************************************************
+{
+    unsigned int p;
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    for (p=0; p<Size-1; p++)
+    {
+        if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
+        {
+            pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
+
+            if ((ULONG)pDosHeader->e_lfanew == 0) 
+            {
+                // e_lfanew is zero
+                continue;
+            }
+
+            if ((ULONG)pDosHeader->e_lfanew > Size-p)
+            {
+                // Entry point points beyond end of region
+                continue;
+            }
+            
+            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+            
+            if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
+            {
+                // No 'PE' header
+                continue;                
+            }
+            
+            if ((pNtHeader->FileHeader.Machine == 0) && (pNtHeader->FileHeader.SizeOfOptionalHeader == 0)) 
+            {
+                // Basic requirements
+                continue;
+            }
+            
+            if (Offset)
+            {
+                *Offset = (LPCVOID)((char*)Buffer+p);
+            }
+            
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+//**************************************************************************************
 int DumpMemory(LPCVOID Buffer, unsigned int Size)
 //**************************************************************************************
 {
