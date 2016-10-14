@@ -1234,9 +1234,10 @@ BOOL SetHardwareBreakpoint
 
 	if (hSetBreakpointThread == NULL) 
 	{
-	   DoOutputDebugString("Failed to create SetBreakpointThread thread\n");
+	   DoOutputErrorString("Failed to create SetBreakpointThread thread");
 	   return 0;
 	}
+    
     DoOutputDebugString("SetHardwareBreakpoint: SetBreakpointThread called, beginning wait\n");
 
     // Wait until thread has terminated

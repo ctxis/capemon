@@ -30,6 +30,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
+extern BOOL PeImageDumped;
+extern PVOID AllocationBase;
+extern int DumpPE(LPCVOID Buffer);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -332,10 +335,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-		process_shutting_down = 1;
+        if (PeImageDumped == FALSE)
+            PeImageDumped = DumpPE(AllocationBase);		
+        process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
+        if (PeImageDumped == FALSE)
+            PeImageDumped = DumpPE(AllocationBase);		
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
