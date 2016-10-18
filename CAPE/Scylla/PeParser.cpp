@@ -797,7 +797,20 @@ bool PeParser::savePeFileToDisk( const CHAR * newFile )
                 return 0;            
             }
             
-            if (MoveFile(ScyllaOutputPath, HashString))
+            if (HashString == 0)
+            {
+                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
+                
+                if (!GetFullPathName(ScyllaOutputPath, MAX_PATH, ScyllaOutputPath, NULL))
+                {
+                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    return 0;            
+                }
+
+				CapeOutputFile(ScyllaOutputPath);
+                return 1;         
+            }
+            else if (MoveFile(ScyllaOutputPath, HashString))
             {
                 memset(ScyllaOutputPath, 0, MAX_PATH);
                 
@@ -866,7 +879,20 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
                 return 0;            
             }
             
-            if (MoveFile(ScyllaOutputPath, HashString))
+            if (HashString == 0)
+            {
+                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
+                
+                if (!GetFullPathName(ScyllaOutputPath, MAX_PATH, ScyllaOutputPath, NULL))
+                {
+                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    return 0;            
+                }
+
+				CapeOutputFile(ScyllaOutputPath);
+                return 1;         
+            }
+            else if (MoveFile(ScyllaOutputPath, HashString))
             {
                 memset(ScyllaOutputPath, 0, MAX_PATH);
                 

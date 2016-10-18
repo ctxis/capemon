@@ -183,7 +183,7 @@ char* GetHashFromHandle(HANDLE hFile)
 
 	if (!MapFile(hFile, &Buffer, &FileSize))
 	{	
-		DoOutputErrorString("MapFile error - check path!");
+		DoOutputErrorString("GetHashFromHandle: MapFile error - check path!");
 		return 0;
 	}
     
@@ -191,11 +191,15 @@ char* GetHashFromHandle(HANDLE hFile)
 
     if (OutputFilenameBuffer == NULL)
     {
-		DoOutputErrorString("Error allocating memory for hash string.");
+		DoOutputErrorString("GetHashFromHandle: Error allocating memory for hash string.");
 		return 0;    
     }
     
-	GetHash(Buffer, FileSize, (char*)OutputFilenameBuffer);
+    if (!GetHash(Buffer, FileSize, (char*)OutputFilenameBuffer))
+    {
+		DoOutputErrorString("GetHashFromHandle: GetHash function failed.\n");
+		return 0;    
+    }
     
     DoOutputDebugString("GetHash returned: %s", OutputFilenameBuffer);
 
