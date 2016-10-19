@@ -32,6 +32,8 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define BUFSIZE 			1024	// For hashing
 #define MD5LEN  			16
 
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void CapeOutputFile(LPCTSTR lpOutputFile);
@@ -106,7 +108,7 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
 
     if (dwBytesRead > 0 && dwBytesRead < *FileSize)
     {
-        DoOutputErrorString("MapFile: Unexpected size read in.");
+        DoOutputErrorString("MapFile: Unexpected size read in");
         free(Buffer);
 		return FALSE;
 
@@ -191,11 +193,15 @@ char* GetHashFromHandle(HANDLE hFile)
 
     if (OutputFilenameBuffer == NULL)
     {
-		DoOutputErrorString("Error allocating memory for hash string.");
+		DoOutputErrorString("Error allocating memory for hash string");
 		return 0;    
     }
     
-	GetHash(Buffer, FileSize, (char*)OutputFilenameBuffer);
+    if (!GetHash(Buffer, FileSize, (char*)OutputFilenameBuffer))
+    {
+		DoOutputErrorString("GetHashFromHandle: GetHash function failed");
+		return 0;    
+    }
     
     DoOutputDebugString("GetHash returned: %s", OutputFilenameBuffer);
 
@@ -286,7 +292,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString("Error allocating memory for decrypted PE binary.");
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
                     return FALSE;
                 }
                 
@@ -358,7 +364,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString("Error allocating memory for decrypted PE binary.");
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
                     return FALSE;
                 }
                 
@@ -402,7 +408,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary.");
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
                         return FALSE;
                     }
                     
@@ -458,7 +464,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary.");
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
                         return FALSE;
                     }
                     
@@ -542,6 +548,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 	char *OutputFilename, *FullPathName;
 	DWORD RetVal, dwBytesWritten;
 	HANDLE hOutputFile;
+    LPVOID BufferCopy;
 
 	OutputFilename = (char*) malloc(MAX_PATH);
 	FullPathName = (char*) malloc(MAX_PATH);
@@ -552,10 +559,15 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 		return 0;    
     }
     
-	GetHash((LPVOID)Buffer, Size, (char*)OutputFilename);
-    
-    DoOutputDebugString("GetHash returned: %s", OutputFilename);
-
+    if (!GetHash((LPVOID)Buffer, Size, (char*)OutputFilename))
+    {
+		DoOutputErrorString("DumpMemory: GetHash function failed");
+		
+        sprintf_s(OutputFilename, MAX_PATH*sizeof(char), CAPE_OUTPUT_FILE);
+    }
+    else
+        DoOutputDebugString("DumpMemory: GetHash returned: %s", OutputFilename);
+        
     sprintf_s((OutputFilename+2*MD5LEN), MAX_PATH*sizeof(char)-2*MD5LEN, ".bin");
 
 	// We want to dump CAPE output to the 'analyzer' directory
@@ -565,7 +577,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
 	{
-		DoOutputDebugString("Error, CAPE destination path too long.");
+		DoOutputDebugString("DumpMemory: Error, CAPE destination path too long.");
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
@@ -576,44 +588,51 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		DoOutputDebugString("Error creating output directory");
+		DoOutputDebugString("DumpMemory: Error creating output directory");
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
     PathAppend(FullPathName, OutputFilename);
 	
-    DoOutputDebugString("DEBUG: FullPathName = %s", FullPathName);
+    DoOutputDebugString("DumpMemory: FullPathName = %s", FullPathName);
     
 	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
-	DoOutputDebugString("CreateFile returned: 0x%x", hOutputFile);
+	DoOutputDebugString("DumpMemory: CreateFile returned handle: 0x%x", hOutputFile);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 	{
-		DoOutputDebugString("CAPE output filename exists already: %s", FullPathName);
+		DoOutputDebugString("DumpMemory: CAPE output filename exists already: %s", FullPathName);
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
-	DoOutputDebugString("Passed file_exists check");
-	
 	if (hOutputFile == INVALID_HANDLE_VALUE)
 	{
-		DoOutputErrorString("Could not create CAPE output file");
+		DoOutputErrorString("DumpMemory: Could not create CAPE output file");
         free(OutputFilename); free(FullPathName);
 		return 0;		
 	}	
-	DoOutputDebugString("Passed invalid_handle check");
 	
 	dwBytesWritten = 0;
     
-    DoOutputDebugString("CAPE output file succssfully created:%s", FullPathName);
+    DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
 
-	if (FALSE == WriteFile(hOutputFile, Buffer, Size, &dwBytesWritten, NULL))
+	BufferCopy = (LPVOID)((BYTE*)malloc(Size));
+    
+    if (BufferCopy == NULL)
+    {
+        DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
+        
+    }
+    
+    memcpy(BufferCopy, Buffer, Size);
+    
+    if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
-		DoOutputDebugString("WriteFile error on CAPE output file");
-        free(OutputFilename); free(FullPathName);
+		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
+        free(OutputFilename); free(FullPathName); free(BufferCopy);
 		return 0;
 	}
 
@@ -624,7 +643,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     CapeOutputFile(FullPathName);
     
     // We can free the filename buffers
-    free(OutputFilename); free(FullPathName);
+    free(OutputFilename); free(FullPathName); free(BufferCopy);
 	
     return 1;
 }
@@ -694,7 +713,7 @@ void init_CAPE()
     // Initialise CAPE global variables
 #ifndef _WIN64	 
     // Start the debugger thread
-     launch_debugger();
+    launch_debugger();
 #endif
     
     return;

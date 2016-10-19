@@ -29,11 +29,11 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define CREATE_NEW_IAT_IN_SECTION FALSE
 #define OFT_SUPPORT FALSE
 
-#define SCYLLA_OUTPUT_FILE "ScyllaOutput.bin"
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
 
 extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern char ScyllaOutputPath[MAX_PATH];
+extern char CapeOutputPath[MAX_PATH];
 
 //**************************************************************************************
 void ScyllaInitCurrentProcess()
@@ -271,9 +271,9 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
         DoOutputDebugString("Module entry point VA is 0x%x", (DWORD)modBase + entrypointRVA);
         
         //  Let's dump then fix the dump on disk
-        if (peFile->dumpProcess((DWORD_PTR)modBase, (DWORD)modBase + entrypointRVA, SCYLLA_OUTPUT_FILE))
+        if (peFile->dumpProcess((DWORD_PTR)modBase, (DWORD)modBase + entrypointRVA, CAPE_OUTPUT_FILE))
         {
-            DoOutputDebugString("Module image dump success %s", ScyllaOutputPath);
+            DoOutputDebugString("Module image dump success %s", CapeOutputPath);
         }
         
         //  IAT search - we'll try the simple search first
@@ -334,7 +334,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
                 DoOutputDebugString("Warning, IAT is not inside the PE image, requires rebasing.");
             }
             
-            ImportRebuilder importRebuild(SCYLLA_OUTPUT_FILE);
+            ImportRebuilder importRebuild(CAPE_OUTPUT_FILE);
             
             if (OFT_SUPPORT)
             {

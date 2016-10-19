@@ -1392,41 +1392,41 @@ BOOL InitialiseDebugger(void)
 __declspec (naked dllexport) void DebuggerInit(void)
 //**************************************************************************************
 {   
-    DWORD StackPointer;
-    
-    _asm
-        {
-        push	ebp
-        mov		ebp, esp
-        // we need the stack pointer
-        mov		StackPointer, esp
-        sub		esp, __LOCAL_SIZE
-		pushad
-        }
-	
-	if (InitialiseDebugger() == FALSE)
-        DoOutputDebugString("Debugger initialisation failure!\n");
-	
-// Target specific code
-
-// No need for anything here,  
-// as we are setting initial bp in 
-// NtAllocateVirtualMemory hook
-#ifdef STANDALONE
-    SetNtAllocateVirtualMemoryBP();
-#endif
-// End of target specific code
-
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
-
-    _asm
-    {
-        popad
-		mov     esp, ebp
-        pop     ebp
-        jmp		OEP
-    }
-
+//    DWORD StackPointer;
+//    
+//    _asm
+//        {
+//        push	ebp
+//        mov		ebp, esp
+//        // we need the stack pointer
+//        mov		StackPointer, esp
+//        sub		esp, __LOCAL_SIZE
+//		pushad
+//        }
+//	
+//	if (InitialiseDebugger() == FALSE)
+//        DoOutputDebugString("Debugger initialisation failure!\n");
+//	
+//// Target specific code
+//
+//// No need for anything here,  
+//// as we are setting initial bp in 
+//// NtAllocateVirtualMemory hook
+//#ifdef STANDALONE
+//    SetNtAllocateVirtualMemoryBP();
+//#endif
+//// End of target specific code
+//
+//	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
+//
+//    _asm
+//    {
+//        popad
+//		mov     esp, ebp
+//        pop     ebp
+//        jmp		OEP
+//    }
+    _asm jmp OEP
 }
 
 BOOL SendDebuggerMessage(DWORD Input)

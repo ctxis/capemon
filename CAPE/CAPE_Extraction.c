@@ -18,7 +18,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <windows.h>
 #include "Debugger.h"
 
-#define PE_HEADER_LIMIT 0x100
+#define PE_HEADER_LIMIT 0x200
 
 #ifdef STANDALONE
 #include "..\alloc.h"
@@ -38,8 +38,9 @@ PVOID AllocationBase;
 PVOID *pAllocationBase;
 PSIZE_T pRegionSize;
 
+BOOL AllocationWriteDetected;
 BOOL PeImageDetected;
-BOOL PeImageDumped;
+BOOL AllocationDumped;
 static BOOL AllocationBaseExecBpSet;
 
 BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
@@ -58,9 +59,15 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
 	DoOutputDebugString("EntryPointExecCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
+    if (AllocationDumped == TRUE)
+    {
+        DoOutputDebugString("EntryPointExecCallback: allocation already dumped, clearing breakpoint.\n");
+        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    }
+    
     if (DumpPE(AllocationBase))
     {
-        PeImageDumped = TRUE;
+        AllocationDumped = TRUE;
         DoOutputDebugString("EntryPointExecCallback: successfully dumped module.\n");
         ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     }
@@ -199,10 +206,9 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
     e_lfanew = *(long*)((pBreakpointInfo->Address));
 
-    if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+    if ((unsigned int)e_lfanew > PE_HEADER_LIMIT)
     {
-        // This check is possibly not appropriate here
-        // As long as we've got what's been compressed
+        DoOutputDebugString("PEPointerWriteCallback: pointer to PE header too big: 0x%x (perhaps writing incomplete).\n", e_lfanew);
         return FALSE;
     }
 
@@ -210,7 +216,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     {
         if (DumpPE(pBreakpointInfo->Address))
         {
-            PeImageDumped = TRUE;
+            AllocationDumped = TRUE;
             ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
             DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
             return TRUE;
@@ -258,7 +264,7 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
     {
         if (DumpPE(PEPointer))
         {
-            PeImageDumped = TRUE;
+            AllocationDumped = TRUE;
             DoOutputDebugString("ShellCodeExecCallback: Found and dumped a PE image.\n");
             ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
         }
@@ -302,13 +308,15 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
 
 	DoOutputDebugString("BaseAddressWriteCallback: Hardware breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
     
+    AllocationWriteDetected = TRUE;
+    
     if (*(WORD*)pBreakpointInfo->Address == IMAGE_DOS_SIGNATURE)
     {
         DoOutputDebugString("BaseAddressWriteCallback: MZ header found.\n");
     
         pDosHeader = (PIMAGE_DOS_HEADER)pBreakpointInfo->Address;
 
-        if (pDosHeader->e_lfanew && (*(DWORD*)((unsigned char*)pBreakpointInfo->Address + pDosHeader->e_lfanew) == IMAGE_NT_SIGNATURE))
+        if (pDosHeader->e_lfanew && pDosHeader->e_lfanew < PE_HEADER_LIMIT && (*(DWORD*)((unsigned char*)pBreakpointInfo->Address + pDosHeader->e_lfanew) == IMAGE_NT_SIGNATURE))
         {
             //DoOutputDebugString("BaseAddressWriteCallback: PE header found.\n");
             
@@ -316,7 +324,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             
             if (DumpPE(pBreakpointInfo->Address))
             {
-                PeImageDumped = TRUE;
+                AllocationDumped = TRUE;
                 DoOutputDebugString("BaseAddressWriteCallback: successfully dumped module.\n");
                 ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
                 return TRUE;
@@ -380,8 +388,9 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
     AllocationSize = RegionSize;
     AllocationBase = Address;
     
+    AllocationWriteDetected = FALSE;
     PeImageDetected = FALSE;
-    PeImageDumped = FALSE;    
+    AllocationDumped = FALSE;    
     AllocationBaseExecBpSet = FALSE;
     
     DoOutputDebugString("SetInitialBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);

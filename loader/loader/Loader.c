@@ -619,7 +619,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         HANDLE hPipe, hProcess, hThread; 
         char lpszPipename[MAX_PATH];
 
-                
         if (__argc != 7)
             return ERROR_ARGCOUNT;
         pid = atoi(__argv[2]);

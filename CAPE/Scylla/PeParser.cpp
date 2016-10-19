@@ -10,7 +10,7 @@ extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void CapeOutputFile(LPCTSTR lpOutputFile);
 
-char ScyllaOutputPath[MAX_PATH];
+char CapeOutputPath[MAX_PATH];
 
 PeParser::PeParser()
 {
@@ -517,7 +517,7 @@ bool PeParser::openWriteFileHandle( const CHAR * newFile )
 	else
 	{
 		// If no name was specified, let's give it a temporary name to allow it to be renamed later with its hash value
-        hFile = CreateFile(SCYLLA_OUTPUT_FILE, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+        hFile = CreateFile(CAPE_OUTPUT_FILE, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
 	}
 
 	return (hFile != INVALID_HANDLE_VALUE);
@@ -791,32 +791,45 @@ bool PeParser::savePeFileToDisk( const CHAR * newFile )
     
             closeFileHandle();
             
-            if (!GetFullPathName(SCYLLA_OUTPUT_FILE, MAX_PATH, ScyllaOutputPath, NULL))
+            if (!GetFullPathName(CAPE_OUTPUT_FILE, MAX_PATH, CapeOutputPath, NULL))
             {
                 DoOutputErrorString("There was a problem obtaining the full file path");
                 return 0;            
             }
             
-            if (MoveFile(ScyllaOutputPath, HashString))
+            if (HashString == 0)
             {
-                memset(ScyllaOutputPath, 0, MAX_PATH);
+                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
                 
-                if (!GetFullPathName(HashString, MAX_PATH, ScyllaOutputPath, NULL))
+                if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
                 {
                     DoOutputErrorString("There was a problem obtaining the full file path");
                     return 0;            
                 }
 
-				CapeOutputFile(ScyllaOutputPath);
+				CapeOutputFile(CapeOutputPath);
+                return 1;         
+            }
+            else if (MoveFile(CapeOutputPath, HashString))
+            {
+                memset(CapeOutputPath, 0, MAX_PATH);
+                
+                if (!GetFullPathName(HashString, MAX_PATH, CapeOutputPath, NULL))
+                {
+                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    return 0;            
+                }
+
+				CapeOutputFile(CapeOutputPath);
                 return 1;
             }
             else
             {
                 DoOutputErrorString("There was a problem renaming the file");
 				
-                if (!DeleteFile(ScyllaOutputPath))
+                if (!DeleteFile(CapeOutputPath))
                 {
-                    DoOutputErrorString("There was a problem deleting the file: %s", ScyllaOutputPath);
+                    DoOutputErrorString("There was a problem deleting the file: %s", CapeOutputPath);
                 }
                 
                 return 0;
@@ -860,32 +873,45 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
     
             closeFileHandle();
             
-            if (!GetFullPathName(SCYLLA_OUTPUT_FILE, MAX_PATH, ScyllaOutputPath, NULL))
+            if (!GetFullPathName(CAPE_OUTPUT_FILE, MAX_PATH, CapeOutputPath, NULL))
             {
                 DoOutputErrorString("There was a problem obtaining the full file path");
                 return 0;            
             }
             
-            if (MoveFile(ScyllaOutputPath, HashString))
+            if (HashString == 0)
             {
-                memset(ScyllaOutputPath, 0, MAX_PATH);
+                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
                 
-                if (!GetFullPathName(HashString, MAX_PATH, ScyllaOutputPath, NULL))
+                if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
                 {
                     DoOutputErrorString("There was a problem obtaining the full file path");
                     return 0;            
                 }
 
-				CapeOutputFile(ScyllaOutputPath);
+				CapeOutputFile(CapeOutputPath);
+                return 1;         
+            }
+            else if (MoveFile(CapeOutputPath, HashString))
+            {
+                memset(CapeOutputPath, 0, MAX_PATH);
+                
+                if (!GetFullPathName(HashString, MAX_PATH, CapeOutputPath, NULL))
+                {
+                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    return 0;            
+                }
+
+				CapeOutputFile(CapeOutputPath);
                 return 1;
             }
             else
             {
                 DoOutputErrorString("There was a problem renaming the file");
 				
-                if (!DeleteFile(ScyllaOutputPath))
+                if (!DeleteFile(CapeOutputPath))
                 {
-                    DoOutputErrorString("There was a problem deleting the file: %s", ScyllaOutputPath);
+                    DoOutputErrorString("There was a problem deleting the file: %s", CapeOutputPath);
                 }
                 
                 return 0;

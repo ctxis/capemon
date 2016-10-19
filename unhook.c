@@ -28,9 +28,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNHOOK_MAXCOUNT 2048
 #define UNHOOK_BUFSIZE 32
 
-extern BOOL PeImageDumped;
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL AllocationDumped;
+extern BOOL PeImageDetected;
 extern PVOID AllocationBase;
+extern SIZE_T AllocationSize;
 extern int DumpPE(LPCVOID Buffer);
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
 
@@ -255,8 +259,26 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
 
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
-        if (PeImageDumped == FALSE)
-            PeImageDumped = DumpPE(AllocationBase);
+        if (AllocationBase && AllocationSize && !AllocationDumped)
+        {
+            DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
+
+            AllocationDumped = TRUE;
+            
+            if (PeImageDetected)
+            {
+                AllocationDumped = DumpPE(AllocationBase);
+                if (!AllocationDumped)
+                {
+                    AllocationDumped = TRUE;
+                    AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                }
+            }
+            else
+            {
+                AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+            }
+        }
 		log_flush();
 	}
 
