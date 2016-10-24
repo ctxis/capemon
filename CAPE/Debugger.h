@@ -65,6 +65,7 @@ BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register,
 BOOL ContextClearHardwareBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
+BOOL ContextClearAllDebugRegisters(PCONTEXT Context);
 BOOL ClearAllDebugRegisters(HANDLE hThread);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 BOOL InitialiseDebugger(void);

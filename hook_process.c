@@ -339,7 +339,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-        if (AllocationBase && AllocationSize && !AllocationDumped)
+        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
         {
             DoOutputDebugString("NtTerminateProcess hook: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
             
@@ -363,7 +363,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-        if (AllocationBase && AllocationSize && !AllocationDumped)
+        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
         {
             DoOutputDebugString("NtTerminateProcess hook: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
 
@@ -788,7 +788,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 	//if (lpflOldProtect && *lpflOldProtect == flNewProtect)
 	//	return ret;
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize > 0x2000) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize > 0x2000) {
         DoOutputDebugString("VirtualProtectEx hook, lpAddress:0x%x, dwSize: 0x%x\n", lpAddress, dwSize);
         if (AllocationBase == 0)    
             SetInitialBreakpoint(lpAddress, dwSize);

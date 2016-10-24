@@ -81,6 +81,12 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
 		return FALSE;
 	}
 
+    if (LargeFileSize.LowPart == 0)
+	{
+		DoOutputDebugString("MapFile: File is zero in size.");
+		return FALSE;
+	}
+
 	*FileSize = LargeFileSize.LowPart;
 	
     DoOutputDebugString("File size: 0x%x", *FileSize);
@@ -121,6 +127,27 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
     }
 	
 	return TRUE;
+}
+
+//**************************************************************************************
+char* GetName()
+//**************************************************************************************
+{
+    char *OutputFilename;
+    SYSTEMTIME Time;
+
+    OutputFilename = (char*)malloc(MAX_PATH);
+    
+    if (OutputFilename == NULL)
+    {
+        DoOutputErrorString("GetName: failed to allocate memory");
+        return 0;
+    }
+    
+    GetSystemTime(&Time);
+    sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), Time.wMilliseconds, Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
+    
+	return OutputFilename;
 }
 
 //**************************************************************************************
@@ -185,7 +212,7 @@ char* GetHashFromHandle(HANDLE hFile)
 
 	if (!MapFile(hFile, &Buffer, &FileSize))
 	{	
-		DoOutputErrorString("MapFile error - check path!");
+		DoOutputErrorString("MapFile error - check the path is valid and the file has size.");
 		return 0;
 	}
     
@@ -550,26 +577,17 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 	HANDLE hOutputFile;
     LPVOID BufferCopy;
 
-	OutputFilename = (char*) malloc(MAX_PATH);
 	FullPathName = (char*) malloc(MAX_PATH);
 
-    if (OutputFilename == NULL || FullPathName == NULL)
+    if (FullPathName == NULL)
     {
 		DoOutputErrorString("DumpMemory: Error allocating memory for strings");
 		return 0;    
     }
     
-    if (!GetHash((LPVOID)Buffer, Size, (char*)OutputFilename))
-    {
-		DoOutputErrorString("DumpMemory: GetHash function failed");
-		
-        sprintf_s(OutputFilename, MAX_PATH*sizeof(char), CAPE_OUTPUT_FILE);
-    }
-    else
-        DoOutputDebugString("DumpMemory: GetHash returned: %s", OutputFilename);
-        
-    sprintf_s((OutputFilename+2*MD5LEN), MAX_PATH*sizeof(char)-2*MD5LEN, ".bin");
-
+    OutputFilename = GetName();
+    DoOutputDebugString("DumpMemory: CAPE output filename: %s", OutputFilename);
+    
 	// We want to dump CAPE output to the 'analyzer' directory
     memset(FullPathName, 0, MAX_PATH);
 	

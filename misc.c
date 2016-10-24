@@ -28,6 +28,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
+extern BOOL AllocationWriteDetected;
+extern BOOL PeImageDetected;
+extern BOOL AllocationDumped;
+extern PVOID AllocationBase;
+extern SIZE_T AllocationSize;
+extern int DumpPE(LPCVOID Buffer);
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 
 static _NtQueryInformationProcess pNtQueryInformationProcess;
 static _NtQueryInformationThread pNtQueryInformationThread;
@@ -1256,6 +1264,26 @@ int is_shutting_down()
 
 	mutex_handle = OpenMutex(SYNCHRONIZE, FALSE, g_config.shutdown_mutex);
     if(mutex_handle != NULL) {
+        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
+        {
+            DoOutputDebugString("Shutdown mutex: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
+
+            AllocationDumped = TRUE;
+            
+            if (PeImageDetected)
+            {
+                AllocationDumped = DumpPE(AllocationBase);
+                if (!AllocationDumped)
+                {
+                    AllocationDumped = TRUE;
+                    AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                }
+            }
+            else
+            {
+                AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+            }
+        }
 		log_flush();
         CloseHandle(mutex_handle);
         ret = 1;

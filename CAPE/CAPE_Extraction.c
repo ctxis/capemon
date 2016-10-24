@@ -19,6 +19,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include "Debugger.h"
 
 #define PE_HEADER_LIMIT 0x200
+#define ESTIMATED_LOOP_DELTA 0x50
 
 #ifdef STANDALONE
 #include "..\alloc.h"
@@ -42,6 +43,99 @@ BOOL AllocationWriteDetected;
 BOOL PeImageDetected;
 BOOL AllocationDumped;
 static BOOL AllocationBaseExecBpSet;
+static BOOL EntryPointExecBpSet;
+static unsigned int EPBPRegister;
+
+static DWORD BasePointer, FirstEIP, LastEIP, CurrentEIP, LastDelta, TotalDelta, DeltaMax, LoopDeltaMax;
+
+BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+    if (LastEIP)
+    {
+        CurrentEIP = ExceptionInfo->ContextRecord->Eip;
+        
+        if (CurrentEIP > LastEIP)
+        {
+            LastDelta = (unsigned int)(CurrentEIP - LastEIP);
+        }
+        else
+        {
+            LastDelta = (unsigned int)(LastEIP - CurrentEIP);
+        }
+        
+        if (CurrentEIP > FirstEIP)
+        {
+            TotalDelta = (unsigned int)(CurrentEIP - FirstEIP);
+            
+            if ((unsigned int)(CurrentEIP - FirstEIP) > DeltaMax)
+                DeltaMax = (unsigned int)(CurrentEIP - FirstEIP);
+            
+            if (LoopDeltaMax && DeltaMax > LoopDeltaMax && ExceptionInfo->ContextRecord->Ebp == BasePointer)
+            // attempt dump as writing may have ended
+            {
+                if (!AllocationDumped && DumpPE(AllocationBase))
+                {
+                    AllocationDumped = TRUE;
+                    DoOutputDebugString("Trace: successfully dumped from loop end at 0x%x.\n", CurrentEIP);
+                    return TRUE;
+                }
+                else
+                {
+                    DoOutputDebugString("Trace: failed to dump PE module from loop end at 0x%x (loop delta 0x%x).\n", CurrentEIP, (unsigned int)(CurrentEIP - FirstEIP));
+                    return FALSE;
+                }            
+            }
+        }
+        else
+        {
+            TotalDelta = (unsigned int)(FirstEIP - CurrentEIP);
+
+            if (DeltaMax && DeltaMax > LoopDeltaMax)
+                LoopDeltaMax = DeltaMax; 
+        }
+        
+        // attempt dump as probably not in a loop, writing may have ended
+        if (TotalDelta > ESTIMATED_LOOP_DELTA && ExceptionInfo->ContextRecord->Ebp <= BasePointer)
+        {
+            if (!AllocationDumped && DumpPE(AllocationBase))
+            {
+                AllocationDumped = TRUE;
+                DoOutputDebugString("Trace: successfully dumped module 0x%x bytes after last write, EIP: 0x%x\n", TotalDelta, CurrentEIP);
+                return TRUE;
+            }
+            else
+            {
+                DoOutputDebugString("Trace: failed to dump PE module 0x%x bytes after last write, EIP: 0x%x", TotalDelta, CurrentEIP);
+                return FALSE;
+            }
+        }
+        else if (!LastDelta)
+        {
+            //DoOutputDebugString("Trace: repeating instruction at 0x%x.\n", CurrentEIP);
+            SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+        }
+        else
+        {
+            LastEIP = CurrentEIP;
+            //DoOutputDebugString("Trace: next instruction at 0x%x.\n", CurrentEIP);
+            SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+        }
+        
+        return TRUE;
+    }
+    else
+    {
+        LastEIP = ExceptionInfo->ContextRecord->Eip;
+        BasePointer = ExceptionInfo->ContextRecord->Ebp;
+        FirstEIP = LastEIP;
+        DeltaMax = 0;
+        LoopDeltaMax = 0;
+        
+        DoOutputDebugString("Entering single-step mode at 0x%x.\n", FirstEIP);
+        SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+        return TRUE;
+    }
+}
 
 BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
@@ -62,14 +156,13 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     if (AllocationDumped == TRUE)
     {
         DoOutputDebugString("EntryPointExecCallback: allocation already dumped, clearing breakpoint.\n");
-        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+        ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);
     }
-    
-    if (DumpPE(AllocationBase))
+    else if (DumpPE(AllocationBase))
     {
         AllocationDumped = TRUE;
         DoOutputDebugString("EntryPointExecCallback: successfully dumped module.\n");
-        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+        ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);        
     }
     else
     {
@@ -84,8 +177,6 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
 BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	unsigned int Register;
-    
     if (pBreakpointInfo == NULL)
 	{
 		DoOutputDebugString("EntryPointWriteCallback executed with pBreakpointInfo NULL.\n");
@@ -106,15 +197,34 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
         return TRUE;        
     }
     
-    if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, 1, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
+    if (EntryPointExecBpSet == FALSE)
     {
-        DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x.\n", Register, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
+        if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &EPBPRegister, 1, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
+        {
+            EntryPointExecBpSet = TRUE;
+            DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x.\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
+        }
+        else
+        {
+            DoOutputDebugString("EntryPointWriteCallback: ContextSetNextAvailableBreakpoint on EntryPoint 0x%x failed\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
+            return FALSE;
+        }
     }
     else
     {
-        DoOutputDebugString("EntryPointWriteCallback: ContextSetNextAvailableBreakpoint on EntryPoint 0x%x failed\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
-        //ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
-        return FALSE;
+        if (ContextSetHardwareBreakpoint(ExceptionInfo->ContextRecord, EPBPRegister, 1, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
+        {
+            EntryPointExecBpSet = TRUE;
+            DoOutputDebugString("EntryPointWriteCallback: Updated EntryPoint execution bp %d to 0x%x.\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
+            
+            // since it looks like the writing is happening at most a word at a time, let's try and catch the end of the write for another dump attempt
+            //SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+        }
+        else
+        {
+            DoOutputDebugString("EntryPointWriteCallback: ContextSetHardwareBreakpoint on updated EntryPoint 0x%x failed\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
+            return FALSE;
+        }    
     }
 	
     DoOutputDebugString("EntryPointWriteCallback executed successfully.\n");
@@ -217,7 +327,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         if (DumpPE(pBreakpointInfo->Address))
         {
             AllocationDumped = TRUE;
-            ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+            ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);        
             DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
             return TRUE;
         }
@@ -266,7 +376,7 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
         {
             AllocationDumped = TRUE;
             DoOutputDebugString("ShellCodeExecCallback: Found and dumped a PE image.\n");
-            ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+            ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);
         }
         else
         {
@@ -275,8 +385,9 @@ BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
     }
     else if (DumpMemory(AllocationBase, AllocationSize))
     {
+        AllocationDumped = TRUE;
         DoOutputDebugString("ShellCodeExecCallback: Dumped region of execution.\n");
-        ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+        ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);
     }
     else
     {
@@ -326,7 +437,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
             {
                 AllocationDumped = TRUE;
                 DoOutputDebugString("BaseAddressWriteCallback: successfully dumped module.\n");
-                ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+                ContextClearAllDebugRegisters(ExceptionInfo->ContextRecord);
                 return TRUE;
             }
             else
@@ -392,6 +503,7 @@ BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize)
     PeImageDetected = FALSE;
     AllocationDumped = FALSE;    
     AllocationBaseExecBpSet = FALSE;
+    EntryPointExecBpSet = FALSE;
     
     DoOutputDebugString("SetInitialBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
     

@@ -341,16 +341,6 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         PBREAKPOINTINFO pBreakpointInfo;
 		PTHREADBREAKPOINTS CurrentThreadBreakpoint;
 		
-        DoOutputDebugString("Entering CAPEExceptionFilter: breakpoint hit: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
-		
-		CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
-
-		if (CurrentThreadBreakpoint == NULL)
-		{
-			DoOutputDebugString("CAPEExceptionFilter: Can't get thread breakpoints - FATAL.\n");
-			return EXCEPTION_CONTINUE_SEARCH;
-		}
-        
         // Test Dr6 to see if this is a breakpoint
         BreakpointFlag = FALSE;
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
@@ -364,10 +354,19 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         // If not it's a single-step
         if (BreakpointFlag == FALSE)
         {            
-            //if (SingleStepHandler(ExceptionInfo))
             SingleStepHandler(ExceptionInfo);
             return EXCEPTION_CONTINUE_EXECUTION;
         }
+        
+        DoOutputDebugString("Entering CAPEExceptionFilter: breakpoint hit: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
+		
+		CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
+
+		if (CurrentThreadBreakpoint == NULL)
+		{
+			DoOutputDebugString("CAPEExceptionFilter: Can't get thread breakpoints - FATAL.\n");
+			return EXCEPTION_CONTINUE_SEARCH;
+		}
         
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
 		{
@@ -661,6 +660,20 @@ BOOL SetDebugRegister
 	if (!SetThreadContext(hThread, &Context))
 		return FALSE;
 
+	return TRUE;
+}
+
+//**************************************************************************************
+BOOL ContextClearAllDebugRegisters(PCONTEXT Context)
+//**************************************************************************************
+{
+    Context->Dr0 = 0;
+    Context->Dr1 = 0;
+	Context->Dr2 = 0;
+    Context->Dr3 = 0;
+	Context->Dr6 = 0;
+	Context->Dr7 = 0;
+	
 	return TRUE;
 }
 

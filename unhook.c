@@ -29,8 +29,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNHOOK_BUFSIZE 32
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern BOOL AllocationDumped;
+extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
+extern BOOL AllocationWriteDetected;
 extern BOOL PeImageDetected;
+extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
 extern int DumpPE(LPCVOID Buffer);
@@ -259,15 +261,16 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
 
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
-        if (AllocationBase && AllocationSize && !AllocationDumped)
+        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
         {
-            DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-
             AllocationDumped = TRUE;
             
             if (PeImageDetected)
             {
+                DoOutputDebugString("Terminate event: attempting CAPE dump on PE image at region: 0x%x.\n", AllocationBase);
+
                 AllocationDumped = DumpPE(AllocationBase);
+
                 if (!AllocationDumped)
                 {
                     AllocationDumped = TRUE;
@@ -276,6 +279,8 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
             }
             else
             {
+                DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x, size: 0x%x\n", AllocationBase, AllocationSize);
+                AllocationDumped = TRUE;
                 AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
             }
         }

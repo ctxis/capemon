@@ -787,7 +787,7 @@ bool PeParser::savePeFileToDisk( const CHAR * newFile )
             closeFileHandle();
         else
         {
-            HashString = GetHashFromHandle(hFile);
+            //HashString = GetHashFromHandle(hFile);
     
             closeFileHandle();
             
@@ -797,20 +797,24 @@ bool PeParser::savePeFileToDisk( const CHAR * newFile )
                 return 0;            
             }
             
-            if (HashString == 0)
-            {
-                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
-                
-                if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
-                {
-                    DoOutputErrorString("There was a problem obtaining the full file path");
-                    return 0;            
-                }
-
-				CapeOutputFile(CapeOutputPath);
-                return 1;         
-            }
-            else if (MoveFile(CapeOutputPath, HashString))
+            //if (HashString == 0)
+            //{
+            //    DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
+            //    
+            //    if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
+            //    {
+            //        DoOutputErrorString("There was a problem obtaining the full file path");
+            //        return 0;            
+            //    }
+            //
+			//	CapeOutputFile(CapeOutputPath);
+            //    return 1;         
+            //}
+            //else 
+            
+            HashString = GetName();
+            
+            if (MoveFile(CapeOutputPath, HashString))
             {
                 memset(CapeOutputPath, 0, MAX_PATH);
                 
@@ -851,6 +855,12 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
 		return false;
 	}
 
+	if (!listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData || !listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData)
+	{
+        DoOutputDebugString("PE Parser: Error - image seems incomplete: (%d sections, PointerToRawData: 0x%x, SizeOfRawData: 0x%x) - dump failed.\n", getNumberOfSections(), listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData, listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData);
+		return false;
+	}
+    
 	if (openWriteFileHandle(newFile))
 	{
         DoOutputDebugString("Number of sections: %d, PointerToRawData: 0x%x, SizeOfRawData: 0x%x\n", getNumberOfSections(), listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData, listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData);
@@ -869,7 +879,7 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
             closeFileHandle();
         else
         {
-            HashString = GetHashFromHandle(hFile);
+            //HashString = GetHashFromHandle(hFile);
     
             closeFileHandle();
             
@@ -879,20 +889,24 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
                 return 0;            
             }
             
-            if (HashString == 0)
-            {
-                DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
-                
-                if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
-                {
-                    DoOutputErrorString("There was a problem obtaining the full file path");
-                    return 0;            
-                }
-
-				CapeOutputFile(CapeOutputPath);
-                return 1;         
-            }
-            else if (MoveFile(CapeOutputPath, HashString))
+            //if (HashString == 0)
+            //{
+            //    DoOutputErrorString("There was a problem obtaining the hash of the file, cannot rename");
+            //    
+            //    if (!GetFullPathName(CapeOutputPath, MAX_PATH, CapeOutputPath, NULL))
+            //    {
+            //        DoOutputErrorString("There was a problem obtaining the full file path");
+            //        return 0;            
+            //    }
+            //
+			//	CapeOutputFile(CapeOutputPath);
+            //    return 1;         
+            //}
+            //else 
+            
+            HashString = GetName();
+            
+            if (MoveFile(CapeOutputPath, HashString))
             {
                 memset(CapeOutputPath, 0, MAX_PATH);
                 
@@ -917,7 +931,7 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
                 return 0;
             }
         }
-	}
+    }
 
 	return retValue;
 }
