@@ -133,9 +133,11 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
     __in_opt    LPVOID lpUnknown2
 ) {
 	BOOL ret;
+    struct InjectionInfo *CurrentInjectionInfo;    
 	hook_info_t saved_hookinfo;
+    WCHAR TargetProcess[MAX_PATH];	
 	
-	memcpy(&saved_hookinfo, hook_info(), sizeof(saved_hookinfo));
+    memcpy(&saved_hookinfo, hook_info(), sizeof(saved_hookinfo));
 	ret = Old_CreateProcessInternalW(lpUnknown1, lpApplicationName,
         lpCommandLine, lpProcessAttributes, lpThreadAttributes,
         bInheritHandles, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment,
@@ -157,11 +159,43 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
             ResumeThread(lpProcessInformation->hThread);
         }
         else if (!called_by_hook()){
-            RunPE_Handle = lpProcessInformation->hProcess;
-            RunPE_ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
-            RunPE_EntryPoint = (DWORD)NULL;
-            RunPE_ImageDumped = FALSE;
-            DoOutputDebugString("RunPE process handle set: 0x%x, ImageBase: 0x%x", RunPE_Handle, RunPE_ImageBase);
+        
+            CurrentInjectionInfo = CreateInjectionInfo(lpProcessInformation->dwProcessId);
+            
+            if (CurrentInjectionInfo == NULL)
+            {
+                DoOutputDebugString("CreateProcessInternal hook: Failed to create injection info for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
+            }
+            else
+            {
+                CurrentInjectionInfo->ProcessHandle = lpProcessInformation->hProcess;
+                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
+                CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+                CurrentInjectionInfo->ImageDumped = FALSE;
+
+                CapeMetaData->TargetProcess = (char*)malloc(MAX_PATH);
+                memset(TargetProcess, 0, MAX_PATH*sizeof(WCHAR));
+
+                if (lpApplicationName)
+                    _snwprintf(TargetProcess, MAX_PATH, L"%s", lpApplicationName);
+                else if (lpCommandLine)
+                {
+                    DoOutputDebugString("CreateProcessInternal hook: using lpCommandLine: %ws.\n", lpCommandLine);
+                    if (*lpCommandLine == L'\"')
+                        wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine+1, (rsize_t)((wcschr(lpCommandLine+1, '\"') - lpCommandLine)-1));
+                    else 
+                    {
+                        if (wcschr(lpCommandLine, ' '))
+                            wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, (rsize_t)((wcschr(lpCommandLine, ' ') - lpCommandLine)+1));
+                        else 
+                            wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, wcslen(lpCommandLine)+1);
+                    }
+                }
+
+                WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
+                
+                DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
+            }
         }
         
         disable_sleep_skip();
