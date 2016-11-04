@@ -1543,6 +1543,16 @@ extern HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 );   
 
+extern HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
+	void
+);
+
+extern HOOKDEF(LPVOID, WINAPI, HeapAlloc,
+  _In_ HANDLE hHeap,
+  _In_ DWORD  dwFlags,
+  _In_ SIZE_T dwBytes
+);
+
 extern HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsA,
 	_In_opt_ const GUID   *ClassGuid,
 	_In_opt_       PCSTR Enumerator,

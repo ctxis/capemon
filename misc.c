@@ -29,13 +29,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
+extern BOOL ClearAllBreakpoints(HANDLE hThread);
 extern BOOL AllocationWriteDetected;
 extern BOOL PeImageDetected;
 extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
-extern int DumpPE(LPCVOID Buffer);
+extern int DumpImageInCurrentProcess(DWORD ModuleBase);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
+extern void ExtractionClearAll(void);
 
 static _NtQueryInformationProcess pNtQueryInformationProcess;
 static _NtQueryInformationThread pNtQueryInformationThread;
@@ -602,7 +606,7 @@ BOOL is_in_dll_range(ULONG_PTR addr)
 	return FALSE;
 }
 
-static ULONG_PTR base_of_dll_of_interest;
+ULONG_PTR base_of_dll_of_interest;
 
 void set_dll_of_interest(ULONG_PTR BaseAddress)
 {
@@ -1254,8 +1258,9 @@ extern int process_shutting_down;
 int is_shutting_down()
 {
 	lasterror_t lasterror;
-	int ret = 0;
 	HANDLE mutex_handle;
+	LPCVOID PEPointer;
+	int ret = 0;
 
 	if (process_shutting_down)
 		return 1;
@@ -1263,27 +1268,67 @@ int is_shutting_down()
 	get_lasterrors(&lasterror);
 
 	mutex_handle = OpenMutex(SYNCHRONIZE, FALSE, g_config.shutdown_mutex);
+    
     if(mutex_handle != NULL) {
-        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
+        if (AllocationBase && AllocationSize && !AllocationDumped)
         {
-            DoOutputDebugString("Shutdown mutex: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-
-            AllocationDumped = TRUE;
-            
-            if (PeImageDetected)
+            if (ScanForNonZero(AllocationBase, AllocationSize))
             {
-                AllocationDumped = DumpPE(AllocationBase);
-                if (!AllocationDumped)
+                DoOutputDebugString("Shutdown mutex: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
+
+                AllocationDumped = TRUE;
+                PEPointer = NULL;
+                
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
                 {
-                    AllocationDumped = TRUE;
+                    if (PEPointer)
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
+                    else
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
+                    
+                    if (!AllocationDumped)
+                    {
+                        AllocationDumped = TRUE;
+                        AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                        
+                        if (!AllocationDumped)
+                        {
+                            DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
+                        }
+                        else
+                        {
+                            DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
+                            ClearAllBreakpoints(NULL);       
+                        }
+                    }
+                    else
+                    {
+                        DoOutputDebugString("Shutdown mutex: successfully dumped module at 0x%x.\n", AllocationBase);
+                        ClearAllBreakpoints(NULL);       
+                    }
+                }
+                else
+                {
                     AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+
+                    if (!AllocationDumped)
+                    {
+                        DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
+                    }
+                    else
+                    {
+                        DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
+                        ClearAllBreakpoints(NULL);       
+                    }
                 }
             }
             else
             {
-                AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                DoOutputDebugString("Shutdown mutex: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
+                ExtractionClearAll();
             }
         }
+        
 		log_flush();
         CloseHandle(mutex_handle);
         ret = 1;
@@ -1821,4 +1866,41 @@ unsigned int address_is_in_stack(DWORD Address)
 			return 0;
 	}
 #endif
+}
+
+PVOID get_process_image_base(HANDLE process_handle)
+{
+	PROCESS_BASIC_INFORMATION pbi;
+	ULONG ulSize;
+	HANDLE dup_handle = process_handle;
+	PVOID pPEB = 0, ImageBase = 0;
+	PEB Peb;
+    SIZE_T dwBytesRead;
+	lasterror_t lasterror;
+
+	get_lasterrors(&lasterror);
+
+	if (process_handle == GetCurrentProcess())
+    {
+		ImageBase = GetModuleHandle(NULL);
+        goto out;
+	}
+
+	memset(&pbi, 0, sizeof(pbi));
+	
+    if(pNtQueryInformationProcess(process_handle, 0, &pbi, sizeof(pbi), &ulSize) >= 0 && ulSize == sizeof(pbi))
+    {
+        pPEB = pbi.PebBaseAddress;
+        
+        if (ReadProcessMemory(process_handle, pPEB, &Peb, sizeof(Peb), &dwBytesRead))
+        {
+            ImageBase = Peb.ImageBaseAddress;
+        }
+        else return NULL;
+    }
+    
+out:
+	set_lasterrors(&lasterror);
+
+	return ImageBase;
 }

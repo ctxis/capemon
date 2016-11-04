@@ -26,6 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "config.h"
 #include "ignore.h"
+#include "CAPE\CAPE.h"
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -84,7 +85,7 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     BOOL ret = 1;
     LPTOP_LEVEL_EXCEPTION_FILTER res;
 
-	if (g_config.debug)
+	if (g_config.debug || DEBUGGER_ENABLED)
 		res = NULL;
 	else
 		res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);

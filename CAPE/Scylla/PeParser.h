@@ -6,7 +6,6 @@
 
 #define CAPE_OUTPUT_FILE "CapeOutput.bin"
 
-extern "C" char* GetHashFromHandle(HANDLE hFile);
 extern "C" char* GetName();
 
 class PeFileSection {
@@ -72,12 +71,14 @@ public:
 	bool readPeSectionsFromProcess();
 	bool readPeSectionsFromFile();
 	bool savePeFileToDisk(const CHAR * newFile);
+	bool savePeFileToDisk(const CHAR * newFile, BOOL CapeFile);
 	bool saveCompletePeToDisk(const CHAR * newFile);
 	void removeDosStub();
 	void alignAllSectionHeaders();
 	void fixPeHeader();
 	void setDefaultFileAlignment();
 	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath);
+	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath, BOOL CapeFile);
 	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath, std::vector<PeSection> & sectionList);
 
 	void setEntryPointVa(DWORD_PTR entryPoint);
@@ -125,6 +126,7 @@ protected:
 	BYTE * headerMemory;
 
 	HANDLE hFile;
+	HANDLE hInfoFile;
 	DWORD fileSize;
 
 	bool readPeHeaderFromFile(bool readSectionHeaders);

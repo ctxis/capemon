@@ -27,7 +27,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "lookup.h"
 #include "CAPE\Debugger.h"
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+
 static lookup_t g_ignored_threads;
+
+extern DWORD ChildProcessId;
 
 void ignored_threads_init(void)
 {
@@ -371,7 +375,7 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
 
 	pid = pid_from_process_handle(hProcess);
 
-    if (pid == Injection_ProcessId)
+    if (pid == ChildProcessId)
     {
         DoOutputDebugString("RemoteThread created in child process, sending address to debugger: 0x%x", lpStartAddress);
         SendDebuggerMessage((DWORD)lpStartAddress);

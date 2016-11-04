@@ -84,6 +84,8 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
 
+    //HOOK_SPECIAL(kernel32, HeapAlloc),
+
 	// has special handling
 
 	HOOK_SPECIAL(jscript, COleScript_ParseScriptText),
@@ -348,9 +350,9 @@ static hook_t g_hooks[] = {
     // Misc Hooks
     //
 
-	//HOOK(ntdll, memcpy),
-	HOOK(msvcrt, memcpy),
-    HOOK(msvcrt, srand),
+	//HOOK(msvcrt, memcpy),
+	//HOOK(ntdll, memcpy),  
+	HOOK(kernel32, GetProcessHeap),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -923,7 +925,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
-        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif

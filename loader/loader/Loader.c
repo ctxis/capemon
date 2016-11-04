@@ -733,6 +733,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         _stprintf_s(DebugOutput, MAX_PATH, TEXT("Successfully received debugger init address: 0x%x.\n"), RemoteFuncAddress);
         OutputDebugString(DebugOutput);		
 
+        //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
         ctx.ContextFlags = CONTEXT_ALL;
         if (!GetThreadContext(hThread, &ctx))
         {
@@ -786,7 +787,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Child process created, suspended, DLL successfully injected\n"));
             OutputDebugString(DebugOutput);
 
-            ctx.ContextFlags = CONTEXT_ALL;
+            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
 #else
@@ -949,6 +950,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         _stprintf_s(DebugOutput, MAX_PATH, TEXT("Successfully received debugger init address: 0x%x.\n"), RemoteFuncAddress);
         OutputDebugString(DebugOutput);		
 
+        //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
         ctx.ContextFlags = CONTEXT_ALL;
         if (!GetThreadContext(pi.hThread, &ctx))
         {
@@ -1003,6 +1005,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Child process created, suspended, DLL successfully injected\n"));
             OutputDebugString(DebugOutput);
 
+            //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
             ctx.ContextFlags = CONTEXT_ALL;
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
@@ -1042,7 +1045,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             OutputDebugString(DebugOutput);                        
         }
         
-        return 1;
     }
     else if (!strcmp(__argv[1], "dump")) 
     {

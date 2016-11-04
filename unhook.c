@@ -31,12 +31,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
 extern BOOL AllocationWriteDetected;
+extern BOOL ClearAllBreakpoints(HANDLE hThread);
 extern BOOL PeImageDetected;
 extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
-extern int DumpPE(LPCVOID Buffer);
+extern int DumpImageInCurrentProcess(DWORD ModuleBase);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
+extern void ExtractionClearAll(void);
 
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
 
@@ -257,33 +261,72 @@ static HANDLE g_terminate_event_handle;
 
 static DWORD WINAPI _terminate_event_thread(LPVOID param)
 {
+	LPCVOID PEPointer;
+
 	hook_disable();
 
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
-        if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
+        
+        if (AllocationBase && AllocationSize && !AllocationDumped)
         {
-            AllocationDumped = TRUE;
-            
-            if (PeImageDetected)
+            if (ScanForNonZero(AllocationBase, AllocationSize))
             {
-                DoOutputDebugString("Terminate event: attempting CAPE dump on PE image at region: 0x%x.\n", AllocationBase);
+                DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
 
-                AllocationDumped = DumpPE(AllocationBase);
-
-                if (!AllocationDumped)
+                AllocationDumped = TRUE;
+                PEPointer = NULL;
+                
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
                 {
-                    AllocationDumped = TRUE;
+                    if (PEPointer)
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
+                    else
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
+                    
+                    if (!AllocationDumped)
+                    {
+                        AllocationDumped = TRUE;
+                        AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                        
+                        if (!AllocationDumped)
+                        {
+                            DoOutputDebugString("Terminate event: failed to dump memory range at 0x%x.\n", AllocationBase);
+                        }
+                        else
+                        {
+                            DoOutputDebugString("Terminate event: successfully dumped memory range.\n");
+                            ClearAllBreakpoints(NULL);       
+                        }
+                    }
+                    else
+                    {
+                        DoOutputDebugString("Terminate event: successfully dumped module.\n");
+                        ClearAllBreakpoints(NULL);       
+                    }
+                }
+                else
+                {
                     AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+
+                    if (!AllocationDumped)
+                    {
+                        DoOutputDebugString("Terminate event: failed to dump memory range at 0x%x.\n", AllocationBase);
+                    }
+                    else
+                    {
+                        DoOutputDebugString("Terminate event: successfully dumped memory range.\n");
+                        ClearAllBreakpoints(NULL);       
+                    }
                 }
             }
             else
             {
-                DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x, size: 0x%x\n", AllocationBase, AllocationSize);
-                AllocationDumped = TRUE;
-                AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                DoOutputDebugString("Terminate event: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
+                ExtractionClearAll();
             }
         }
+
 		log_flush();
 	}
 

@@ -24,8 +24,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "misc.h"
 #include "config.h"
-#include "CAPE/CAPE.h"
-#include "CAPE/Debugger.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in_opt    PWCHAR PathToFile,
@@ -134,7 +136,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 	BOOL ret;
 	hook_info_t saved_hookinfo;
 	
-	memcpy(&saved_hookinfo, hook_info(), sizeof(saved_hookinfo));
+    memcpy(&saved_hookinfo, hook_info(), sizeof(saved_hookinfo));
 	ret = Old_CreateProcessInternalW(lpUnknown1, lpApplicationName,
         lpCommandLine, lpProcessAttributes, lpThreadAttributes,
         bInheritHandles, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment,
@@ -148,7 +150,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
                 ResumeThread(lpProcessInformation->hThread);
             }
             else {
-                Injection_ProcessId = lpProcessInformation->dwProcessId;
+                ChildProcessId = lpProcessInformation->dwProcessId;
             }
         }
         else {
