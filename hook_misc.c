@@ -33,6 +33,8 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int DumpPE(LPCVOID Buffer);
 
+BOOL CONFIG_DUMPED;
+
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
     __in  HOOKPROC lpfn,
@@ -594,6 +596,8 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
                 *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
                 *(DWORD*)(PEImage+e_lfanew) = IMAGE_NT_SIGNATURE;
 
+                CapeMetaData->DumpType = PLUGX_PAYLOAD;
+                
                 DumpPE(PEImage);
                 
                 free(PEImage);
@@ -605,8 +609,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 			}
 			else
 			{
-                DoOutputDebugString("PlugX signature detected at MZ but not PE - dumping anyway.");
-                DumpMemory(UncompressedBuffer, UncompressedBufferSize);
+                DoOutputDebugString("PlugX signature detected at MZ but not PE, aborting dump.");
 			}
 		}
 		
@@ -627,7 +630,10 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 			{
                 pNtHeader = (PIMAGE_NT_HEADERS)(UncompressedBuffer+e_lfanew);
 
+                CapeMetaData->DumpType = PLUGX_PAYLOAD;
+                
                 DumpPE(UncompressedBuffer);
+                
                 DoOutputDebugString("Dumped PE module.");
 			}
 		}
@@ -1101,18 +1107,20 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+	int ret = 0;	// this is needed for LOQ_void
 
 	Old_memcpy(dest, src, count);
 	
 	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
     
+	if (memcpy_count == 0)
+		CONFIG_DUMPED = FALSE;
+	
 	if (PLUGX_DETECTED)
 		memcpy_count++;
 	
-    //DoOutputDebugString("memcpy hook executed, memcpy_count = %d, count = %d", memcpy_count, count);
-	
-	if (PLUGX_DETECTED && 
+	if (PLUGX_DETECTED && !CONFIG_DUMPED &&
+    (
 		count == 0xae4  || 
 		count == 0xbe4  || 
         count == 0x150c ||
@@ -1125,24 +1133,19 @@ HOOKDEF(void, WINAPIV, memcpy,
         count == 0x254c ||
 		count == 0x2d58 || 
 		count == 0x36a4 ||
-        count == 0x4ea4) 
+        count == 0x4ea4 
         //count > 0xa00 &&              //fuzzy matching
 		//count < 0x5000)               //fuzzy matching
-	{
-		DoOutputDebugString("memcpy detected (#%d, size 0x%d), dumping.", memcpy_count, count);
-		DumpMemory((BYTE*)src, count);
+	))
+    {
+		DoOutputDebugString("PlugX config detected (#%d, size 0x%d), dumping.\n", memcpy_count, count);
+        
+        CapeMetaData->DumpType = PLUGX_CONFIG;
+
+        DumpMemory((BYTE*)src, count);        
+
+        CONFIG_DUMPED = TRUE;
     }
-	
-	//if (PLUGX_DETECTED && memcpy_count >= memcpy_limit)
-	//{
-	//	// We've lost the flow, so bail
-	//	DoOutputDebugString("Too many memcpys (%d), we have probably missed the config - bailing.", memcpy_count);
-    //
-    //    // Before bailing, allow logging to catch up
-    //    Sleep(1000);
-    //
-	//	ExitProcess(0);
-	//}
 	
 	return;
 }
