@@ -277,8 +277,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     // although the documentation on msdn is a bit vague, this seems correct
     // for both XP and Vista (the ClientId->UniqueProcess part, that is)
 
-    int pid = 0;
 	NTSTATUS ret;
+	struct InjectionInfo *CurrentInjectionInfo;
+
+    int pid = 0;
 
     if(ClientId != NULL) {
 		__try {
@@ -300,11 +302,26 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
         ObjectAttributes, ClientId);
         
     if (NT_SUCCESS(ret) && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
-        RunPE_Handle = ProcessHandle;
-        RunPE_ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
-        RunPE_EntryPoint = (DWORD)NULL;
-        RunPE_ImageDumped = FALSE;
-        DoOutputDebugString("NtOpenProcess: Open process handle set: 0x%x, ImageBase: 0x%x, DesiredAccess: 0x%x", RunPE_Handle, RunPE_ImageBase, DesiredAccess);
+        CurrentInjectionInfo = GetInjectionInfo(pid);
+        
+        if (CurrentInjectionInfo == NULL)
+        {   // First call for this process, create new info
+            CurrentInjectionInfo = CreateInjectionInfo(pid);
+            DoOutputDebugString("NtOpenProcess: Injection info created for pid 0x%x.\n", pid);
+        
+            if (CurrentInjectionInfo == NULL)
+            {
+                DoOutputDebugString("NtOpenProcess: Cannot create new injection info - FATAL ERROR.\n");
+            }
+            else
+            {
+                CurrentInjectionInfo->ProcessHandle = ProcessHandle;
+                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
+                CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+                CurrentInjectionInfo->ImageDumped = FALSE;
+            }
+        }
+        // else... Some samples call this multiple times for the same process, we can ignore
     }    
         
     LOQ_ntstatus("process", "Phi", "ProcessHandle", ProcessHandle,
@@ -318,16 +335,29 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	__in  HANDLE ProcessHandle
 ) {
 	NTSTATUS ret;
-	DWORD pid = pid_from_process_handle(ProcessHandle);
+	struct InjectionInfo *CurrentInjectionInfo;
+    
+    DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
 
-    if (RunPE_Handle && RunPE_ImageBase && RunPE_ProcessWriteDetected)
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+    
+    if (CurrentInjectionInfo && CurrentInjectionInfo->ImageBase)
     {
-        if (RunPE_ImageDumped == FALSE)
+        if (CurrentInjectionInfo->ImageDumped == FALSE)
         {
-            DoOutputDebugString("Dumping RunPE process image, handle 0x%x, image base 0x%x.", RunPE_Handle, RunPE_ImageBase);
-            DumpProcess(RunPE_Handle, RunPE_ImageBase);
-            RunPE_ImageDumped = TRUE;
+            DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
+            SetCapeMetaData(EVILGRAB_PAYLOAD, pid, ProcessHandle, NULL);
+            CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, CurrentInjectionInfo->ImageBase);
+            
+            if (CurrentInjectionInfo->ImageDumped)
+            {
+                DoOutputDebugString("NtResumeProcess hook: Dumped PE image from buffer.\n");
+                CurrentInjectionInfo->ImageBase = 0;
+                CurrentInjectionInfo->EntryPoint = 0;
+            }
+            else
+                DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
         }
     }
     
@@ -472,12 +502,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-    
-    if (RunPE_Handle && (ProcessHandle == RunPE_Handle))
-    {
-        RunPE_ProcessWriteDetected = TRUE;
-    }
-
+      
 	if ((pid != GetCurrentProcessId()) || Win32Protect != PAGE_READWRITE)
 		LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
 		"ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
@@ -540,7 +565,6 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     _In_    SIZE_T nSize,
     _Out_   PSIZE_T lpNumberOfBytesRead
 ) {
-    //long e_lfanew;
     BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
@@ -564,45 +588,89 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 ) {
 	NTSTATUS ret;
 	DWORD pid;
-    long e_lfanew;
+	struct InjectionInfo *CurrentInjectionInfo;
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
     ENSURE_SIZET(NumberOfBytesWritten);
 
     ret = Old_NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buffer,
         NumberOfBytesToWrite, NumberOfBytesWritten);
 
-    if (NT_SUCCESS(ret) && *NumberOfBytesWritten > 0)
-    {
-        // Check if we have a valid DOS and PE header at the beginning of Buffer
-        if (*(WORD*)Buffer == IMAGE_DOS_SIGNATURE)
-        {
-            DoOutputDebugString("Executable binary detected in NtWriteVirtualMemory buffer.");
-            
-            e_lfanew = *(long*)((unsigned char*)Buffer+0x3c);
+	pid = pid_from_process_handle(ProcessHandle);
         
-            if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+    
+    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+    {
+        if (NT_SUCCESS(ret) && *NumberOfBytesWritten > 0)
+        {
+            // Check if we have a valid DOS and PE header at the beginning of Buffer
+            if (*(WORD*)Buffer == IMAGE_DOS_SIGNATURE)
             {
-                // This check is possibly not appropriate here
-                // As long as we've got what's been compressed
-            }
+                pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer);
                 
-            if (*(DWORD*)((unsigned char*)Buffer+e_lfanew) == IMAGE_NT_SIGNATURE)
-            {
-                RunPE_ImageBase = (DWORD_PTR)BaseAddress;
-                DoOutputDebugString("RunPE ImageBase reset to: 0x%x (process handle: 0x%x)", RunPE_ImageBase, RunPE_Handle);
+                if (pDosHeader->e_lfanew && (unsigned int)pDosHeader->e_lfanew < PE_HEADER_LIMIT)
+                    pNtHeader = (PIMAGE_NT_HEADERS)((char*)Buffer + pDosHeader->e_lfanew);
+                
+                if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
+                {
+                    CurrentInjectionInfo->ImageBase = (DWORD_PTR)BaseAddress;
+                    DoOutputDebugString("NtWriteVirtualMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
 
-                DoOutputDebugString("About to attempt to dump PE from memory.");
-                if (DumpPE(Buffer))
-                    RunPE_ImageDumped = TRUE;
+                    if (CurrentInjectionInfo->ImageDumped == FALSE)
+                    {
+                        SetCapeMetaData(EVILGRAB_PAYLOAD, pid, ProcessHandle, NULL);
+                        CurrentInjectionInfo->ImageDumped = DumpPE(Buffer);
+                        
+                        if (CurrentInjectionInfo->ImageDumped)
+                        {
+                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped PE image from buffer.\n");
+                            CurrentInjectionInfo->BufferBase = Buffer;
+                            CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
+                        }
+                        else
+                            DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump PE image from buffer.\n");
+                    }                    
+                }
+                else
+                {
+                    DoOutputDebugString("NtWriteVirtualMemory hook: invalid PE file in buffer, attempting raw dump.\n");
+                    
+                    CapeMetaData->DumpType = EVILGRAB_DATA;
+                    CapeMetaData->TargetPid = pid;
+                    if (DumpMemory(Buffer, *NumberOfBytesWritten))
+                        DoOutputDebugString("NtWriteVirtualMemory hook: Dumped malformed PE image from buffer.");
+                    else
+                        DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump malformed PE image from buffer.");                    
+                }
+            }
+            else
+            {   
+                if (*NumberOfBytesWritten > 0x10)
+                {
+                    if (CurrentInjectionInfo->BufferBase && Buffer > CurrentInjectionInfo->BufferBase && 
+                        Buffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
+                    {   
+                        // Looks like a previously dumped PE image is being written a section at a time to the target process.
+                        // We don't want to dump these writes.
+                        DoOutputDebugString("NtWriteVirtualMemory hook: injection of section of PE image which has already been dumped.\n");
+                    }
+                    else
+                    {
+                        DoOutputDebugString("NtWriteVirtualMemory hook: Shellcode injected into process %d.\n", pid);
+                    
+                        // dump injected code to .bin file
+                        CapeMetaData->DumpType = EVILGRAB_DATA;
+                        CapeMetaData->TargetPid = pid;
+                        if (DumpMemory(Buffer, *NumberOfBytesWritten))
+                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped injected code from buffer.");
+                        else
+                            DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump injected code from buffer.");
+                    }
+                }
             }
         }
-    }        
-        
-    if (RunPE_Handle && (ProcessHandle == RunPE_Handle))
-    {
-        RunPE_ProcessWriteDetected = TRUE;
     }
-
-	pid = pid_from_process_handle(ProcessHandle);
 
 	if (pid != GetCurrentProcessId()) {
 		LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
@@ -626,55 +694,89 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 ) {
 	BOOL ret;
 	DWORD pid;
-	long e_lfanew;
+	struct InjectionInfo *CurrentInjectionInfo;
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
     ENSURE_SIZET(lpNumberOfBytesWritten);
 
     ret = Old_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer,
         nSize, lpNumberOfBytesWritten);
 
-    if (hProcess == RunPE_Handle && ret != 0 && *lpNumberOfBytesWritten > 0)
-    {
-        // Check if we have a valid DOS and PE header at the beginning of lpBuffer
-        if (*(WORD*)lpBuffer == IMAGE_DOS_SIGNATURE)
-        {
-            DoOutputDebugString("Executable binary detected in WriteProcessMemory buffer.");
-            
-            e_lfanew = *(long*)((unsigned char*)lpBuffer+0x3c);
-        
-            if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
-            {
-                // This check is possibly not appropriate here
-                // As long as we've got what's been compressed
-            }
-                
-            if (*(DWORD*)((unsigned char*)lpBuffer+e_lfanew) == IMAGE_NT_SIGNATURE)
-            {
-                RunPE_ImageBase = (DWORD_PTR)lpBaseAddress;
-                DoOutputDebugString("RunPE ImageBase reset to: 0x%x (process handle: 0x%x)", RunPE_ImageBase, RunPE_Handle);
-
-                DoOutputDebugString("About to attempt to dump PE from memory.");
-                if (DumpPE(lpBuffer))
-                    RunPE_ImageDumped = TRUE;
-            }
-        }
-        else
-        {   
-            if (RunPE_Handle && (hProcess == RunPE_Handle))
-            {
-                RunPE_ProcessWriteDetected = TRUE;
-            }
-            else if (*lpNumberOfBytesWritten > 0x10)
-            {
-                // dump injected code to .bin file
-                if (DumpMemory(lpBuffer, nSize))
-                    DoOutputDebugString("Dumped remotely injected code from memory.");
-                else
-                    DoOutputDebugString("Failed to dump remotely injected code from memory.");
-            }
-        }
-    }        
-    
     pid = pid_from_process_handle(hProcess);
+    
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+
+    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+    {
+        if (NT_SUCCESS(ret) && *lpNumberOfBytesWritten > 0)
+        {
+            // Check if we have a valid DOS and PE header at the beginning of Buffer
+            if (*(WORD*)lpBuffer == IMAGE_DOS_SIGNATURE)
+            {
+                pDosHeader = (PIMAGE_DOS_HEADER)((char*)lpBuffer);
+                
+                if (pDosHeader->e_lfanew && (unsigned int)pDosHeader->e_lfanew < PE_HEADER_LIMIT)
+                    pNtHeader = (PIMAGE_NT_HEADERS)((char*)lpBuffer + pDosHeader->e_lfanew);
+                
+                if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
+                {
+                    CurrentInjectionInfo->ImageBase = (DWORD_PTR)lpBaseAddress;
+                    DoOutputDebugString("WriteProcessMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
+
+                    if (CurrentInjectionInfo->ImageDumped == FALSE)
+                    {
+                        SetCapeMetaData(EVILGRAB_PAYLOAD, pid, hProcess, NULL);
+                        CurrentInjectionInfo->ImageDumped = DumpPE(lpBuffer);
+                        
+                        if (CurrentInjectionInfo->ImageDumped)
+                        {
+                            DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer.\n");
+                            CurrentInjectionInfo->BufferBase = lpBuffer;
+                            CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
+                        }
+                        else
+                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump PE image from buffer.\n");
+                    }                    
+                }
+                else
+                {
+                    DoOutputDebugString("WriteProcessMemory hook: invalid PE file in buffer, attempting raw dump.\n");
+                    
+                    CapeMetaData->DumpType = EVILGRAB_DATA;
+                    CapeMetaData->TargetPid = pid;
+                    if (DumpMemory(lpBuffer, *lpNumberOfBytesWritten))
+                        DoOutputDebugString("WriteProcessMemory hook: Dumped malformed PE image from buffer.");
+                    else
+                        DoOutputDebugString("WriteProcessMemory hook: Failed to dump malformed PE image from buffer.");                    
+                }
+            }
+            else
+            {   
+                if (*lpNumberOfBytesWritten > 0x10)
+                {
+                    if (CurrentInjectionInfo->BufferBase && lpBuffer > CurrentInjectionInfo->BufferBase && 
+                        lpBuffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
+                    {   
+                        // Looks like a previously dumped PE image is being written a section at a time to the target process.
+                        // We don't want to dump these writes.
+                        DoOutputDebugString("WriteProcessMemory hook: injection of section of PE image which has already been dumped.\n");
+                    }
+                    else
+                    {
+                        DoOutputDebugString("WriteProcessMemory hook: Shellcode injected into process %d.\n", pid);
+                    
+                        // dump injected code to .bin file
+                        CapeMetaData->DumpType = EVILGRAB_DATA;
+                        CapeMetaData->TargetPid = pid;
+                        if (DumpMemory(lpBuffer, *lpNumberOfBytesWritten))
+                            DoOutputDebugString("WriteProcessMemory hook: Dumped injected code from buffer.");
+                        else
+                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump injected code from buffer.");
+                    }
+                }
+            }
+        }
+    }
 
 	if (pid != GetCurrentProcessId()) {
 		LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
@@ -760,8 +862,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
         NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
 
 	/* Don't log an uninteresting case */
-	if (OldAccessProtection && *OldAccessProtection == NewAccessProtection)
-		return ret;
+	//if (OldAccessProtection && *OldAccessProtection == NewAccessProtection)
+	//	return ret;
 
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (NT_SUCCESS(ret)) {
@@ -807,8 +909,8 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
         lpflOldProtect);
 
 	/* Don't log an uninteresting case */
-	if (lpflOldProtect && *lpflOldProtect == flNewProtect)
-		return ret;
+	//if (lpflOldProtect && *lpflOldProtect == flNewProtect)
+	//	return ret;
 
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {

@@ -244,21 +244,25 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     __in  const CONTEXT *Context
 ) {
 	NTSTATUS ret;
+    struct InjectionInfo *CurrentInjectionInfo;    
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
 
 	ret = Old_NtSetContextThread(ThreadHandle, Context);
     
-    if (RunPE_Handle && RunPE_ImageBase)
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+
+    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
 #ifdef _WIN64
-		RunPE_EntryPoint = Context->Rax - RunPE_ImageBase;
+		CurrentInjectionInfo->EntryPoint = Context->Rax - CurrentInjectionInfo->ImageBase;
 #else
-		RunPE_EntryPoint = Context->Eax - RunPE_ImageBase;
+		CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;
 #endif
-        DoOutputDebugString("Set RunPE entry point via NtSetContextThread: 0x%x", RunPE_EntryPoint);
+        DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
     }
+    
 	if (Context->ContextFlags & CONTEXT_CONTROL)
 #ifdef _WIN64
 		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rip);
@@ -302,19 +306,34 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
     __in        HANDLE ThreadHandle,
     __out_opt   ULONG *SuspendCount
 ) {
+    struct InjectionInfo *CurrentInjectionInfo;   
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	NTSTATUS ret;
 	ENSURE_ULONG(SuspendCount);
 	pipe("RESUME:%d,%d", pid, tid);
 
-    if (RunPE_Handle && RunPE_ImageBase && RunPE_ProcessWriteDetected)
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+
+    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
-        if (RunPE_ImageDumped == FALSE)
+        if (CurrentInjectionInfo->ProcessHandle && CurrentInjectionInfo->ImageBase)
         {
-            DoOutputDebugString("Dumping RunPE process image, handle 0x%x, image base 0x%x.", RunPE_Handle, RunPE_ImageBase);
-            DumpProcess(RunPE_Handle, RunPE_ImageBase);
-            RunPE_ImageDumped = TRUE;
+            if (CurrentInjectionInfo->ImageDumped == FALSE)
+            {
+                DoOutputDebugString("NtResumeThread hook: Dumping hollowed process image, process %d 0x%x, image base 0x%x.", pid, CurrentInjectionInfo->ImageBase);
+                SetCapeMetaData(EVILGRAB_PAYLOAD, pid, CurrentInjectionInfo->ProcessHandle, NULL);
+                CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, CurrentInjectionInfo->ImageBase);
+            
+                if (CurrentInjectionInfo->ImageDumped)
+                {
+                    DoOutputDebugString("NtResumeThread hook: Dumped PE image from buffer.\n");
+                    CurrentInjectionInfo->ImageBase = 0;
+                    CurrentInjectionInfo->EntryPoint = 0;
+                }
+                else
+                    DoOutputDebugString("NtResumeThread hook: Failed to dump PE image from buffer.\n");
+            }
         }
     }
     

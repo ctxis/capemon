@@ -38,38 +38,46 @@ static int grant_debug_privileges(void)
 
 static BOOLEAN is_suspended(int pid, int tid)
 {
-    ULONG length;
-    PSYSTEM_PROCESS_INFORMATION pspi, proc;
-    ULONG requestedlen = 16384;
-    _NtQuerySystemInformation pNtQuerySystemInformation = (_NtQuerySystemInformation)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
+	ULONG length;
+	PSYSTEM_PROCESS_INFORMATION pspi = NULL, proc;
+	ULONG requestedlen = 16384;
+	_NtQuerySystemInformation pNtQuerySystemInformation = (_NtQuerySystemInformation)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
+	BOOLEAN ret = FALSE;
 
-    pspi = malloc(requestedlen);
-    if (pspi == NULL)
-        return FALSE;
+	pspi = malloc(requestedlen);
+	if (pspi == NULL)
+		goto out;
 
-    while (pNtQuerySystemInformation(SystemProcessInformation, pspi, requestedlen, &length) == STATUS_INFO_LENGTH_MISMATCH) {
-        free(pspi);
-        requestedlen <<= 1;
-        pspi = malloc(requestedlen);
-        if (pspi == NULL)
-            return FALSE;
-    }
-    // now we have a valid list of process information
-    for (proc = pspi; proc->NextEntryOffset; proc = (PSYSTEM_PROCESS_INFORMATION)((PCHAR)proc + proc->NextEntryOffset)) {
-        ULONG i;
-        if ((int)(ULONG_PTR)proc->UniqueProcessId != pid)
-            continue;
-        for (i = 0; i < proc->NumberOfThreads; i++) {
-            PSYSTEM_THREAD thread = &proc->Threads[i];
-            if (tid && (int)(ULONG_PTR)thread->ClientId.UniqueThread != tid)
-                continue;
-            if (thread->WaitReason != Suspended)
-                return FALSE;
-        }
-    }
-    free(pspi);
-
-    return TRUE;
+	while (pNtQuerySystemInformation(SystemProcessInformation, pspi, requestedlen, &length) == STATUS_INFO_LENGTH_MISMATCH) {
+		free(pspi);
+		requestedlen <<= 1;
+		pspi = malloc(requestedlen);
+		if (pspi == NULL)
+			goto out;
+	}
+	// now we have a valid list of process information
+	proc = pspi;
+	while (1) {
+		ULONG i;
+		if ((int)(ULONG_PTR)proc->UniqueProcessId != pid)
+			goto next;
+		for (i = 0; i < proc->NumberOfThreads; i++) {
+			PSYSTEM_THREAD thread = &proc->Threads[i];
+			if (tid && (int)(ULONG_PTR)thread->ClientId.UniqueThread != tid)
+				continue;
+			if (thread->WaitReason != Suspended)
+				goto out;
+		}
+next:
+		if (!proc->NextEntryOffset)
+			break;
+		proc = (PSYSTEM_PROCESS_INFORMATION)((PCHAR)proc + proc->NextEntryOffset);
+	}
+	ret = TRUE;
+out:
+	if (pspi)
+		free(pspi);
+	return ret;
 }
 
 static unsigned int get_shellcode(unsigned char *buf, PVOID injstruct)
@@ -148,8 +156,6 @@ static unsigned int get_shellcode(unsigned char *buf, PVOID injstruct)
 // returns < 0 if injection failed, 0 if injection succeeded and process is alive, and 1 if we injected but the process is suspended, so we shouldn't wait for it
 static int inject(int pid, int tid, const char *dllpath, BOOLEAN suspended, int injectmode)
 {
-    //unsigned int injectmode = INJECT_QUEUEUSERAPC;
-    //unsigned int injectmode = INJECT_CREATEREMOTETHREAD;
     HANDLE prochandle = NULL;
     HANDLE ThreadHandlele = NULL;
     LPVOID dllpathbuf;
@@ -439,12 +445,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return ERROR_DEBUGPRIV;
 
     if (!strcmp(__argv[1], "inject")) {
-        int pid, tid;
-        if (__argc != 5)
+        int pid, tid, injectmode;
+        if (__argc != 6)
             return ERROR_ARGCOUNT;
         pid = atoi(__argv[2]);
         tid = atoi(__argv[3]);
-        return inject(pid, tid, __argv[4], is_suspended(pid, tid), INJECT_QUEUEUSERAPC);
+        injectmode = atoi(__argv[5]);        
+        return inject(pid, tid, __argv[4], is_suspended(pid, tid), injectmode);
     } else if (!strcmp(__argv[1], "load")) {
         // usage: loader.exe load <binary> <commandline> <dll to load>
         PROCESS_INFORMATION pi;
@@ -569,14 +576,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         TCHAR DebugOutput[MAX_PATH];
         DWORD cbBytesRead, cbWritten, cbReplyBytes, OEP, RemoteFuncAddress; 
         HANDLE hPipe, hProcess, hThread; 
-        LPTSTR lpszPipename = TEXT("\\\\.\\pipe\\ACEpipe"); 
+        char lpszPipename[MAX_PATH];
+
                 
         if (__argc != 7)
             return ERROR_ARGCOUNT;
         pid = atoi(__argv[2]);
         tid = atoi(__argv[3]);
-        //hProcess = (HANDLE)atoi(__argv[4]);
-        
+
+        memset(lpszPipename, 0, MAX_PATH*sizeof(CHAR));
+        sprintf_s(lpszPipename, MAX_PATH, "\\\\.\\pipe\\CAPEpipe_%x", pid);
+    
         hProcess = OpenProcess(PROCESS_ALL_ACCESS, TRUE, pid);
         if (hProcess == NULL) 
         {
@@ -693,10 +703,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             return -17;
         }
 
+#ifndef _WIN64       
         OEP = ctx.Eax;
-        
+#else
+        OEP = ctx.Rax;
+#endif        
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+#ifndef _WIN64       
         _stprintf_s(DebugOutput, MAX_PATH, TEXT("GetThreadContext gives OEP=0x%x\n"), ctx.Eax);
+#else
+        _stprintf_s(DebugOutput, MAX_PATH, TEXT("GetThreadContext gives OEP=0x%x\n"), ctx.Rax);
+#endif        
         OutputDebugString(DebugOutput);		
         
         cbWritten = 0;
@@ -730,9 +747,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Child process created, suspended, DLL successfully injected\n"));
             OutputDebugString(DebugOutput);
 
-            //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
-            ctx.ContextFlags = CONTEXT_ALL;
+            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+#ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
+#else
+            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+#endif        
             if (!SetThreadContext(hThread, &ctx))
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
@@ -742,13 +762,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             else
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+#ifndef _WIN64       
                 _stprintf_s(DebugOutput, MAX_PATH, TEXT("Set new EP to 0x%x\n"), ctx.Eax);
+#else
+                _stprintf_s(DebugOutput, MAX_PATH, TEXT("Set new EP to 0x%x\n"), ctx.Rax);
+#endif        
                 OutputDebugString(DebugOutput);                
             }
         }
-        
-        //Sleep(1000);
-        
         CloseHandle(hPipe);
         CloseHandle(hProcess);
         CloseHandle(hThread);
@@ -764,12 +785,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         TCHAR DebugOutput[MAX_PATH];
         DWORD  dwThreadId, cbBytesRead, cbWritten, cbReplyBytes, OEP, RemoteFuncAddress, ExitCode; 
         HANDLE hPipe; 
-        LPTSTR lpszPipename = TEXT("\\\\.\\pipe\\ACEpipe"); 
+        char lpszPipename[MAX_PATH]; 
                 
         RemoteFuncAddress = 0;
         fConnected = FALSE; 
         dwThreadId = 0; 
         hPipe = INVALID_HANDLE_VALUE;
+        
+        memset(&si, 0, sizeof(si));
+        if (__argc != 5)
+            return ERROR_ARGCOUNT;
+        
+        if (!CreateProcessA(__argv[2], __argv[3], NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
+        {
+            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Failed to create process, last error=%d.\n"), GetLastError());
+            OutputDebugString(DebugOutput);
+            return -6;        
+        }
+        else
+        {
+            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("CreateProcess succeeded.\n"));
+            OutputDebugString(DebugOutput);
+        }        
+
+        memset(lpszPipename, 0, MAX_PATH*sizeof(CHAR));
+        sprintf_s(lpszPipename, MAX_PATH, "\\\\.\\pipe\\CAPEpipe_%x", pi.dwProcessId);
 
         hPipe = CreateNamedPipe
         ( 
@@ -798,26 +840,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("CreateNamedPipe succeeded.\n"));
             OutputDebugString(DebugOutput);
         }
-
-        memset(&si, 0, sizeof(si));
-        if (__argc != 5)
-            return ERROR_ARGCOUNT;
-        
-        if (!CreateProcessA(__argv[2], __argv[3], NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
-        {
-            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Failed to create process, last error=%d.\n"), GetLastError());
-            OutputDebugString(DebugOutput);
-            return -6;        
-        }
-        else
-        {
-            memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("CreateProcess succeeded.\n"));
-            OutputDebugString(DebugOutput);
-        }
-        
-        Sleep(1000);
         
         RetVal = inject(pi.dwProcessId, pi.dwThreadId, __argv[4], TRUE, INJECT_CREATEREMOTETHREAD);
 
@@ -895,11 +917,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             return -9;
         }
 
+#ifndef _WIN64       
         OEP = ctx.Eax;
+#else
+        OEP = ctx.Rax;
+#endif        
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+#ifndef _WIN64       
         _stprintf_s(DebugOutput, MAX_PATH, TEXT("GetThreadContext gives OEP=0x%x\n"), ctx.Eax);
-        OutputDebugString(DebugOutput);		
+#else
+        _stprintf_s(DebugOutput, MAX_PATH, TEXT("GetThreadContext gives OEP=0x%x\n"), ctx.Rax);
+#endif        
+        OutputDebugString(DebugOutput);	
         
         cbWritten = 0;
         cbReplyBytes = sizeof(DWORD);
@@ -934,7 +964,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
             ctx.ContextFlags = CONTEXT_ALL;
+#ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
+#else
+            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+#endif        
             if (!SetThreadContext(pi.hThread, &ctx))
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
@@ -944,7 +978,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             else
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+#ifndef _WIN64       
                 _stprintf_s(DebugOutput, MAX_PATH, TEXT("Set new EP to 0x%x\n"), ctx.Eax);
+#else
+                _stprintf_s(DebugOutput, MAX_PATH, TEXT("Set new EP to 0x%x\n"), ctx.Rax);
+#endif        
                 OutputDebugString(DebugOutput);                
             }
         }
@@ -976,6 +1014,55 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         dumpfile = __argv[3];
         return dump(pid, dumpfile);
     }
+#ifdef CUCKOODBG
+	else if (!strcmp(__argv[1], "pipe")) {
+		// usage: loader.exe pipe <pipe name> <dll to load>
+		HANDLE pipehandle;
+		char pipe_name[512];
+		FILE *f = fopen("c:\\cmds.log", "a");
 
-    return ERROR_MODE;
+		if (__argc != 4)
+			return ERROR_ARGCOUNT;
+
+		_snprintf(pipe_name, sizeof(pipe_name)-1, "\\\\.\\PIPE\\%s", __argv[2]);
+
+		while (1) {
+			pipehandle = CreateNamedPipeA(pipe_name, PIPE_ACCESS_DUPLEX,
+				PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+				PIPE_UNLIMITED_INSTANCES,
+				16384,
+				16384,
+				0,
+				NULL);
+			if (ConnectNamedPipe(pipehandle, NULL) || GetLastError() == ERROR_PIPE_CONNECTED) {
+				char buf[16384];
+				char response[16384];
+				int response_len = 0;
+				int bytes_read = 0;
+				int bytes_written = 0;
+				memset(buf, 0, sizeof(buf));
+				ReadFile(pipehandle, buf, sizeof(buf), &bytes_read, NULL);
+				fprintf(f, "%s\n", buf);
+				fflush(f);
+				if (!strncmp(buf, "PROCESS:", 8)) {
+					int pid = -1, tid = -1;
+					char *p;
+					if ((p = strchr(buf, ','))) {
+						*p = '\0';
+						pid = atoi(&buf[8]);
+						tid = atoi(p + 1);
+					}
+					else {
+						pid = atoi(&buf[8]);
+					}
+					inject(pid, tid, __argv[3], is_suspended(pid, tid), INJECT_QUEUEUSERAPC);
+				}
+				WriteFile(pipehandle, response, response_len, &bytes_written, NULL);
+				CloseHandle(pipehandle);
+			}
+		}
+		fclose(f);
+	}
+#endif
+	return ERROR_MODE;
 }
