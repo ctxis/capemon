@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
+extern struct CapeMetadata *CapeMetaData;
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int DumpPE(LPCVOID Buffer);
 
@@ -592,6 +593,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
                 *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
                 *(DWORD*)(PEImage+e_lfanew) = IMAGE_NT_SIGNATURE;
 
+                CapeMetaData->DumpType = PLUGX_PAYLOAD;
                 DumpPE(PEImage);
                 
                 free(PEImage);
@@ -625,6 +627,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 			{
                 pNtHeader = (PIMAGE_NT_HEADERS)(UncompressedBuffer+e_lfanew);
 
+                CapeMetaData->DumpType = COMPRESSION;
                 DumpPE(UncompressedBuffer);
                 DoOutputDebugString("Dumped PE module.");
 			}

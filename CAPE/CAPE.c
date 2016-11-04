@@ -32,17 +32,25 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define BUFSIZE 			1024	// For hashing
 #define MD5LEN  			16
 
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void CapeOutputFile(LPCTSTR lpOutputFile);
-extern int ScyllaDumpCurrentProcess(DWORD NewOEP);
-extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
-extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP);
+extern int ScyllaDumpCurrentProcess(DWORD NewOEP, BOOL CapeFile);
+extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP, BOOL CapeFile);
+extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP, BOOL CapeFile);
+extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP, BOOL CapeFile);
+
+extern wchar_t *our_process_path;
+extern ULONG_PTR base_of_dll_of_interest;
 
 static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
 CHAR s_szDllPath[MAX_PATH];
 
+struct CapeMetadata *CapeMetaData;
+BOOL ProcessDumped;
 //**************************************************************************************
 void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned int Count)
 //**************************************************************************************
@@ -79,6 +87,12 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
 		return FALSE;
 	}
 
+    if (LargeFileSize.LowPart == 0)
+	{
+		DoOutputDebugString("MapFile: File is zero in size.");
+		return FALSE;
+	}
+
 	*FileSize = LargeFileSize.LowPart;
 	
     DoOutputDebugString("File size: 0x%x", *FileSize);
@@ -106,7 +120,7 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
 
     if (dwBytesRead > 0 && dwBytesRead < *FileSize)
     {
-        DoOutputErrorString("MapFile: Unexpected size read in.");
+        DoOutputErrorString("MapFile: Unexpected size read in");
         free(Buffer);
 		return FALSE;
 
@@ -119,6 +133,27 @@ BOOL MapFile(HANDLE hFile, unsigned char **Buffer, DWORD* FileSize)
     }
 	
 	return TRUE;
+}
+
+//**************************************************************************************
+char* GetName()
+//**************************************************************************************
+{
+    char *OutputFilename;
+    SYSTEMTIME Time;
+
+    OutputFilename = (char*)malloc(MAX_PATH);
+    
+    if (OutputFilename == NULL)
+    {
+        DoOutputErrorString("GetName: failed to allocate memory");
+        return 0;
+    }
+    
+    GetSystemTime(&Time);
+    sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), Time.wMilliseconds, Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
+    
+	return OutputFilename;
 }
 
 //**************************************************************************************
@@ -183,7 +218,7 @@ char* GetHashFromHandle(HANDLE hFile)
 
 	if (!MapFile(hFile, &Buffer, &FileSize))
 	{	
-		DoOutputErrorString("GetHashFromHandle: MapFile error - check path!");
+		DoOutputErrorString("MapFile error - check the path is valid and the file has size.");
 		return 0;
 	}
     
@@ -191,13 +226,13 @@ char* GetHashFromHandle(HANDLE hFile)
 
     if (OutputFilenameBuffer == NULL)
     {
-		DoOutputErrorString("GetHashFromHandle: Error allocating memory for hash string.");
+		DoOutputErrorString("Error allocating memory for hash string");
 		return 0;    
     }
     
     if (!GetHash(Buffer, FileSize, (char*)OutputFilenameBuffer))
     {
-		DoOutputErrorString("GetHashFromHandle: GetHash function failed.\n");
+		DoOutputErrorString("GetHashFromHandle: GetHash function failed");
 		return 0;    
     }
     
@@ -290,7 +325,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
                     return FALSE;
                 }
                 
@@ -311,6 +346,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 			}
 		}
 	}
+	
 #ifndef _WIN64
 	for (i=0; i<=0xffff; i++)
 	{
@@ -361,7 +397,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 
                 if (DecryptedBuffer == NULL)
                 {
-                    DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
                     return FALSE;
                 }
                 
@@ -405,7 +441,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
                         return FALSE;
                     }
                     
@@ -461,7 +497,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     if (DecryptedBuffer == NULL)
                     {
-                        DoOutputErrorString(TEXT("Error allocating memory for decrypted PE binary."));
+                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
                         return FALSE;
                     }
                     
@@ -478,11 +514,64 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 			}
 		}
 	}
+
 #endif
     // We free can free DecryptedBuffer as it's no longer needed
     free(DecryptedBuffer);
     
     return FALSE;
+}
+
+//**************************************************************************************
+int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
+//**************************************************************************************
+{
+    unsigned int p;
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    for (p=0; p<Size-1; p++)
+    {
+        if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
+        {
+            pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
+
+            if ((ULONG)pDosHeader->e_lfanew == 0) 
+            {
+                // e_lfanew is zero
+                continue;
+            }
+
+            if ((ULONG)pDosHeader->e_lfanew > Size-p)
+            {
+                // Entry point points beyond end of region
+                continue;
+            }
+            
+            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+            
+            if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
+            {
+                // No 'PE' header
+                continue;                
+            }
+            
+            if ((pNtHeader->FileHeader.Machine == 0) && (pNtHeader->FileHeader.SizeOfOptionalHeader == 0)) 
+            {
+                // Basic requirements
+                continue;
+            }
+            
+            if (Offset)
+            {
+                *Offset = (LPCVOID)((char*)Buffer+p);
+            }
+            
+            return 1;
+        }
+    }
+    
+    return 0;
 }
 
 //**************************************************************************************
@@ -492,22 +581,19 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 	char *OutputFilename, *FullPathName;
 	DWORD RetVal, dwBytesWritten;
 	HANDLE hOutputFile;
+    LPVOID BufferCopy;
 
-	OutputFilename = (char*) malloc(MAX_PATH);
 	FullPathName = (char*) malloc(MAX_PATH);
 
-    if (OutputFilename == NULL || FullPathName == NULL)
+    if (FullPathName == NULL)
     {
 		DoOutputErrorString("DumpMemory: Error allocating memory for strings");
 		return 0;    
     }
     
-	GetHash((LPVOID)Buffer, Size, (char*)OutputFilename);
+    OutputFilename = GetName();
+    DoOutputDebugString("DumpMemory: CAPE output filename: %s", OutputFilename);
     
-    DoOutputDebugString("GetHash returned: %s", OutputFilename);
-
-    sprintf_s((OutputFilename+2*MD5LEN), MAX_PATH*sizeof(char)-2*MD5LEN, ".bin");
-
 	// We want to dump CAPE output to the 'analyzer' directory
     memset(FullPathName, 0, MAX_PATH);
 	
@@ -515,7 +601,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
 	{
-		DoOutputDebugString("Error, CAPE destination path too long.");
+		DoOutputDebugString("DumpMemory: Error, CAPE destination path too long.");
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
@@ -526,44 +612,51 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 
 	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		DoOutputDebugString("Error creating output directory");
+		DoOutputDebugString("DumpMemory: Error creating output directory");
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
     PathAppend(FullPathName, OutputFilename);
 	
-    DoOutputDebugString("DEBUG: FullPathName = %s", FullPathName);
+    DoOutputDebugString("DumpMemory: FullPathName = %s", FullPathName);
     
 	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
-	DoOutputDebugString("CreateFile returned: 0x%x", hOutputFile);
+	DoOutputDebugString("DumpMemory: CreateFile returned handle: 0x%x", hOutputFile);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 	{
-		DoOutputDebugString("CAPE output filename exists already: %s", FullPathName);
+		DoOutputDebugString("DumpMemory: CAPE output filename exists already: %s", FullPathName);
         free(OutputFilename); free(FullPathName);
 		return 0;
 	}
 
-	DoOutputDebugString("Passed file_exists check");
-	
 	if (hOutputFile == INVALID_HANDLE_VALUE)
 	{
-		DoOutputErrorString("Could not create CAPE output file");
+		DoOutputErrorString("DumpMemory: Could not create CAPE output file");
         free(OutputFilename); free(FullPathName);
 		return 0;		
 	}	
-	DoOutputDebugString("Passed invalid_handle check");
 	
 	dwBytesWritten = 0;
     
-    DoOutputDebugString("CAPE output file succssfully created:%s", FullPathName);
+    DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
 
-	if (FALSE == WriteFile(hOutputFile, Buffer, Size, &dwBytesWritten, NULL))
+	BufferCopy = (LPVOID)((BYTE*)malloc(Size));
+    
+    if (BufferCopy == NULL)
+    {
+        DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
+        
+    }
+    
+    memcpy(BufferCopy, Buffer, Size);
+    
+    if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
-		DoOutputDebugString("WriteFile error on CAPE output file");
-        free(OutputFilename); free(FullPathName);
+		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
+        free(OutputFilename); free(FullPathName); free(BufferCopy);
 		return 0;
 	}
 
@@ -574,7 +667,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     CapeOutputFile(FullPathName);
     
     // We can free the filename buffers
-    free(OutputFilename); free(FullPathName);
+    free(OutputFilename); free(FullPathName); free(BufferCopy);
 	
     return 1;
 }
@@ -583,7 +676,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 int DumpCurrentProcessFixImports(DWORD NewEP)
 //**************************************************************************************
 {
-	if (ScyllaDumpCurrentProcessFixImports(NewEP))
+	if (ScyllaDumpCurrentProcessFixImports(NewEP, TRUE))
 	{
 		return 1;
 	}
@@ -595,7 +688,7 @@ int DumpCurrentProcessFixImports(DWORD NewEP)
 int DumpCurrentProcessNewEP(DWORD NewEP)
 //**************************************************************************************
 {
-	if (ScyllaDumpCurrentProcess(NewEP))
+	if (ScyllaDumpCurrentProcess(NewEP, TRUE))
 	{
 		return 1;
 	}
@@ -607,7 +700,7 @@ int DumpCurrentProcessNewEP(DWORD NewEP)
 int DumpCurrentProcess()
 //**************************************************************************************
 {
-	if (ScyllaDumpCurrentProcess(0))
+	if (ScyllaDumpCurrentProcess(0, TRUE))
 	{
 		return 1;
 	}
@@ -619,7 +712,7 @@ int DumpCurrentProcess()
 int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase)
 //**************************************************************************************
 {
-	if (ScyllaDumpProcess(hProcess, ImageBase, 0))
+	if (ScyllaDumpProcess(hProcess, ImageBase, 0, TRUE))
 	{
 		return 1;
 	}
@@ -639,14 +732,48 @@ int DumpPE(LPCVOID Buffer)
 	return 0;
 }
 
+//**************************************************************************************
+int RoutineProcessDump()
+//**************************************************************************************
+{
+    if (g_config.procmemdump && ProcessDumped == FALSE)
+    {
+        ProcessDumped = TRUE;   // this prevents a second call before the first is complete
+        if (g_config.import_reconstruction)
+        {   
+            if (base_of_dll_of_interest)
+                ProcessDumped = ScyllaDumpProcessFixImports(GetCurrentProcess(), base_of_dll_of_interest, 0, FALSE);
+            else
+                ProcessDumped = ScyllaDumpCurrentProcessFixImports(0, FALSE);
+        }        
+        else
+        {
+            if (base_of_dll_of_interest)
+                ProcessDumped = ScyllaDumpProcess(GetCurrentProcess(), base_of_dll_of_interest, 0, FALSE);
+            else
+                ProcessDumped = ScyllaDumpCurrentProcess(0, FALSE);
+        }
+    }
+
+	return ProcessDumped;
+}
+
 void init_CAPE()
 {
     // Initialise CAPE global variables
     //
+    CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
+    CapeMetaData->Pid = GetCurrentProcessId();    
+    CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
+    // This is package (and technique) dependent:
+    CapeMetaData->DumpType = COMPRESSION;
+ 
 #ifndef _WIN64	 
-    // Start the debugger thread if required
-    //launch_debugger();
+    // Start the debugger thread
+    // if required by package
+    // launch_debugger();
 #endif
     
     return;
