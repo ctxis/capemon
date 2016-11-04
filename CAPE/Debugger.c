@@ -21,7 +21,6 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <windows.h>
 #include <assert.h>
 #include <Aclapi.h>
-#include <psapi.h>
 #include "Debugger.h"
 #include "..\config.h"
 #include "..\pipe.h"
@@ -32,6 +31,9 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define FL_TF           0x00000100      // Trap flag
 #define FL_RF           0x00010000      // Resume flag
 
+#ifdef STANDALONE
+extern BOOL SetNtAllocateVirtualMemoryBP(void);
+#endif
 //
 // debug register DR7 bit fields
 //
@@ -90,7 +92,6 @@ DWORD RemoteFuncAddress;
 HANDLE hParentPipe;
 
 extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
-extern MODULEINFO modinfo;
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
 extern BOOL WoW64PatchBreakpoint(unsigned int Register);
@@ -241,8 +242,6 @@ BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register)
 	{
 		CurrentThreadId = MyGetThreadId(CurrentThreadBreakpoint->ThreadHandle);
         
-        DoOutputDebugString("GetNextAvailableBreakpoint: CurrentThreadId = 0x%x.\n", CurrentThreadId);
-        
         if (CurrentThreadId == ThreadId)
 		{
             for (i=0; i<4; i++)
@@ -251,10 +250,7 @@ BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register)
                 {
                     *Register = i;
                     return TRUE;
-                }
-                else
-                    DoOutputDebugString("GetNextAvailableBreakpoint: CurrentThreadBreakpoint->BreakpointInfo[%d].Address = 0x%x.\n", i, CurrentThreadBreakpoint->BreakpointInfo[i].Address);
-                
+                }                
             }
         }
  
@@ -272,12 +268,18 @@ BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register)
 	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
     
     CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
-    
-    if (CurrentThreadBreakpoint == NULL)
-    {
-        DoOutputDebugString("ContextGetNextAvailableBreakpoint: Error - Failed to acquire thread breakpoints.\n");
-        return FALSE;
-    }
+ 
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("ContextGetNextAvailableBreakpoint: Creating new thread breakpoints for thread 0x%x.\n", GetCurrentThreadId());
+		CurrentThreadBreakpoint = CreateThreadBreakpoints(GetCurrentThreadId());
+	}
+	
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("ContextGetNextAvailableBreakpoint: Cannot create new thread breakpoints - FATAL.\n");
+		return FALSE;
+	}
     
     for (i=0; i<4; i++)
     {
@@ -296,14 +298,14 @@ void DebugOutputThreadBreakpoints()
 //**************************************************************************************
 {
     unsigned int Register;
-    PTHREADBREAKPOINTS CurrentThreadBreakpoints;
+    PTHREADBREAKPOINTS CurrentThreadBreakpoint;
 	PBREAKPOINTINFO pBreakpointInfo;
 
-    CurrentThreadBreakpoints = GetThreadBreakpoints(GetCurrentThreadId());
+    CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
     
     for (Register = 0; Register < NUMBER_OF_DEBUG_REGISTERS; Register++)
     {
-        pBreakpointInfo = &(CurrentThreadBreakpoints->BreakpointInfo[Register]);
+        pBreakpointInfo = &(CurrentThreadBreakpoint->BreakpointInfo[Register]);
         
         if (pBreakpointInfo == NULL)
         {
@@ -321,6 +323,16 @@ void DebugOutputThreadBreakpoints()
 }
 
 //**************************************************************************************
+void ShowStack(DWORD StackPointer, unsigned int NumberOfRecords)
+//**************************************************************************************
+{
+    unsigned int i;
+    
+    for (i=0; i<NumberOfRecords; i++)
+        DoOutputDebugString("0x%x ([esp+0x%x]): 0x%x\n", StackPointer+4*i, (4*i), *(DWORD*)((BYTE*)StackPointer+4*i));
+}
+
+//**************************************************************************************
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
 //**************************************************************************************
 {
@@ -332,18 +344,8 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
     {    
 		BOOL BreakpointFlag;
         PBREAKPOINTINFO pBreakpointInfo;
-		PTHREADBREAKPOINTS CurrentThreadBreakpoints;
+		PTHREADBREAKPOINTS CurrentThreadBreakpoint;
 		
-        DoOutputDebugString("Entering CAPEExceptionFilter: breakpoint hit: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
-		
-		CurrentThreadBreakpoints = GetThreadBreakpoints(GetCurrentThreadId());
-
-		if (CurrentThreadBreakpoints == NULL)
-		{
-			DoOutputDebugString("CAPEExceptionFilter: Can't get thread breakpoints - FATAL.\n");
-			return EXCEPTION_CONTINUE_SEARCH;
-		}
-        
         // Test Dr6 to see if this is a breakpoint
         BreakpointFlag = FALSE;
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
@@ -361,11 +363,21 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
             return EXCEPTION_CONTINUE_EXECUTION;
         }
         
+        DoOutputDebugString("Entering CAPEExceptionFilter: breakpoint hit: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
+		
+		CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
+
+		if (CurrentThreadBreakpoint == NULL)
+		{
+			DoOutputDebugString("CAPEExceptionFilter: Can't get thread breakpoints - FATAL.\n");
+			return EXCEPTION_CONTINUE_SEARCH;
+		}
+        
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
 		{
 			if (ExceptionInfo->ContextRecord->Dr6 & (1 << bp))
 			{
-				pBreakpointInfo = &(CurrentThreadBreakpoints->BreakpointInfo[bp]);
+				pBreakpointInfo = &(CurrentThreadBreakpoint->BreakpointInfo[bp]);
                 
                 if (pBreakpointInfo == NULL)
                 {
@@ -657,25 +669,26 @@ BOOL SetDebugRegister
 }
 
 //**************************************************************************************
-BOOL ClearAllDebugRegisters(HANDLE hThread)
+BOOL ContextCheckDebugRegisters(PCONTEXT Context)
 //**************************************************************************************
-{
-    CONTEXT	Context;
-    Context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+{   
+    PDR7 Dr7;
+    
+    if (!Context)
+    {
+        DoOutputDebugString("CheckDebugRegisters - no arguments supplied.\n");
+        return FALSE;
+    }
+    
+    Dr7 = (PDR7)&(Context->Dr7);
+    
+	DoOutputDebugString("Checking breakpoints\n");
+	DoOutputDebugString("Dr0 0x%x, Dr7->LEN0 %i, Dr7->RWE0 %i, Dr7->L0 %i\n", Context->Dr0, Dr7->LEN0, Dr7->RWE0, Dr7->L0);
+	DoOutputDebugString("Dr1 0x%x, Dr7->LEN1 %i, Dr7->RWE1 %i, Dr7->L1 %i\n", Context->Dr1, Dr7->LEN1, Dr7->RWE1, Dr7->L1);
+	DoOutputDebugString("Dr2 0x%x, Dr7->LEN2 %i, Dr7->RWE2 %i, Dr7->L2 %i\n", Context->Dr2, Dr7->LEN2, Dr7->RWE2, Dr7->L2);
+	DoOutputDebugString("Dr3 0x%x, Dr7->LEN3 %i, Dr7->RWE3 %i, Dr7->L3 %i\n", Context->Dr3, Dr7->LEN3, Dr7->RWE3, Dr7->L3);
+	DoOutputDebugString("Dr6 0x%x\n", Context->Dr6);
 
-	if (!GetThreadContext(hThread, &Context))
-		return FALSE;
-
-    Context.Dr0 = 0;
-    Context.Dr1 = 0;
-	Context.Dr2 = 0;
-    Context.Dr3 = 0;
-	Context.Dr6 = 0;
-	Context.Dr7 = 0;
-	
-	if (!SetThreadContext(hThread, &Context))
-		return FALSE;
- 
 	return TRUE;
 }
 
@@ -717,6 +730,98 @@ BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext)
 	DoOutputDebugString("*Dr3 0x%x, Dr7->LEN3 %i, Dr7->RWE3 %i, Dr7->L3 %i\n", *Dr3, Dr7->LEN3, Dr7->RWE3, Dr7->L3);
 	DoOutputDebugString("Dr6 0x%x, thread handle 0x%x\n", Context.Dr6, hThread);
 
+	return TRUE;
+}
+
+//**************************************************************************************
+BOOL ContextClearAllBreakpoints(PCONTEXT Context)
+//**************************************************************************************
+{
+	unsigned int i; 
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
+    
+    CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
+ 
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("ContextClearAllBreakpoints: No breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		return FALSE;
+	}
+    
+    for (i=0; i<4; i++)
+    {
+        CurrentThreadBreakpoint->BreakpointInfo[i].Register = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Size = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Address = NULL;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Type = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Callback = NULL;
+    }
+
+    Context->Dr0 = 0;
+    Context->Dr1 = 0;
+	Context->Dr2 = 0;
+    Context->Dr3 = 0;
+	Context->Dr6 = 0;
+	Context->Dr7 = 0;
+	    
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL ClearAllBreakpoints(HANDLE hThread)
+//**************************************************************************************
+{
+    CONTEXT	Context;
+	unsigned int i; 
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;    
+    
+    CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
+ 
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("ContextClearAllBreakpoints: No breakpoints found for current thread %d.\n", GetCurrentThreadId());
+		return FALSE;
+	}
+    
+    if (hThread == NULL)
+    {
+        for (i=0; i<4; i++)
+        {
+            if (CurrentThreadBreakpoint->BreakpointInfo[i].ThreadHandle)
+                hThread = CurrentThreadBreakpoint->BreakpointInfo[i].ThreadHandle;
+        }
+    }
+    
+    if (hThread == NULL)
+    {
+		DoOutputDebugString("ContextClearAllBreakpoints: No thread handle supplied, and none found in thread breakpoints (thread 0x%x).\n", GetCurrentThreadId());
+		return FALSE;
+    }
+    
+    for (i=0; i<4; i++)
+    {
+        CurrentThreadBreakpoint->BreakpointInfo[i].Register = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Size = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Address = NULL;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Type = 0;
+        CurrentThreadBreakpoint->BreakpointInfo[i].Callback = NULL;
+    }
+    
+    Context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+
+	if (!GetThreadContext(hThread, &Context))
+		return FALSE;
+
+    Context.Dr0 = 0;
+    Context.Dr1 = 0;
+	Context.Dr2 = 0;
+    Context.Dr3 = 0;
+	Context.Dr6 = 0;
+	Context.Dr7 = 0;
+	
+	if (!SetThreadContext(hThread, &Context))
+		return FALSE;
+ 
 	return TRUE;
 }
 
@@ -1019,7 +1124,7 @@ BOOL ContextSetHardwareBreakpoint
 		CurrentThreadBreakpoint->BreakpointInfo[Register].Callback = Callback;
 		CurrentThreadBreakpoint->BreakpointInfo[Register].Address = Address;
 		CurrentThreadBreakpoint->BreakpointInfo[Register].Size = Size;
-		CurrentThreadBreakpoint->BreakpointInfo[Register].Type     = Type;
+		CurrentThreadBreakpoint->BreakpointInfo[Register].Type = Type;
 	}
 
     return TRUE;
@@ -1117,16 +1222,12 @@ DWORD WINAPI SetBreakpointThread(LPVOID lpParam)
 	 
 	if (SuspendThread(pBreakpointInfo->ThreadHandle) == 0xFFFFFFFF)
 		DoOutputErrorString("SetBreakpointThread: Call to SuspendThread failed");
-    else
-        DoOutputDebugString("SetBreakpointThread: Current thread suspended.\n");
-
+    
 	if (SetDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
 	{
 		DoOutputErrorString("Call to SetDebugRegister failed");
 	}
 
-    DoOutputDebugString("SetBreakpointThread: Breakpoint set, about to resume thread.\n");
-	
 	ResumeThread(pBreakpointInfo->ThreadHandle);
 
     return 1; 
@@ -1158,6 +1259,75 @@ DWORD WINAPI ClearBreakpointThread(LPVOID lpParam)
 }
 
 //**************************************************************************************
+BOOL SetHardwareBreakpointWithoutThread
+//**************************************************************************************
+(
+    DWORD	ThreadId,
+    int		Register,
+    int		Size,
+    LPVOID	Address,
+    DWORD	Type,
+	PVOID	Callback
+)
+{
+    PBREAKPOINTINFO pBreakpointInfo;
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
+    
+    if (Register > 3 || Register < 0)
+    {
+        DoOutputDebugString("SetHardwareBreakpointWithoutThread: Error - register value %d, can only have value 0-3.\n", Register);
+        return FALSE;
+    }  
+	
+    CurrentThreadBreakpoint = GetThreadBreakpoints(ThreadId);
+
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
+	}
+	
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("Cannot create new thread breakpoints - FATAL.\n");
+		return FALSE;
+	}
+
+	pBreakpointInfo = &CurrentThreadBreakpoint->BreakpointInfo[Register];
+	
+	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
+	{
+		DoOutputDebugString("SetHardwareBreakpointWithoutThread: There is no thread handle in the threadbreakpoint!! FATAL ERROR.\n");
+		return FALSE;
+	}
+    	
+	pBreakpointInfo->ThreadHandle = CurrentThreadBreakpoint->ThreadHandle;
+	pBreakpointInfo->Register = Register;
+	pBreakpointInfo->Size = Size;
+	pBreakpointInfo->Address = Address;
+	pBreakpointInfo->Type	  = Type;
+	pBreakpointInfo->Callback = Callback;
+	
+	if (SetDebugRegister
+	(
+		pBreakpointInfo->ThreadHandle,
+		pBreakpointInfo->Register,
+		pBreakpointInfo->Size,
+		pBreakpointInfo->Address,
+		pBreakpointInfo->Type
+	) == FALSE)
+	{
+		DoOutputDebugString("SetHardwareBreakpointWithoutThread: Call to SetDebugRegister failed.\n");
+	}
+	else
+	{
+		DoOutputDebugString("SetHardwareBreakpointWithoutThread: Call to SetDebugRegister succeeded.\n");
+	}
+	
+    return 1; 
+}
+
+//**************************************************************************************
 BOOL SetHardwareBreakpoint
 //**************************************************************************************
 (
@@ -1170,7 +1340,7 @@ BOOL SetHardwareBreakpoint
 )
 {
     PBREAKPOINTINFO pBreakpointInfo;
-	PTHREADBREAKPOINTS CurrentThreadBreakpoints;
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
 	HANDLE hSetBreakpointThread;
     
     if (Register > 3 || Register < 0)
@@ -1179,29 +1349,29 @@ BOOL SetHardwareBreakpoint
         return FALSE;
     }  
 	
-    CurrentThreadBreakpoints = GetThreadBreakpoints(ThreadId);
+    CurrentThreadBreakpoint = GetThreadBreakpoints(ThreadId);
 
-	if (CurrentThreadBreakpoints == NULL)
+	if (CurrentThreadBreakpoint == NULL)
 	{
 		DoOutputDebugString("Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
-		CurrentThreadBreakpoints = CreateThreadBreakpoints(ThreadId);
+		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
 	}
 	
-	if (CurrentThreadBreakpoints == NULL)
+	if (CurrentThreadBreakpoint == NULL)
 	{
 		DoOutputDebugString("Cannot create new thread breakpoints - FATAL.\n");
 		return FALSE;
 	}
 
-	pBreakpointInfo = &CurrentThreadBreakpoints->BreakpointInfo[Register];
+	pBreakpointInfo = &CurrentThreadBreakpoint->BreakpointInfo[Register];
 	
-	if (CurrentThreadBreakpoints->ThreadHandle == NULL)
+	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
 		DoOutputDebugString("SetHardwareBreakpoint: There is no thread handle in the threadbreakpoint!! FATAL ERROR.\n");
 		return FALSE;
 	}
     	
-	pBreakpointInfo->ThreadHandle = CurrentThreadBreakpoints->ThreadHandle;
+	pBreakpointInfo->ThreadHandle = CurrentThreadBreakpoint->ThreadHandle;
 	pBreakpointInfo->Register = Register;
 	pBreakpointInfo->Size = Size;
 	pBreakpointInfo->Address = Address;
@@ -1211,8 +1381,6 @@ BOOL SetHardwareBreakpoint
     OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
     //AddVectoredContinueHandler(1, CAPEExceptionFilter);
 	
-    DoOutputDebugString("SetHardwareBreakpoint: about to call SetBreakpointThread\n");
-
     hSetBreakpointThread = CreateThread( 
 		NULL,               
 		0,                  
@@ -1223,11 +1391,20 @@ BOOL SetHardwareBreakpoint
 
 	if (hSetBreakpointThread == NULL) 
 	{
-	   DoOutputDebugString("Failed to create SetBreakpointThread thread\n");
-	   return 0;
+        if (GetLastError() == ERROR_BAD_EXE_FORMAT)
+        {
+            // There is a chance the sample has zeroed the PE header
+            // of the main process, causing CreateThread to fail.
+            // We thus try setting the breakpoint without suspending
+            // the target thread as a last resort.
+            DoOutputDebugString("SetHardwareBreakpoint: Error creating SetBreakpointThread, attempting to set breakpoint without thread.\n");
+            return SetHardwareBreakpointWithoutThread(ThreadId, Register, Size, Address, Type, Callback);
+        }
+        
+        DoOutputErrorString("Failed to create SetBreakpointThread thread");
+        return 0;
 	}
-    DoOutputDebugString("SetHardwareBreakpoint: SetBreakpointThread called, beginning wait\n");
-
+    
     // Wait until thread has terminated
     WaitForSingleObject(hSetBreakpointThread, INFINITE);
 
@@ -1249,7 +1426,7 @@ BOOL ClearHardwareBreakpoint(DWORD ThreadId, int Register)
 //**************************************************************************************
 {
     PBREAKPOINTINFO pBreakpointInfo;
-	PTHREADBREAKPOINTS CurrentThreadBreakpoints;
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
 	HANDLE hClearBreakpointThread;
 
     if (Register > 3 || Register < 0)
@@ -1258,26 +1435,26 @@ BOOL ClearHardwareBreakpoint(DWORD ThreadId, int Register)
         return FALSE;
     }  
 		
-	CurrentThreadBreakpoints = GetThreadBreakpoints(ThreadId);
+	CurrentThreadBreakpoint = GetThreadBreakpoints(ThreadId);
 	
-	if (CurrentThreadBreakpoints == NULL)
+	if (CurrentThreadBreakpoint == NULL)
 	{
 		DoOutputDebugString("Cannot find thread breakpoints - failed to clear.\n");
 		return FALSE;
 	}
 
-	pBreakpointInfo = &CurrentThreadBreakpoints->BreakpointInfo[Register];
+	pBreakpointInfo = &CurrentThreadBreakpoint->BreakpointInfo[Register];
 	
-	if (CurrentThreadBreakpoints->ThreadHandle == NULL)
+	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
 		DoOutputDebugString("ClearHardwareBreakpoint: There is no thread handle in the threadbreakpoint!! FATAL ERROR.\n");
 		return FALSE;
 	}
-	else DoOutputDebugString("ClearHardwareBreakpoint: Thread handle 0x%x found in BreakpointInfo struct.\n", CurrentThreadBreakpoints->ThreadHandle);
+	else DoOutputDebugString("ClearHardwareBreakpoint: Thread handle 0x%x found in BreakpointInfo struct.\n", CurrentThreadBreakpoint->ThreadHandle);
 	
 	DoOutputDebugString("About to create ClearBreakpointThread thread\n");
 	
-	pBreakpointInfo->ThreadHandle = CurrentThreadBreakpoints->ThreadHandle;
+	pBreakpointInfo->ThreadHandle = CurrentThreadBreakpoint->ThreadHandle;
 	
 	hClearBreakpointThread = CreateThread(NULL, 0,  ClearBreakpointThread, pBreakpointInfo,	0, &ThreadId);
     
@@ -1316,6 +1493,20 @@ BOOL SetNextAvailableBreakpoint
 	PVOID	        Callback
 )
 {
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint = GetThreadBreakpoints(ThreadId);
+
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("SetNextAvailableBreakpoint: Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
+	}
+	
+	if (CurrentThreadBreakpoint == NULL)
+	{
+		DoOutputDebugString("SetNextAvailableBreakpoint: Cannot create new thread breakpoints - FATAL.\n");
+		return FALSE;
+	}
+
     if (GetNextAvailableBreakpoint(ThreadId, Register) == FALSE)
     {
         DoOutputDebugString("SetNextAvailableBreakpoint: GetNextAvailableBreakpoint failed\n");
@@ -1354,8 +1545,8 @@ BOOL InitialiseDebugger(void)
     }
     
     // Initialise any global variables
-    memset(&modinfo, 0, sizeof(MODULEINFO));
-
+    ChildProcessId = 0;
+    
     // Ensure wow64 patch is installed if needed
     WoW64fix();
     
@@ -1367,8 +1558,8 @@ __declspec (naked dllexport) void DebuggerInit(void)
 //**************************************************************************************
 {   
     DWORD StackPointer;
-    unsigned int Register;
-    
+	unsigned int Register;
+
     _asm
         {
         push	ebp
@@ -1403,7 +1594,6 @@ __declspec (naked dllexport) void DebuggerInit(void)
         pop     ebp
         jmp		OEP
     }
-
 }
 
 BOOL SendDebuggerMessage(DWORD Input)

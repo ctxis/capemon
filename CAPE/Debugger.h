@@ -1,9 +1,14 @@
 #pragma once
 
+void* CAPE_var;
+
 #define BP_EXEC        0x00
 #define BP_WRITE       0x01
 #define BP_RESERVED    0x02
 #define BP_READWRITE   0x03
+
+DWORD ChildProcessId;
+DWORD RemoteFuncAddress;
 
 typedef struct BreakpointInfo 
 {
@@ -31,9 +36,29 @@ typedef BOOL (cdecl *SINGLE_STEP_HANDLER)(struct _EXCEPTION_POINTERS*);
 extern "C" {
 #endif
 
-BOOL SetHardwareBreakpoint(DWORD ThreadId, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+
+BOOL SetHardwareBreakpoint
+(
+    DWORD	ThreadId,
+    int		Register,
+    int		Size,
+    LPVOID	Address,
+    DWORD	Type,
+	PVOID	Callback
+);
+
 BOOL ClearHardwareBreakpoint(DWORD ThreadId, int Register);
-BOOL ContextSetHardwareBreakpoint(PCONTEXT Context, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+
+BOOL ContextSetHardwareBreakpoint
+(
+    PCONTEXT	Context,
+    int			Register,
+    int			Size,
+    LPVOID		Address,
+    DWORD		Type,
+	PVOID		Callback
+);
+
 BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register);
 BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register);
 BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, DWORD Type, PVOID Callback);
@@ -42,10 +67,12 @@ BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register,
 BOOL ContextClearHardwareBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
-BOOL ClearAllDebugRegisters(HANDLE hThread);
+BOOL ContextClearAllBreakpoints(PCONTEXT Context);
+BOOL ClearAllBreakpoints(HANDLE hThread);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 BOOL InitialiseDebugger(void);
 BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD CreationFlags);
+BOOL SendDebuggerMessage(DWORD Input);
 int launch_debugger(void);
 
 #ifdef __cplusplus
