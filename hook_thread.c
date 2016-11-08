@@ -256,9 +256,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
 #ifdef _WIN64
-		CurrentInjectionInfo->EntryPoint = Context->Rax - CurrentInjectionInfo->ImageBase;
+		CurrentInjectionInfo->EntryPoint = Context->Rcx - CurrentInjectionInfo->ImageBase;  // rcx holds rip on 64-bit
 #else
-		CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;
+		CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;  // eax holds eip on 32-bit
 #endif
         DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
     }
