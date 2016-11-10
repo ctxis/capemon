@@ -31,11 +31,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize);
 extern BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern BOOL SetMidPageBreakpoint(PVOID *Address, SIZE_T Size);
 extern BOOL AllocationWriteDetected;
+extern BOOL AllocationBaseWriteBpSet;
 extern BOOL AllocationBaseExecBpSet;
 extern BOOL PeImageDetected;
 extern BOOL AllocationDumped;
@@ -552,20 +554,16 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
 ) {
     SIZE_T map_size = 0; MEMORY_BASIC_INFORMATION mbi;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-	DWORD protect = PAGE_READWRITE;
 	NTSTATUS ret;
 
 	if (VirtualQueryEx(ProcessHandle, BaseAddress, &mbi,
             sizeof(mbi)) == sizeof(mbi)) {
         map_size = mbi.RegionSize;
-		protect = mbi.Protect;
     }
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
 	
-	if (pid != GetCurrentProcessId() || protect != PAGE_READWRITE) {
-		LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", map_size);
-	}
+    LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", map_size);
 
 	return ret;
 }
@@ -587,10 +585,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
       
-	if ((pid != GetCurrentProcessId()) || Win32Protect != PAGE_READWRITE)
-		LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
-		"ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-		"SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
+    "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+    "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (NT_SUCCESS(ret)) {
 		if (pid != GetCurrentProcessId()) {
@@ -615,36 +612,64 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) && *RegionSize > 0x2000) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) && (*RegionSize > 0x2000 || *BaseAddress == AllocationBase)) {
         DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x\n", *BaseAddress, *RegionSize);
         
         if (AllocationBase && AllocationSize && !AllocationDumped)
         {
-            DoOutputDebugString("NtAllocateVirtualMemory hook: attempting CAPE dump on previous region: 0x%x.\n", AllocationBase);
-
-            AllocationDumped = TRUE;
-            PEPointer = NULL;
-            
-            if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+            if (AllocationBaseWriteBpSet == FALSE && AllocationType & MEM_COMMIT && (*BaseAddress == AllocationBase))
+            {   // if memory was previously reserved but not committed
+                SetInitialWriteBreakpoint(AllocationBase, AllocationSize);
+            }
+            else
             {
-                if (PEPointer)
-                {
-                    DoOutputDebugString("NtAllocateVirtualMemory hook: PE image found in scan at: 0x%x.\n", PEPointer);
-                    AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
-                }
-                else
-                {
-                    DoOutputDebugString("NtAllocateVirtualMemory hook: Attempting dump of previously marked PE image at: 0x%x.\n", AllocationBase);
-                    AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
-                }
+                DoOutputDebugString("NtAllocateVirtualMemory hook: attempting CAPE dump on previous region: 0x%x.\n", AllocationBase);
+
+                AllocationDumped = TRUE;
+                PEPointer = NULL;
                 
-                if (!AllocationDumped)
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
                 {
-                    DoOutputErrorString("NtAllocateVirtualMemory hook: Previous attempting to dump PE image failed");
+                    if (PEPointer)
+                    {
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: PE image found in scan at: 0x%x.\n", PEPointer);
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
+                    }
+                    else
+                    {
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: Attempting dump of previously marked PE image at: 0x%x.\n", AllocationBase);
+                        AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
+                    }
                     
-                    AllocationDumped = TRUE;
+                    if (!AllocationDumped)
+                    {
+                        DoOutputErrorString("NtAllocateVirtualMemory hook: Previous attempting to dump PE image failed");
+                        
+                        AllocationDumped = TRUE;
+                        AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
+                        
+                        if (!AllocationDumped)
+                        {
+                            DoOutputDebugString("NtAllocateVirtualMemory hook: failed to dump memory range at 0x%x.\n", AllocationBase);
+                        }
+                        else
+                        {
+                            DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
+                            ClearAllBreakpoints(NULL);       
+                        }
+                    }
+                    else
+                    {
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped module at 0x%x.\n", AllocationBase);
+                        ClearAllBreakpoints(NULL);       
+                    }
+                }
+                else if (ScanForNonZero(AllocationBase, AllocationSize))
+                {
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: No PE detected, attempting raw dump of memory image at: 0x%x.\n", AllocationBase);
+                    
                     AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-                    
+
                     if (!AllocationDumped)
                     {
                         DoOutputDebugString("NtAllocateVirtualMemory hook: failed to dump memory range at 0x%x.\n", AllocationBase);
@@ -657,37 +682,24 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
                 }
                 else
                 {
-                    DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped module at 0x%x.\n", AllocationBase);
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
                     ClearAllBreakpoints(NULL);       
                 }
-            }
-            else if (ScanForNonZero(AllocationBase, AllocationSize))
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: No PE detected, attempting raw dump of memory image at: 0x%x.\n", AllocationBase);
-                
-                AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-
-                if (!AllocationDumped)
-                {
-                    DoOutputDebugString("NtAllocateVirtualMemory hook: failed to dump memory range at 0x%x.\n", AllocationBase);
-                }
-                else
-                {
-                    DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
-                }
-            }
-            else
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                ClearAllBreakpoints(NULL);       
             }
         }
-        else
+        else if (AllocationType & MEM_COMMIT)
+            // Allocation committed, we set an initial write bp
             SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
+        else if (AllocationType & MEM_RESERVE)
+        {   // Allocation not committed, so we can't set a bp yet
+            AllocationBaseWriteBpSet = FALSE;
+            AllocationBase = *BaseAddress;
+            AllocationSize = *RegionSize;
+            DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
+        }
     }
     
-	if (ret != STATUS_CONFLICTING_ADDRESSES && (Protect != PAGE_READWRITE || GetCurrentProcessId() != our_getprocessid(ProcessHandle))) {
+	if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	}
@@ -708,10 +720,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadVirtualMemory,
     ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer,
         NumberOfBytesToRead, NumberOfBytesRead);
 
-	if (pid_from_process_handle(ProcessHandle) != GetCurrentProcessId()) {
-		LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesRead, Buffer);
-	}
+    LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "Buffer", NumberOfBytesRead, Buffer);
 
 	return ret;
 }
@@ -729,10 +739,8 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
         nSize, lpNumberOfBytesRead);
 
-	if (pid_from_process_handle(hProcess) != GetCurrentProcessId()) {
-		LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-			"Buffer", lpNumberOfBytesRead, lpBuffer);
-	}
+    LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
+        "Buffer", lpNumberOfBytesRead, lpBuffer);
 
     return ret;
 }
@@ -753,10 +761,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 
 	pid = pid_from_process_handle(ProcessHandle);
 
-	if (pid != GetCurrentProcessId()) {
-		LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesWritten, Buffer, "BufferLength", *NumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "Buffer", NumberOfBytesWritten, Buffer, "BufferLength", *NumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
+	if (pid != GetCurrentProcessId()) {
 		if (NT_SUCCESS(ret)) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
@@ -783,10 +791,10 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 
 	pid = pid_from_process_handle(hProcess);
 
-	if (pid != GetCurrentProcessId()) {
-		LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-			"Buffer", lpNumberOfBytesWritten, lpBuffer, "BufferLength", *lpNumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
+        "Buffer", lpNumberOfBytesWritten, lpBuffer, "BufferLength", *lpNumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
+	if (pid != GetCurrentProcessId()) {
 		if (ret) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
@@ -832,10 +840,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtWow64WriteVirtualMemory64,
 
 	pid = pid_from_process_handle(ProcessHandle);
 
-	if (pid != GetCurrentProcessId()) {
-		LOQ_bool("process", "pxbhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesWritten->LowPart, Buffer, "BufferLength", NumberOfBytesWritten->LowPart, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    LOQ_bool("process", "pxbhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "Buffer", NumberOfBytesWritten->LowPart, Buffer, "BufferLength", NumberOfBytesWritten->LowPart, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
+	if (pid != GetCurrentProcessId()) {
 		if (ret) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
@@ -1165,10 +1173,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
 
-	if (GetCurrentProcessId() != our_getprocessid(ProcessHandle)) {
-		LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", RegionSize, "FreeType", FreeType);
-	}
+    LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", RegionSize, "FreeType", FreeType);
 
 	return ret;
 }

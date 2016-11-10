@@ -43,6 +43,7 @@ PSIZE_T pRegionSize;
 BOOL AllocationWriteDetected;
 BOOL PeImageDetected;
 BOOL AllocationDumped;
+BOOL AllocationBaseWriteBpSet;
 BOOL AllocationBaseExecBpSet;
 BOOL EntryPointExecBpSet;
 static unsigned int EPBPRegister;
@@ -644,6 +645,7 @@ BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize)
     AllocationWriteDetected = FALSE;
     PeImageDetected = FALSE;
     AllocationDumped = FALSE;    
+    AllocationBaseWriteBpSet = FALSE;
     AllocationBaseExecBpSet = FALSE;
     EntryPointExecBpSet = FALSE;
     
@@ -658,6 +660,7 @@ BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize)
     if (SetNextAvailableBreakpoint(ThreadId, &Register, 2, (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
     {
         DoOutputDebugString("SetInitialWriteBreakpoint: Breakpoint %d set write on word at base address: 0x%x\n", Register, AllocationBase);
+        AllocationBaseWriteBpSet = TRUE;
     }
     else
 	{
