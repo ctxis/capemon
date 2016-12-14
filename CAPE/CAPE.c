@@ -289,7 +289,8 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId)
 char* GetName()
 //**************************************************************************************
 {
-    char *OutputFilename;
+    char *OutputFilename, *FullPathName;
+    DWORD RetVal;
     SYSTEMTIME Time;
 
     OutputFilename = (char*)malloc(MAX_PATH);
@@ -301,9 +302,43 @@ char* GetName()
     }
     
     GetSystemTime(&Time);
+    
     sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), Time.wMilliseconds, Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
     
-	return OutputFilename;
+	FullPathName = (char*)malloc(MAX_PATH);
+
+    if (FullPathName == NULL)
+    {
+		DoOutputErrorString("GetName: Error allocating memory for strings");
+		return 0;    
+    }
+    
+	// We want to dump CAPE output to the 'analyzer' directory
+    memset(FullPathName, 0, MAX_PATH);
+	
+    strncpy_s(FullPathName, MAX_PATH, g_config.analyzer, strlen(g_config.analyzer)+1);
+
+	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
+	{
+		DoOutputDebugString("GetName: Error, CAPE destination path too long.");
+        free(OutputFilename); free(FullPathName);
+		return 0;
+	}
+
+    PathAppend(FullPathName, "CAPE");
+
+	RetVal = CreateDirectory(FullPathName, NULL);
+
+	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
+	{
+		DoOutputErrorString("GetName: Error creating CAPE output directory");
+        free(OutputFilename); free(FullPathName);
+		return 0;
+	}
+
+    PathAppend(FullPathName, OutputFilename);
+	
+   	return FullPathName;
 }
 
 //**************************************************************************************
@@ -701,8 +736,6 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
-    DoOutputDebugString("ScanForPE: Entry, size 0x%x, Buffer 0x%x\n", Size, Buffer);
-    
     if (Size == 0)
     {
         DoOutputDebugString("ScanForPE: Error, zero size given\n");
@@ -715,8 +748,6 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
         {  
             if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
             {
-                DoOutputDebugString("ScanForPE: MZ detected at 0x%x\n", p);
-                
                 pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
 
                 if ((ULONG)pDosHeader->e_lfanew == 0) 
@@ -725,11 +756,11 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                     continue;
                 }
 
-                if ((ULONG)pDosHeader->e_lfanew > Size-p)
-                {
-                    // e_lfanew points beyond end of region
-                    continue;
-                }
+                //if ((ULONG)pDosHeader->e_lfanew > Size-p)
+                //{
+                //    // e_lfanew points beyond end of region
+                //    continue;
+                //}
                 
                 pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
                 
@@ -739,7 +770,7 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                     continue;                
                 }
                 
-                if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0)) 
+                if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
                 {
                     // Basic requirements
                     DoOutputDebugString("ScanForPE: Basic requirements failure.\n");
@@ -751,14 +782,14 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                     *Offset = (LPCVOID)((char*)Buffer+p);
                 }
                 
-                DoOutputDebugString("ScanForPE: PE image located at: 0x%x\n", p);
+                DoOutputDebugString("ScanForPE: PE image located at: 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
                 
                 return 1;
             }
         }  
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputDebugString("ScanForPE: Exception occured reading memory address 0x%x\n", p);
+            DoOutputDebugString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
             return 0;
         }
     }
@@ -771,69 +802,34 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
 int DumpMemory(LPCVOID Buffer, unsigned int Size)
 //**************************************************************************************
 {
-	char *OutputFilename, *FullPathName;
+	char *OutputFilename;
 	DWORD RetVal, dwBytesWritten;
 	HANDLE hOutputFile;
     LPVOID BufferCopy;
 
     SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)Buffer);
 
-	FullPathName = (char*) malloc(MAX_PATH);
-
-    if (FullPathName == NULL)
-    {
-		DoOutputErrorString("DumpMemory: Error allocating memory for strings");
-		return 0;    
-    }
-    
     OutputFilename = GetName();
     
-	// We want to dump CAPE output to the 'analyzer' directory
-    memset(FullPathName, 0, MAX_PATH);
-	
-    strncpy_s(FullPathName, MAX_PATH, g_config.analyzer, strlen(g_config.analyzer)+1);
-
-	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
-	{
-		DoOutputDebugString("DumpMemory: Error, CAPE destination path too long.");
-        free(OutputFilename); free(FullPathName);
-		return 0;
-	}
-
-    PathAppend(FullPathName, "CAPE");
-
-	RetVal = CreateDirectory(FullPathName, NULL);
-
-	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
-	{
-		DoOutputDebugString("DumpMemory: Error creating output directory");
-        free(OutputFilename); free(FullPathName);
-		return 0;
-	}
-
-    PathAppend(FullPathName, OutputFilename);
-	
-    DoOutputDebugString("DumpMemory: FullPathName = %s", FullPathName);
-    
-	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+	hOutputFile = CreateFile(OutputFilename, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 	{
-		DoOutputDebugString("DumpMemory: CAPE output filename exists already: %s", FullPathName);
-        free(OutputFilename); free(FullPathName);
+		DoOutputDebugString("DumpMemory: CAPE output filename exists already: %s", OutputFilename);
+        free(OutputFilename);
 		return 0;
 	}
 
 	if (hOutputFile == INVALID_HANDLE_VALUE)
 	{
 		DoOutputErrorString("DumpMemory: Could not create CAPE output file");
-        free(OutputFilename); free(FullPathName);
+        free(OutputFilename);
 		return 0;		
 	}	
 	
 	dwBytesWritten = 0;
     
-    DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
+    DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", OutputFilename);
 
 	BufferCopy = (LPVOID)((BYTE*)malloc(Size));
     
@@ -848,16 +844,16 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
 		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
-        free(OutputFilename); free(FullPathName); free(BufferCopy);
+        free(OutputFilename); free(BufferCopy);
 		return 0;
 	}
 
 	CloseHandle(hOutputFile);
     
-    CapeOutputFile(FullPathName);
+    CapeOutputFile(OutputFilename);
     
     // We can free the filename buffers
-    free(OutputFilename); free(FullPathName); free(BufferCopy);
+    free(OutputFilename); free(BufferCopy);
 
     ExtractionClearAll();
 	
@@ -909,10 +905,10 @@ int DumpModuleInCurrentProcess(DWORD ModuleBase)
 {
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
 
-	if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0, TRUE))
+    if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0, TRUE))
 	{
+        ExtractionClearAll();
         DumpCount++;
-		ExtractionClearAll();
 		return 1;
 	}
 
@@ -975,7 +971,6 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
         {
             DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump 'raw' PE image.\n");
             DumpCount++;
-            ExtractionClearAll();        
             return 1; 
         }
         else
@@ -995,8 +990,8 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
         if (!ScyllaDumpPE(ImageBase))
             return 0;
 
+    ExtractionClearAll();        
     DumpCount++;
-    ExtractionClearAll();
     return 1;	
 }
 
@@ -1021,7 +1016,7 @@ int DumpPE(LPCVOID Buffer)
     
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{
-		ExtractionClearAll();
+        ExtractionClearAll();
         DumpCount++;
         return 1;
 	}

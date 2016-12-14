@@ -15,6 +15,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
+#ifndef _WIN64
 #include "wow64ext\wow64ext.h"
 // ReWolf's wow64ext library: https://github.com/rwfpl/rewolf-wow64ext
 
@@ -205,3 +206,4 @@ extern "C" BOOL WoW64fix(void)
     
     return TRUE;
 }
+#endif

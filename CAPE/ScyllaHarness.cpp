@@ -31,11 +31,10 @@ typedef unsigned __int64 QWORD;
 #define CREATE_NEW_IAT_IN_SECTION FALSE
 #define OFT_SUPPORT FALSE
 
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
-
 extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern char CapeOutputPath[MAX_PATH];
+
+char *CapeOutputPath;
 
 //**************************************************************************************
 void ScyllaInitCurrentProcess()
@@ -273,18 +272,20 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP, BOOL CapeFile)
 
         DoOutputDebugString("Module entry point VA is 0x%x", ModuleBase + entrypointRVA);
         
+        CapeOutputPath = GetName();
+        
         //  Let's dump then fix the dump on disk
-        if (peFile->dumpProcess((DWORD_PTR)ModuleBase, (DWORD)ModuleBase + entrypointRVA, CAPE_OUTPUT_FILE))
+        if (peFile->dumpProcess((DWORD_PTR)ModuleBase, (DWORD)ModuleBase + entrypointRVA, CapeOutputPath))
         {
             DoOutputDebugString("Module image dump success %s", CapeOutputPath);
         }
         
         //  IAT search - we'll try the simple search first
-        IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)ModuleBase + entrypointRVA, &addressIAT, &sizeIAT, FALSE);
+        IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD_PTR)ModuleBase + entrypointRVA, (DWORD_PTR*)&addressIAT, &sizeIAT, FALSE);
         
         //  Let's try the advanced search now
         if (IAT_Found == FALSE)
-            IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD)ModuleBase + entrypointRVA, &addressIAT, &sizeIAT, TRUE);
+            IAT_Found = iatSearch.searchImportAddressTableInProcess((DWORD_PTR)ModuleBase + entrypointRVA, (DWORD_PTR*)&addressIAT, &sizeIAT, TRUE);
         
         if (addressIAT && sizeIAT)
         {
@@ -337,7 +338,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP, BOOL CapeFile)
                 DoOutputDebugString("Warning, IAT is not inside the PE image, requires rebasing.");
             }
             
-            ImportRebuilder importRebuild(CAPE_OUTPUT_FILE);
+            ImportRebuilder importRebuild(CapeOutputPath);
             
             if (OFT_SUPPORT)
             {
@@ -437,8 +438,10 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
 
         DoOutputDebugString(TEXT("Module entry point VA is 0x%x"), ModuleBase + entrypointRVA);
         
+        CapeOutputPath = GetName();
+        
         //  Let's dump then fix the dump on disk
-        if (peFile->dumpProcess(ModuleBase, ModuleBase + entrypointRVA, CAPE_OUTPUT_FILE, CapeFile))
+        if (peFile->dumpProcess(ModuleBase, ModuleBase + entrypointRVA, CapeOutputPath, CapeFile))
         {
             DoOutputDebugString("Module image dump success %s", CapeOutputPath);
         }
@@ -501,7 +504,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
                 DoOutputDebugString("WARNING! IAT is not inside the PE image, requires rebasing.");
             }
             
-            ImportRebuilder importRebuild(CAPE_OUTPUT_FILE);
+            ImportRebuilder importRebuild(CapeOutputPath);
             
             if (OFT_SUPPORT)
             {

@@ -30,6 +30,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\CAPE.h"
 #include "CAPE\Debugger.h"
 
+#define EXTRACTION_MIN_SIZE 0x2000
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize);
@@ -378,13 +380,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                         else
                         {
                             DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range.\n");
-                            ClearAllBreakpoints(NULL);       
+                            ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                         }
                     }
                     else
                     {
                         DoOutputDebugString("NtTerminateProcess hook: successfully dumped module.\n");
-                        ClearAllBreakpoints(NULL);       
+                        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
                 else
@@ -398,7 +400,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                     else
                     {
                         DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range.\n");
-                        ClearAllBreakpoints(NULL);       
+                        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
             }
@@ -441,13 +443,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                         else
                         {
                             DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range.\n");
-                            ClearAllBreakpoints(NULL);       
+                            ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                         }
                     }
                     else
                     {
                         DoOutputDebugString("NtTerminateProcess hook: successfully dumped module.\n");
-                        ClearAllBreakpoints(NULL);       
+                        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
                 else
@@ -461,7 +463,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                     else
                     {
                         DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range.\n");
-                        ClearAllBreakpoints(NULL);       
+                        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
             }
@@ -612,8 +614,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE) && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) && (*RegionSize > 0x2000 || *BaseAddress == AllocationBase)) {
-        DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x\n", *BaseAddress, *RegionSize);
+	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE || *BaseAddress == AllocationBase)) {
+        DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);
         
         if (AllocationBase && AllocationSize && !AllocationDumped)
         {
@@ -654,14 +656,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
                         }
                         else
                         {
-                            DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                            ClearAllBreakpoints(NULL);       
+                            DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range.\n");
                         }
                     }
                     else
                     {
                         DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped module at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
                     }
                 }
                 else if (ScanForNonZero(AllocationBase, AllocationSize))
@@ -672,18 +672,29 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
 
                     if (!AllocationDumped)
                     {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: failed to dump memory range at 0x%x.\n", AllocationBase);
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: failed to dump memory range.\n");
                     }
                     else
                     {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped memory range.\n");
                     }
                 }
                 else
                 {
                     DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
+                    ExtractionClearAll();
+                }
+                
+                // set breakpoints on new region
+                if (AllocationType & MEM_COMMIT)
+                    // Allocation committed, we set an initial write bp
+                    SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
+                else if (AllocationType & MEM_RESERVE)
+                {   // Allocation not committed, so we can't set a bp yet
+                    AllocationBaseWriteBpSet = FALSE;
+                    AllocationBase = *BaseAddress;
+                    AllocationSize = *RegionSize;
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
                 }
             }
         }
@@ -884,8 +895,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *NumberOfBytesToProtect > 0x2000) {
-        DoOutputDebugString("NtProtectVirtualMemory hook, BaseAddress:0x%x, NumberOfBytesToProtect: 0x%x\n", *BaseAddress, *NumberOfBytesToProtect);
+	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE) {
+        DoOutputDebugString("NtProtectVirtualMemory hook: BaseAddress:0x%x, NumberOfBytesToProtect: 0x%x, NewAccessProtection: 0x%x\n", *BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
         if (AllocationBase == 0)    
         {
             if (*BaseAddress == meminfo.BaseAddress)
@@ -893,7 +904,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(*BaseAddress, *NumberOfBytesToProtect))
                 {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, ShellCodeExecCallback))
+                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, MidPageExecCallback))
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = *BaseAddress;
@@ -943,13 +954,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                     else
                     {
                         DoOutputDebugString("NtProtectVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
                     }
                 }
                 else
                 {
                     DoOutputDebugString("NtProtectVirtualMemory hook: successfully dumped module at 0x%x.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
                 }
             }
             else
@@ -963,7 +972,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                 else
                 {
                     DoOutputDebugString("NtProtectVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
                 }
             }
             
@@ -972,7 +980,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(*BaseAddress, *NumberOfBytesToProtect))
                 {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, ShellCodeExecCallback))
+                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, MidPageExecCallback))
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = *BaseAddress;
@@ -1040,8 +1048,10 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize > 0x2000) {
+	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize >= EXTRACTION_MIN_SIZE) {
+    
         DoOutputDebugString("VirtualProtectEx hook, lpAddress:0x%x, dwSize: 0x%x\n", lpAddress, dwSize);
+        
         if (AllocationBase == 0)    
         {
             if (lpAddress == meminfo.BaseAddress)
@@ -1049,7 +1059,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(lpAddress, dwSize))
                 {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, ShellCodeExecCallback))
+                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = lpAddress;
@@ -1100,13 +1110,13 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
                     else
                     {
                         DoOutputDebugString("VirtualProtectEx hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
+                        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
                 else
                 {
-                    DoOutputDebugString("VirtualProtectEx hook: successfully dumped module at 0x%x.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
+                    DoOutputDebugString("VirtualProtectEx hook: successfully dumped module.\n");
+                    ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                 }
             }
             else
@@ -1120,16 +1130,31 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
                 else
                 {
                     DoOutputDebugString("VirtualProtectEx hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                    ClearAllBreakpoints(NULL);       
+                    ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                 }
             }
             
             if ((DWORD)lpAddress < (DWORD)AllocationBase && (DWORD)lpAddress >= ((DWORD)AllocationBase + AllocationSize))
             {
+
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(lpAddress, dwSize))
                 {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, ShellCodeExecCallback))
+                    if (ScanForNonZero(meminfo.AllocationBase, (BYTE*)AllocationBase + AllocationSize - (BYTE*)meminfo.AllocationBase)
+                            && ScanForPE(meminfo.AllocationBase, (BYTE*)AllocationBase + AllocationSize - (BYTE*)meminfo.AllocationBase, &PEPointer))
+                    {
+                        SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+
+                        if (DumpImageInCurrentProcess((DWORD)PEPointer))
+                        {
+                            DoOutputDebugString("VirtualProtectEx hook: Found and dumped a PE image.\n");
+                        }
+                        else
+                        {
+                            DoOutputDebugString("VirtualProtectEx hook: Found a PE image but failed to dump it.\n");
+                        }
+                    }
+                    else  if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = lpAddress;
@@ -1145,6 +1170,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
                 else    // looks like it's still an empty buffer
                 {
                     DoOutputDebugString("VirtualProtectEx hook: Setting initial write breakpoint on protection address: 0x%x\n", lpAddress);
+
                     SetInitialWriteBreakpoint(lpAddress, dwSize);
                 }            
             }
@@ -1173,6 +1199,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
 
+	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *BaseAddress == AllocationBase) {
+		DoOutputDebugString("NtFreeVirtualMemory hook: Clearing breakpoints in range 0x%x - 0x%x.\n", *BaseAddress, (char*)*BaseAddress + *RegionSize);
+        ExtractionClearAll();
+    }
+        
     LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", RegionSize, "FreeType", FreeType);
 

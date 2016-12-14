@@ -4,8 +4,6 @@
 #include <vector>
 //#include "DumpSectionGui.h"
 
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
-
 extern "C" char* GetName();
 
 class PeFileSection {
