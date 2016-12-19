@@ -11,22 +11,36 @@ unsigned int DumpSize;
 //Global switch for debugger
 #define DEBUGGER_ENABLED    0
 
+typedef struct InjectionSectionView
+{
+    HANDLE                          SectionHandle;
+    PVOID                           LocalView;
+    SIZE_T                          ViewSize;
+	int                             TargetProcessId;
+    struct InjectionSectionView     *NextSectionView;
+} INJECTIONSECTIONVIEW, *PINJECTIONSECTIONVIEW;
+
 typedef struct InjectionInfo
 {
-    int                     ProcessId;
-	HANDLE	                ProcessHandle;
-    DWORD_PTR               ImageBase;
-    DWORD_PTR               EntryPoint;
-    BOOL                    ImageDumped;
-    LPCVOID                 BufferBase;
-    unsigned int            BufferSizeOfImage;
-    struct InjectionInfo    *NextInjectionInfo;
+    int                         ProcessId;
+	HANDLE	                    ProcessHandle;
+    DWORD_PTR                   ImageBase;
+    DWORD_PTR                   EntryPoint;
+    BOOL                        WriteDetected;
+    BOOL                        ImageDumped;
+    LPCVOID                     BufferBase;
+    unsigned int                BufferSizeOfImage;
+    HANDLE                      SectionHandle;
+//    struct InjectionSectionView *SectionViewList;
+    struct InjectionInfo        *NextInjectionInfo;
 } INJECTIONINFO, *PINJECTIONINFO;
 
 struct InjectionInfo *InjectionInfoList;
 
 PINJECTIONINFO GetInjectionInfo(DWORD ProcessId);
 PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId);
+
+struct InjectionSectionView *SectionViewList;
 
 //
 // MessageId: STATUS_SUCCESS
@@ -90,3 +104,7 @@ enum {
     PLUGX_PAYLOAD           = 0x10,
     PLUGX_CONFIG            = 0x11    
 };
+
+PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
+PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
+BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);

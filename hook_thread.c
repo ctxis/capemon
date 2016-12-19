@@ -28,6 +28,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int DumpImageInCurrentProcess(DWORD ImageBase);
+extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 
 static lookup_t g_ignored_threads;
 
@@ -306,7 +309,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
     __in        HANDLE ThreadHandle,
     __out_opt   ULONG *SuspendCount
 ) {
-    struct InjectionInfo *CurrentInjectionInfo;   
+    struct InjectionInfo *CurrentInjectionInfo;  
+    PINJECTIONSECTIONVIEW CurrentSectionView;    
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	NTSTATUS ret;
@@ -315,25 +319,75 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
 
     CurrentInjectionInfo = GetInjectionInfo(pid);
 
-    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+    if (CurrentInjectionInfo && (CurrentInjectionInfo->WriteDetected))
     {
-        if (CurrentInjectionInfo->ProcessHandle && CurrentInjectionInfo->ImageBase)
+        if (CurrentInjectionInfo->ImageDumped == FALSE)
         {
-            if (CurrentInjectionInfo->ImageDumped == FALSE)
-            {
-                DoOutputDebugString("NtResumeThread hook: Dumping hollowed process image, process %d 0x%x, image base 0x%x.", pid, CurrentInjectionInfo->ImageBase);
-                SetCapeMetaData(INJECTION_PE, pid, CurrentInjectionInfo->ProcessHandle, NULL);
-                CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, CurrentInjectionInfo->ImageBase);
+            CapeMetaData->DumpType = INJECTION_PE;
+            CapeMetaData->TargetPid = pid;
             
-                if (CurrentInjectionInfo->ImageDumped)
-                {
-                    DoOutputDebugString("NtResumeThread hook: Dumped PE image from buffer.\n");
-                    CurrentInjectionInfo->ImageBase = 0;
-                    CurrentInjectionInfo->EntryPoint = 0;
-                }
-                else
-                    DoOutputDebugString("NtResumeThread hook: Failed to dump PE image from buffer.\n");
+            DoOutputDebugString("NtResumeThread hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
+            
+            CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, CurrentInjectionInfo->ImageBase);
+            
+            if (CurrentInjectionInfo->ImageDumped)
+            {
+                DoOutputDebugString("NtResumeThread hook: Dumped PE image from buffer.\n");
             }
+            else
+                DoOutputDebugString("NtResumeThread hook: Failed to dump PE image from buffer.\n");
+        }
+    }
+    else if (CurrentInjectionInfo)
+    {
+        CurrentSectionView = SectionViewList;
+
+        while (CurrentSectionView)
+        {
+            if (CurrentSectionView->TargetProcessId == pid)
+            {
+                DoOutputDebugString("NtResumeThread hook: Mapped section view in target process %d at 0x%x, about to scan.\n", CurrentSectionView->LocalView);
+                
+                if (CurrentSectionView->LocalView)
+                {
+                    if (ScanForPE(CurrentSectionView->LocalView, CurrentSectionView->ViewSize, NULL))
+                    {
+                        DoOutputDebugString("NtResumeThread hook: Dumping hollowed process %d (by section view), local view at 0x%x.\n", pid, CurrentSectionView->LocalView);
+
+                        CapeMetaData->DumpType = INJECTION_PE;
+                        
+                        CapeMetaData->TargetPid = pid;
+                        
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(CurrentSectionView->LocalView);
+                        
+                        if (CurrentInjectionInfo->ImageDumped)
+                        {
+                            DoOutputDebugString("NtResumeThread hook: Dumped PE image from buffer.\n");
+                            DropSectionView(CurrentSectionView);
+                        }
+                        else
+                            DoOutputDebugString("NtResumeThread hook: Failed to dump PE image from buffer.\n");
+                    }
+                    else
+                    {
+                        DoOutputDebugString("NtResumeThread hook: invalid PE file in buffer, attempting raw dump at 0x%x size 0x%x.\n", CurrentSectionView->LocalView, CurrentSectionView->ViewSize);
+                        
+                        CapeMetaData->DumpType = INJECTION_SHELLCODE;
+                        
+                        CapeMetaData->TargetPid = pid;
+                        
+                        if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
+                        {
+                            DoOutputDebugString("NtResumeThread hook: Dumped shared section view.");
+                            DropSectionView(CurrentSectionView);
+                        }
+                        else
+                            DoOutputDebugString("NtResumeThread hook: Failed to dump shared section view.");                    
+                    }
+                }
+            }
+            
+            CurrentSectionView = CurrentSectionView->NextSectionView;
         }
     }
     

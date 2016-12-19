@@ -31,6 +31,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int DumpImageInCurrentProcess(DWORD ImageBase);
+extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -336,28 +338,80 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 ) {
 	NTSTATUS ret;
 	struct InjectionInfo *CurrentInjectionInfo;
+    PINJECTIONSECTIONVIEW CurrentSectionView;
     
     DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
 
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
-    if (CurrentInjectionInfo && CurrentInjectionInfo->ImageBase)
+    if (CurrentInjectionInfo && (CurrentInjectionInfo->WriteDetected))
     {
         if (CurrentInjectionInfo->ImageDumped == FALSE)
         {
-            DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
             SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
+            
+            DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
+            
             CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, CurrentInjectionInfo->ImageBase);
             
             if (CurrentInjectionInfo->ImageDumped)
             {
                 DoOutputDebugString("NtResumeProcess hook: Dumped PE image from buffer.\n");
-                CurrentInjectionInfo->ImageBase = 0;
-                CurrentInjectionInfo->EntryPoint = 0;
             }
             else
                 DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
+        }
+    }
+    else if (CurrentInjectionInfo)
+    {
+        CurrentSectionView = SectionViewList;
+
+        while (CurrentSectionView)
+        {
+            if (CurrentSectionView->TargetProcessId == pid)
+            {
+                if (CurrentSectionView->LocalView)
+                {
+                    if (ScanForPE(CurrentSectionView->LocalView, 1, NULL))
+                    {
+                        DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d (by section view), local view at 0x%x.\n", pid, CurrentSectionView->LocalView);
+
+                        if (CurrentInjectionInfo->ImageDumped == FALSE)
+                        {
+                            SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
+                            
+                            CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(CurrentSectionView->LocalView);
+                            
+                            if (CurrentInjectionInfo->ImageDumped)
+                            {
+                                DoOutputDebugString("NtResumeProcess hook: Dumped PE image from buffer.\n");
+                                DropSectionView(CurrentSectionView);
+                            }
+                            else
+                                DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
+                        }                    
+                    }
+                    else
+                    {
+                        DoOutputDebugString("NtResumeProcess hook: invalid PE file in buffer, attempting raw dump.\n");
+                        
+                        CapeMetaData->DumpType = INJECTION_SHELLCODE;
+                        
+                        CapeMetaData->TargetPid = pid;
+                        
+                        if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
+						{
+                            DoOutputDebugString("NtResumeProcess hook: Dumped shared section view.");
+                            DropSectionView(CurrentSectionView);
+                        }
+                        else
+                            DoOutputDebugString("NtResumeProcess hook: Failed to dump shared section view.");                    
+                    }
+                }
+            }
+            
+            CurrentSectionView = CurrentSectionView->NextSectionView;
         }
     }
     
@@ -466,6 +520,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
     _In_      HANDLE ProcessHandle,
     _In_opt_  PVOID BaseAddress
 ) {
+    PINJECTIONSECTIONVIEW CurrentSectionView, PreviousSectionView; 
     SIZE_T map_size = 0; MEMORY_BASIC_INFORMATION mbi;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	DWORD protect = PAGE_READWRITE;
@@ -476,12 +531,28 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
         map_size = mbi.RegionSize;
 		protect = mbi.Protect;
     }
+        
+    CurrentSectionView = SectionViewList;
+
+    while (CurrentSectionView)
+    {
+        if (CurrentSectionView->LocalView == BaseAddress)
+        {
+            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view, faking.\n");
+
+            LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+                "RegionSize", map_size);
+                
+            return STATUS_SUCCESS;
+        }
+
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+    }
+
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
 	
-	if (pid != GetCurrentProcessId() || protect != PAGE_READWRITE) {
-		LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", map_size);
-	}
+    LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", map_size);
 
 	return ret;
 }
@@ -498,15 +569,40 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 	__in     ULONG AllocationType,
 	__in     ULONG Win32Protect
 	) {
-	NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
+	struct InjectionInfo *CurrentInjectionInfo;
+    struct InjectionSectionView *CurrentSectionViewInfo;
+	
+    NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
       
-	if ((pid != GetCurrentProcessId()) || Win32Protect != PAGE_READWRITE)
-		LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
-		"ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-		"SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+    
+    if (!CurrentInjectionInfo && pid == GetCurrentProcessId())
+    {
+        AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
+        DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
+    }
+    else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+    {
+        DoOutputDebugString("NtMapViewOfSection hook: Section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
+        
+        CurrentSectionViewInfo = GetSectionView(SectionHandle);
+
+        if (CurrentSectionViewInfo)
+        {
+	        CurrentSectionViewInfo->TargetProcessId = pid;
+            DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
+        }
+        else
+            DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
+        
+    }    
+
+    LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
+    "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+    "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (NT_SUCCESS(ret)) {
 		if (pid != GetCurrentProcessId()) {
@@ -602,6 +698,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
     
     if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
+        CurrentInjectionInfo->WriteDetected = TRUE;
+        
         if (NT_SUCCESS(ret) && *NumberOfBytesWritten > 0)
         {
             // Check if we have a valid DOS and PE header at the beginning of Buffer
@@ -615,12 +713,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                 if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
                 {
                     CurrentInjectionInfo->ImageBase = (DWORD_PTR)BaseAddress;
+                    
                     DoOutputDebugString("NtWriteVirtualMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
 
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpPE(Buffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(Buffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
@@ -708,6 +807,8 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 
     if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
+        CurrentInjectionInfo->WriteDetected = TRUE;
+        
         if (NT_SUCCESS(ret) && *lpNumberOfBytesWritten > 0)
         {
             // Check if we have a valid DOS and PE header at the beginning of Buffer
@@ -721,12 +822,13 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                 if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
                 {
                     CurrentInjectionInfo->ImageBase = (DWORD_PTR)lpBaseAddress;
+                    
                     DoOutputDebugString("WriteProcessMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
 
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, hProcess, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpPE(lpBuffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(lpBuffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {

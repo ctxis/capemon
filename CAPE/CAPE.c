@@ -246,18 +246,8 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId)
     
     while (CurrentInjectionInfo)
 	{  
-        //if (CurrentInjectionInfo->ProcessId && CurrentInjectionInfo->ProcessId == ProcessId)
-        //{
-        //    //It already exists - shouldn't happen
-        //    DoOutputDebugString("CreateInjectionInfo error: found an existing injection info struct for ProcessId 0x%x\n", ProcessId);
-        //    return NULL;
-        //}
-        
         if ((CurrentInjectionInfo->ProcessId) == ProcessId)
-        {
-            // We have our injection info struct
             break;            
-        }
         
 		PreviousInjectionInfo = CurrentInjectionInfo;
         CurrentInjectionInfo = CurrentInjectionInfo->NextInjectionInfo;
@@ -282,6 +272,122 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId)
 	}
     
     return CurrentInjectionInfo;
+}
+
+//**************************************************************************************
+PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
+//**************************************************************************************
+{
+    PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
+
+    DoOutputDebugString("GetSectionView: Global section view list 0x%x, looking for handle 0x%x\n", CurrentSectionView, SectionHandle);
+	
+    while (CurrentSectionView)
+	{
+        DoOutputDebugString("GetSectionView: looking at section handle 0x%x.\n", CurrentSectionView->SectionHandle);
+        if (CurrentSectionView->SectionHandle == SectionHandle)
+        {
+            DoOutputDebugString("GetSectionView: returning section view pointer 0x%x.\n", CurrentSectionView);
+            return CurrentSectionView;
+        }
+
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+	}
+    
+	return NULL;
+}
+
+//**************************************************************************************
+PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize)
+//**************************************************************************************
+{
+	PINJECTIONSECTIONVIEW CurrentSectionView, PreviousSectionView;
+
+    PreviousSectionView = NULL;
+    
+	if (SectionViewList == NULL)
+	{
+		SectionViewList = ((struct InjectionSectionView*)malloc(sizeof(struct InjectionSectionView)));
+		
+        if (SectionViewList == NULL)
+        {
+            DoOutputDebugString("InjectionAddSectionView: failed to allocate memory for initial section view list.\n");
+            return NULL;
+        }
+        
+        memset(SectionViewList, 0, sizeof(struct InjectionSectionView));
+		
+        SectionViewList->SectionHandle = SectionHandle;
+        SectionViewList->LocalView = LocalView;
+        SectionViewList->ViewSize = ViewSize;
+	}
+
+	CurrentSectionView = SectionViewList;
+    
+    while (CurrentSectionView)
+	{
+        if ((CurrentSectionView->SectionHandle) == SectionHandle)
+            break;            
+        
+		PreviousSectionView = CurrentSectionView;
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+	}
+	
+    if (!CurrentSectionView)
+    {
+        // We haven't found it in the linked list, so create a new one
+        CurrentSectionView = PreviousSectionView;
+        
+        CurrentSectionView->NextSectionView = ((struct InjectionSectionView*)malloc(sizeof(struct InjectionSectionView)));
+	
+        if (CurrentSectionView->NextSectionView == NULL)
+		{
+			DoOutputDebugString("CreateSectionView: Failed to allocate new injection sectionview structure.\n");
+			return NULL;
+		}
+        
+        memset(CurrentSectionView->NextSectionView, 0, sizeof(struct InjectionSectionView));
+        
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+        CurrentSectionView->SectionHandle = SectionHandle;
+        CurrentSectionView->LocalView = LocalView; 
+        CurrentSectionView->ViewSize = ViewSize;        
+	}
+    
+    return CurrentSectionView;
+}
+
+//**************************************************************************************
+BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView)
+//**************************************************************************************
+{
+	PINJECTIONSECTIONVIEW CurrentSectionView, PreviousSectionView;
+
+    PreviousSectionView = NULL;
+    
+	if (SectionViewList == NULL)
+	{
+        DoOutputDebugString("DropSectionView: failed to obtain initial section view list.\n");
+        return FALSE;
+	}
+
+	CurrentSectionView = SectionViewList;
+    
+    while (CurrentSectionView)
+	{
+        if (CurrentSectionView == SectionView)
+        {
+            // Unlink this from the list and free the memory
+            PreviousSectionView->NextSectionView = CurrentSectionView->NextSectionView;
+            free(CurrentSectionView);
+            return TRUE;            
+        }
+        
+		PreviousSectionView = CurrentSectionView;
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+	}
+    
+    return FALSE;
 }
 
 //**************************************************************************************
@@ -677,9 +783,17 @@ int ScanForNonZero(LPCVOID Buffer, unsigned int Size)
 {
     unsigned int p;
     
-    for (p=0; p<Size-1; p++)
-        if (*((char*)Buffer+p) != 0)
-            return 1;
+    __try  
+    {  
+        for (p=0; p<Size-1; p++)
+            if (*((char*)Buffer+p) != 0)
+                return 1;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("ScanForNonZero: Exception occured reading memory address 0x%x\n", (char*)Buffer+p);
+        return 0;
+    }
 
     return 0;
 }
@@ -692,6 +806,8 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
+    DoOutputDebugString("ScanForPE: Entry, size 0x%x, Buffer 0x%x\n", Size, Buffer);
+    
     if (Size == 0)
     {
         DoOutputDebugString("ScanForPE: Error, zero size given\n");
@@ -700,48 +816,59 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
     
     for (p=0; p<Size-1; p++)
     {
-        if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
-        {
-            pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
+        __try  
+        {  
+            if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
+            {
+                DoOutputDebugString("ScanForPE: MZ detected at 0x%x\n", p);
+                
+                pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
 
-            if ((ULONG)pDosHeader->e_lfanew == 0) 
-            {
-                // e_lfanew is zero
-                continue;
-            }
+                if ((ULONG)pDosHeader->e_lfanew == 0) 
+                {
+                    // e_lfanew is zero
+                    continue;
+                }
 
-            if ((ULONG)pDosHeader->e_lfanew > Size-p)
-            {
-                // e_lfanew points beyond end of region
-                continue;
+                //if ((ULONG)pDosHeader->e_lfanew > Size-p)
+                //{
+                //    // e_lfanew points beyond end of region
+                //    continue;
+                //}
+                
+                pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+                
+                if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
+                {
+                    // No 'PE' header
+                    continue;                
+                }
+                
+                if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
+                {
+                    // Basic requirements
+                    DoOutputDebugString("ScanForPE: Basic requirements failure.\n");
+                    continue;
+                }
+                
+                if (Offset)
+                {
+                    *Offset = (LPCVOID)((char*)Buffer+p);
+                }
+                
+                DoOutputDebugString("ScanForPE: PE image located at: 0x%x\n", p);
+                
+                return 1;
             }
-            
-            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
-            
-            if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
-            {
-                // No 'PE' header
-                continue;                
-            }
-            
-            if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0)) 
-            {
-                // Basic requirements
-                DoOutputDebugString("ScanForPE: Basic requirements failure.\n");
-                continue;
-            }
-            
-            if (Offset)
-            {
-                *Offset = (LPCVOID)((char*)Buffer+p);
-            }
-            
-            DoOutputDebugString("ScanForPE: success!\n");
-            
-            return 1;
+        }  
+        __except(EXCEPTION_EXECUTE_HANDLER)  
+        {  
+            DoOutputErrorString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
+            return 0;
         }
     }
     
+    DoOutputDebugString("ScanForPE: No PE image located\n");
     return 0;
 }
 
@@ -819,7 +946,15 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
         return FALSE;
     }
     
-    memcpy(BufferCopy, Buffer, Size);
+    __try  
+    {  
+        memcpy(BufferCopy, Buffer, Size);
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("DumpMemory: Exception occured reading memory address 0x%x\n", Buffer);
+        return 0;
+    }
     
     if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
@@ -936,8 +1071,8 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
     // first we check if the SizeOfHeaders is a multiple of FileAlignment
     if (pNtHeader->OptionalHeader.SizeOfHeaders % pNtHeader->OptionalHeader.FileAlignment
     // let's also check if section 1 actually begins after the headers, i.e. raw image
-        || (*((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders - 1) == 0  // end of header is zero
-        && *((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders) != 0))     // beginning of raw section 1 is non-zero
+        || (*(DWORD*)((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders - 4) == 0)  // end of header is zero
+        && (*(DWORD*)((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders) != 0))    // beginning of raw section 1 is non-zero
     {
         // looks like a 'raw'/'file' image, i.e. not loaded
         if (ScyllaDumpPE(ImageBase))
