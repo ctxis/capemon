@@ -92,5 +92,4 @@ enum {
     PLUGX_CONFIG            = 0x11    
 };
 
-BOOL PLUGX_DETECTED;
 unsigned int memcpy_count;

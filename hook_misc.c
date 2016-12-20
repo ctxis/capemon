@@ -575,7 +575,6 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 		// Check if we have a 'PlugX' sig where they overwrite DOS and PE headers with XV
 		if (*(WORD*)UncompressedBuffer == PLUGX_SIGNATURE)
 		{
-            PLUGX_DETECTED = TRUE;
 			DoOutputDebugString("PlugX payload detected.");
 			
 			e_lfanew = *(long*)(UncompressedBuffer+0x3c);
@@ -1111,15 +1110,15 @@ HOOKDEF(void, WINAPIV, memcpy,
 
 	Old_memcpy(dest, src, count);
 	
-	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+    if (count > 0xa00)
+        LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
     
 	if (memcpy_count == 0)
 		CONFIG_DUMPED = FALSE;
 	
-	if (PLUGX_DETECTED)
-		memcpy_count++;
+    memcpy_count++;
 	
-	if (PLUGX_DETECTED && !CONFIG_DUMPED &&
+	if (!CONFIG_DUMPED &&
     (
 		count == 0xae4  || 
 		count == 0xbe4  || 
