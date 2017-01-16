@@ -32,7 +32,8 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 extern struct CapeMetadata *CapeMetaData;
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int DumpPE(LPCVOID Buffer);
+extern int DumpImageInCurrentProcess(DWORD ImageBase);
+extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -561,82 +562,59 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	__in ULONG CompressedBufferSize,
 	__out PULONG FinalUncompressedSize
 ) {
-	long e_lfanew;
     PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
 
 	NTSTATUS ret = Old_RtlDecompressBuffer(CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
 		CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
 
+	LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+		ret ? 0 : *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", ret ? 0 : *FinalUncompressedSize);
+    
     if ((ret == STATUS_SUCCESS || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0))
 	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
 	{
-		// Check if we have a 'PlugX' sig where they overwrite DOS and PE headers with XV
-		if (*(WORD*)UncompressedBuffer == PLUGX_SIGNATURE)
-		{
-			DoOutputDebugString("PlugX payload detected.");
-			
-			e_lfanew = *(long*)(UncompressedBuffer+0x3c);
+        pDosHeader = (PIMAGE_DOS_HEADER)UncompressedBuffer;
 		
-			if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
-			{
-				// This check is possibly not appropriate here
-				// As long as we've got what's been compressed
-			}
-				
-			if (*(DWORD*)(UncompressedBuffer+e_lfanew) == PLUGX_SIGNATURE)
-			{
-                // We want to dump the file out with fixed PE header (for e.g. disassembly etc)
-                PEImage = (BYTE*)malloc(UncompressedBufferSize);
-                memcpy(PEImage, UncompressedBuffer, UncompressedBufferSize);
-
-                *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
-                *(DWORD*)(PEImage+e_lfanew) = IMAGE_NT_SIGNATURE;
-
-                CapeMetaData->DumpType = PLUGX_PAYLOAD;
-                DumpPE(PEImage);
+        // Check if we have a valid DOS and PE header at the beginning of UncompressedBuffer
+        if (pDosHeader->e_magic == IMAGE_DOS_SIGNATURE) 
+		{
+            if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
+                return ret;
                 
-                free(PEImage);
+            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+    
+            if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
+                return ret;
 
-                if (ret == STATUS_SUCCESS)
-                    DoOutputDebugString("Dumped PlugX payload.");
-				else
-                    DoOutputDebugString("Dumped PlugX payload with BAD COMPRESSION BUFFER - maybe incomplete/bloated.");
-			}
-			else
-			{
-                DoOutputDebugString("PlugX signature detected at MZ but not PE - dumping anyway.");
-                DumpMemory(UncompressedBuffer, UncompressedBufferSize);
-			}
-		}
-		
-		// Check if we have a valid DOS and PE header at the beginning of UncompressedBuffer
-		else if (*(WORD*)UncompressedBuffer == IMAGE_DOS_SIGNATURE)
-		{
 			DoOutputDebugString("Executable binary detected.");
 			
-			e_lfanew = *(long*)(UncompressedBuffer+0x3c);
-		
-			if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
-			{
-				// This check is possibly not appropriate here
-				// As long as we've got what's been compressed
-			}
-				
-			if (*(DWORD*)(UncompressedBuffer+e_lfanew) == IMAGE_NT_SIGNATURE)
-			{
-                pNtHeader = (PIMAGE_NT_HEADERS)(UncompressedBuffer+e_lfanew);
+            CapeMetaData->DumpType = COMPRESSION;
+            DumpImageInCurrentProcess((DWORD)UncompressedBuffer);
+            DoOutputDebugString("Dumped PE module.");
+		}
+		else if (IsDisguisedPE(UncompressedBuffer, UncompressedBufferSize))
+        {					
+            // We want to fix the PE header in the dump (for e.g. disassembly etc)
+            PEImage = (BYTE*)malloc(UncompressedBufferSize);
+            memcpy(PEImage, UncompressedBuffer, UncompressedBufferSize);
 
-                CapeMetaData->DumpType = COMPRESSION;
-                DumpPE(UncompressedBuffer);
-                DoOutputDebugString("Dumped PE module.");
-			}
+            *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+            *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+            CapeMetaData->DumpType = COMPRESSION;
+            DumpImageInCurrentProcess((DWORD)PEImage);
+            
+            free(PEImage);
+
+            if (ret == STATUS_SUCCESS)
+                DoOutputDebugString("Dumped disguised PE payload.");
+            else
+                DoOutputDebugString("Dumped disguised PE payload with BAD COMPRESSION BUFFER - maybe incomplete/bloated.");
 		}
 	}
-        
-	LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
-		ret ? 0 : *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", ret ? 0 : *FinalUncompressedSize);
-
+    
     return ret;
 }
 
