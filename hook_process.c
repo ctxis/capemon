@@ -476,7 +476,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (ret != STATUS_CONFLICTING_ADDRESSES && (Protect != PAGE_READWRITE || GetCurrentProcessId() != our_getprocessid(ProcessHandle))) {
+	if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	}
@@ -736,10 +736,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
 
-	if (GetCurrentProcessId() != our_getprocessid(ProcessHandle)) {
-		LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", RegionSize, "FreeType", FreeType);
-	}
+    LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", RegionSize, "FreeType", FreeType);
 
 	return ret;
 }

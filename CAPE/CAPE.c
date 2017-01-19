@@ -816,7 +816,9 @@ int IsDisguisedPE(LPCVOID Buffer, unsigned int Size)
 
         if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
         {
-            DoOutputDebugString("IsDisguisedPE: e_lfanew bad.");
+            // filter excessive logging for non-disguised-PEs
+            if (pDosHeader->e_magic == IMAGE_DOS_SIGNATURE) 
+                DoOutputDebugString("IsDisguisedPE: e_lfanew bad.");
             return 0;
         }
             
@@ -826,25 +828,25 @@ int IsDisguisedPE(LPCVOID Buffer, unsigned int Size)
         if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
         {
             // Basic requirements
-            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.");
+            DoOutputDebugString("IsDisguisedPE: Buffer fails basic PE requirements test\n.");
             return 0;
         }
 
         if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
         {
-            DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
+            DoOutputDebugString("IsDisguisedPE: Buffer fails PE requirement: PE 'Characteristics' not executable\n.");
             return 0;
         }
 
         if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
         {
-            DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
+            DoOutputDebugString("IsDisguisedPE: Buffer fails PE requirement: PE 'SizeOfOptionalHeader' value not properly aligned.\n");
             return 0;
         }
 
         if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
         {
-            DoOutputDebugString("IsDisguisedPE: OptionalHeader.Magic bad.");
+            DoOutputDebugString("IsDisguisedPE: Buffer fails PE requirement: PE 'OptionalHeader.Magic' value not valid.\n");
             return 0;
         }
         
