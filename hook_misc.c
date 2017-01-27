@@ -27,6 +27,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "ignore.h"
 #include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -85,8 +88,14 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     BOOL ret = 1;
     LPTOP_LEVEL_EXCEPTION_FILTER res;
 
-	if (g_config.debug || DEBUGGER_ENABLED)
+	if (g_config.debug)
 		res = NULL;
+	else if (DEBUGGER_ENABLED)
+    {
+		DoOutputDebugString("SetUnhandledExceptionFilter hook: bypassing function as CAPE debugger active.\n");
+        res = OriginalExceptionHandler;
+        OriginalExceptionHandler = lpTopLevelExceptionFilter;
+    }
 	else
 		res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
 

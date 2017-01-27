@@ -38,6 +38,7 @@ extern SIZE_T AllocationSize;
 extern int DumpImageInCurrentProcess(DWORD ModuleBase);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
 extern int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
 extern void ExtractionClearAll(void);
 
@@ -1279,7 +1280,7 @@ int is_shutting_down()
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer) || IsDisguisedPE(AllocationBase, AllocationSize))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);

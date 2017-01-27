@@ -48,6 +48,7 @@ extern SIZE_T AllocationSize;
 extern int DumpImageInCurrentProcess(DWORD ModuleBase);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
 extern void ExtractionClearAll(void);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
@@ -345,6 +346,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 	// Process will terminate. Default logging will not work. Be aware: return value not valid
 	LPCVOID PEPointer;
 	lasterror_t lasterror;
+	MEMORY_BASIC_INFORMATION MemInfo;
     NTSTATUS ret = 0;
 
 	get_lasterrors(&lasterror);
@@ -360,8 +362,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
+                memset(&MemInfo, 0, sizeof(MemInfo));
+                VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -423,8 +427,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
+                memset(&MemInfo, 0, sizeof(MemInfo));
+                VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -610,6 +616,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     ULONG Protect
 ) {
 	LPCVOID PEPointer;
+    MEMORY_BASIC_INFORMATION MemInfo;
 
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
@@ -629,8 +636,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
 
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
+                memset(&MemInfo, 0, sizeof(MemInfo));
+                VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
                 {
                     if (PEPointer)
                     {
@@ -934,8 +943,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 
             AllocationDumped = TRUE;
             PEPointer = NULL;
-            
-            if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+            memset(&meminfo, 0, sizeof(meminfo));
+            VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo));
+                
+            if (PeImageDetected || ScanForPE(meminfo.AllocationBase, meminfo.RegionSize, &PEPointer))            
             {
                 if (PEPointer)
                     AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -1090,8 +1101,10 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 
             AllocationDumped = TRUE;
             PEPointer = NULL;
+            memset(&meminfo, 0, sizeof(meminfo));
+            VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo));
             
-            if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+            if (PeImageDetected || ScanForPE(meminfo.AllocationBase, meminfo.RegionSize, &PEPointer))
             {
                 if (PEPointer)
                     AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);

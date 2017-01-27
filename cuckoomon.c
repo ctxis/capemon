@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 volatile int dummy_val;
 
 extern void init_CAPE();
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 void disable_tail_call_optimization(void)
 {
@@ -824,6 +825,7 @@ next:
 			eipptr[0], eipptr[1], eipptr[2], eipptr[3], eipptr[4], eipptr[5], eipptr[6], eipptr[7], eipptr[8], eipptr[9], eipptr[10], eipptr[11], eipptr[12], eipptr[13], eipptr[14], eipptr[15]);
 	}
 	debug_message(msg);
+    DoOutputDebugString(msg);
 	if (dllname)
 		free(dllname);
 	free(msg);

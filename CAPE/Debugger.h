@@ -7,6 +7,8 @@ void* CAPE_var;
 #define BP_RESERVED    0x02
 #define BP_READWRITE   0x03
 
+LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
+
 DWORD ChildProcessId;
 DWORD RemoteFuncAddress;
 
