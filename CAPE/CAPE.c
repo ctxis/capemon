@@ -793,7 +793,71 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
         }
     }
     
-    DoOutputDebugString("ScanForPE: No PE image located\n");
+    DoOutputDebugString("ScanForPE: No PE image located at 0x%x.\n", Buffer);
+    return 0;
+}
+
+//**************************************************************************************
+int IsDisguisedPE(LPCVOID Buffer, unsigned int Size)
+//**************************************************************************************
+{
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    if (Size == 0)
+    {
+        DoOutputDebugString("IsDisguisedPE: Error, zero size given\n");
+        return 0;
+    }
+    
+    __try  
+    {  
+        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
+
+        if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
+        {
+            DoOutputDebugString("IsDisguisedPE: e_lfanew bad.");
+            return 0;
+        }
+            
+        // more tests to establish it's PE
+        pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+
+        if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
+        {
+            // Basic requirements
+            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.");
+            return 0;
+        }
+
+        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
+        {
+            DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
+            return 0;
+        }
+
+        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
+        {
+            DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
+            return 0;
+        }
+
+        if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
+        {
+            DoOutputDebugString("IsDisguisedPE: OptionalHeader.Magic bad.");
+            return 0;
+        }
+        
+        // To pass the above tests it should now be safe to assume it's a PE image
+        return 1;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("IsDisguisedPE: Exception occured reading region at 0x%x\n", (DWORD_PTR)(Buffer));
+        return 0;
+    }
+    
+    DoOutputDebugString("IsDisguisedPE: No PE image located\n");
     return 0;
 }
 
@@ -805,8 +869,6 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 	DWORD dwBytesWritten;
 	HANDLE hOutputFile;
     LPVOID BufferCopy;
-
-    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)Buffer);
 
     OutputFilename = GetName();
     
@@ -902,8 +964,6 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(DWORD ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
-
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0, TRUE))
 	{
         //ExtractionClearAll();
@@ -956,8 +1016,6 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
         return 0;
     }
         
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ImageBase);
-    
     // we perform a couple of tests to determine whether this is a 'raw' or 'virtual' image
     // first we check if the SizeOfHeaders is a multiple of FileAlignment
     if (pNtHeader->OptionalHeader.SizeOfHeaders % pNtHeader->OptionalHeader.FileAlignment
@@ -1011,8 +1069,6 @@ int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase)
 int DumpPE(LPCVOID Buffer)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)Buffer);
-    
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{
         //ExtractionClearAll();
@@ -1059,9 +1115,9 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
-    ProcessDumped = FALSE;
- 
+    g_config.procmemdump = 0;
+    g_config.debug = 2;
+    
 #ifndef _WIN64	 
     // Start the debugger thread
     // if required by package

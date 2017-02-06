@@ -276,6 +276,9 @@
     <ClCompile Include="CAPE\Scylla\SystemInformation.cpp">
       <Filter>Source Files\CAPE\Scylla</Filter>
     </ClCompile>
+    <ClCompile Include="CAPE\CAPE_Azzy.c">
+      <Filter>Source Files\CAPE</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config.h">

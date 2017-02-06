@@ -37,6 +37,19 @@ extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 char *CapeOutputPath;
 
 //**************************************************************************************
+void ScyllaInit()
+//**************************************************************************************
+{
+	ProcessAccessHelp::ownModuleList.clear();
+
+	NativeWinApi::initialize();
+
+	ProcessAccessHelp::setCurrentProcessAsTarget();
+
+	ProcessAccessHelp::getProcessModules(GetCurrentProcess(), ProcessAccessHelp::ownModuleList);
+}
+
+//**************************************************************************************
 void ScyllaInitCurrentProcess()
 //**************************************************************************************
 {
@@ -47,6 +60,32 @@ void ScyllaInitCurrentProcess()
 	ProcessAccessHelp::setCurrentProcessAsTarget();
 
 	ProcessAccessHelp::getProcessModules(GetCurrentProcess(), ProcessAccessHelp::ownModuleList);
+}
+
+//**************************************************************************************
+extern "C" DWORD_PTR GetEntryPointVA(void* modBase)
+//**************************************************************************************
+{
+    PeParser * peFile = 0;
+
+	ScyllaInit();
+    
+    peFile = new PeParser((DWORD_PTR)modBase, true);
+
+	return peFile->getEntryPoint() + (DWORD_PTR)modBase;
+}
+
+//**************************************************************************************
+extern "C" DWORD_PTR FileOffsetToVA(void* modBase, DWORD_PTR dwOffset)
+//**************************************************************************************
+{
+    PeParser * peFile = 0;
+
+	ScyllaInit();
+    
+    peFile = new PeParser((DWORD_PTR)modBase, true);
+
+	return peFile->convertOffsetToRVAVector(dwOffset) + (DWORD_PTR)modBase;
 }
 
 //**************************************************************************************

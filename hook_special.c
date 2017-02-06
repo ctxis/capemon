@@ -24,6 +24,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "misc.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in_opt    PWCHAR PathToFile,
@@ -140,20 +144,29 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
     if(ret != FALSE) {
-		BOOL dont_monitor = FALSE;
-		if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
-			dont_monitor = TRUE;
-
-		if (!dont_monitor)
-			pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
-			    lpProcessInformation->dwThreadId);
-
-        // if the CREATE_SUSPENDED flag was not set, then we have to resume
-        // the main thread ourself
-        if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
-            ResumeThread(lpProcessInformation->hThread);
+        if (DEBUGGER_ENABLED) {
+            DebugNewProcess(lpProcessInformation->dwProcessId, lpProcessInformation->dwThreadId, dwCreationFlags);
+            if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
+                ResumeThread(lpProcessInformation->hThread);
+            }
+            else {
+                ChildProcessId = lpProcessInformation->dwProcessId;
+            }
         }
+        else {
+            BOOL dont_monitor = FALSE;
+            if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
+                dont_monitor = TRUE;
 
+            if (!dont_monitor)
+                pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
+                    lpProcessInformation->dwThreadId);
+            // if the CREATE_SUSPENDED flag was not set, then we have to resume
+            // the main thread ourself
+            if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
+                ResumeThread(lpProcessInformation->hThread);
+            }
+        }
         disable_sleep_skip();
     }
 	

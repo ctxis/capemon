@@ -11,7 +11,7 @@ int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
 int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 
 //Global switch for debugger
-#define DEBUGGER_ENABLED    0
+#define DEBUGGER_ENABLED    1
 
 typedef struct InjectionInfo
 {
@@ -92,7 +92,9 @@ enum {
     PLUGX_CONFIG            = 0x11,   
     
     EVILGRAB_PAYLOAD        = 0x14,
-    EVILGRAB_DATA           = 0x15
+    EVILGRAB_DATA           = 0x15,
+    
+    AZZY_DATA               = 0x20
 };
 
 HANDLE EvilGrabRegHandle;

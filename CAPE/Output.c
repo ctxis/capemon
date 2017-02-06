@@ -195,6 +195,11 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
             // Injection-specific format
             _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n%s\n%d\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, CapeMetaData->TargetProcess, CapeMetaData->TargetPid);
         }
+		else if (CapeMetaData->DumpType == AZZY_DATA)
+        {
+            // Azzy-specific format where TargetPid is used for config item index #
+            _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n0x%x\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, (DWORD)CapeMetaData->TargetPid);
+        }
 
         if (FALSE == WriteFile(hMetadata, Buffer, strlen(Buffer), &dwBytesWritten, NULL))
 		{

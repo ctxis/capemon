@@ -1,6 +1,6 @@
 #pragma once
 
-void* CAPE_var;
+void *CAPE_var1, *CAPE_var2, *CAPE_var3, *CAPE_var4;
 
 #define BP_EXEC        0x00
 #define BP_WRITE       0x01
