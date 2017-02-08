@@ -752,7 +752,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
             }
             else
             {   
-                if (*lpNumberOfBytesWritten > 0x10)
+                if (*lpNumberOfBytesWritten > 0x10) 
                 {
                     if (CurrentInjectionInfo->BufferBase && lpBuffer > CurrentInjectionInfo->BufferBase && 
                         lpBuffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)

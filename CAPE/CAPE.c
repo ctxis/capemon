@@ -515,7 +515,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                 
                 free(DecryptedBuffer);
-				return TRUE;
+				return i;
 			}
 			else
 			{

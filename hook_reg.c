@@ -26,6 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
+unsigned int XorKey;
 
 HOOKDEF(LONG, WINAPI, RegOpenKeyExA,
     __in        HKEY hKey,
@@ -277,7 +278,10 @@ HOOKDEF(LONG, WINAPI, RegSetValueExA,
     __in        const BYTE *lpData,
     __in        DWORD cbData
 ) {
-	LONG ret = Old_RegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData,
+	unsigned int k;
+    BYTE* ConfigData;
+
+    LONG ret = Old_RegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData,
         cbData);
     if(ret == ERROR_SUCCESS) {
         LOQ_zero("registry", "psiriv", "Handle", (DWORD)hKey, "ValueName", lpValueName, "Type", dwType,
@@ -288,11 +292,24 @@ HOOKDEF(LONG, WINAPI, RegSetValueExA,
     {
         if (cbData > 0x1000)
         {
-            if (DumpXorPE((LPBYTE)lpData, cbData) == 0)
+            XorKey = DumpXorPE((LPBYTE)lpData, cbData);
+            if (XorKey == 0)
                 DumpMemory(lpData, cbData);
         }
         else if (cbData > 0x10)
-            DumpMemory(lpData, cbData);
+        {
+            if (XorKey)
+            {
+                ConfigData = (BYTE*)malloc(cbData);
+                
+                for (k=0; k<cbData; k++)
+                    *(ConfigData+k) = *(lpData+k)^XorKey;
+
+                DumpMemory(ConfigData, cbData);
+            }
+            else
+                DumpMemory(lpData, cbData);
+        }
     }
     
     }
