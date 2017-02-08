@@ -205,7 +205,7 @@ PINJECTIONINFO GetInjectionInfo(DWORD ProcessId)
     DWORD CurrentProcessId;  
 	
     PINJECTIONINFO CurrentInjectionInfo = InjectionInfoList;
-
+    
 	while (CurrentInjectionInfo)
 	{
 		CurrentProcessId = CurrentInjectionInfo->ProcessId;
@@ -269,6 +269,8 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId)
         memset(CurrentInjectionInfo->NextInjectionInfo, 0, sizeof(struct InjectionInfo));
         
         CurrentInjectionInfo = CurrentInjectionInfo->NextInjectionInfo;
+        
+        CurrentInjectionInfo->ProcessId = ProcessId;
 	}
     
     return CurrentInjectionInfo;
