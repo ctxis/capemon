@@ -756,11 +756,11 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                     continue;
                 }
 
-                //if ((ULONG)pDosHeader->e_lfanew > Size-p)
-                //{
-                //    // e_lfanew points beyond end of region
-                //    continue;
-                //}
+                if ((ULONG)pDosHeader->e_lfanew > Size-p)
+                {
+                    // e_lfanew points beyond end of region
+                    continue;
+                }
                 
                 pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
                 
@@ -1124,6 +1124,13 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     DumpCount = 0;
+
+    // This is package (and technique) dependent:
+    g_config.procmemdump = 0;
+
+    // Cuckoo debug output level for development (0=none, 2=max)
+    g_config.debug = 0;
+
 #ifndef _WIN64	 
     // Start the debugger thread
     // if required by package

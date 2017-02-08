@@ -85,6 +85,7 @@ DWORD LengthMask[MAX_DEBUG_REGISTER_DATA_SIZE + 1] = DEBUG_REGISTER_LENGTH_MASKS
 
 DWORD MainThreadId;
 struct ThreadBreakpoints *MainThreadBreakpointList;
+LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 SINGLE_STEP_HANDLER SingleStepHandler;
 DWORD WINAPI PipeThread(LPVOID lpParam);
@@ -107,9 +108,10 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 PVOID OEP;
 
 void DebugOutputThreadBreakpoints();
-BOOL RestoreExecutionBreakpoint(PCONTEXT Context);
+BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
+unsigned int TrapIndex;
 
 //**************************************************************************************
 PTHREADBREAKPOINTS GetThreadBreakpoints(DWORD ThreadId)
@@ -360,7 +362,20 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         // If not it's a single-step
         if (BreakpointFlag == FALSE)
         {            
-            SingleStepHandler(ExceptionInfo);
+            if (SingleStepHandler)
+                SingleStepHandler(ExceptionInfo);
+            else if (TrapIndex)
+            // this is from StepOverExecutionBreakpoint
+            {
+                DoOutputDebugString("CAPEExceptionFilter: Stepping over execution breakpoint to: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
+                ResumeAfterExecutionBreakpoint(ExceptionInfo->ContextRecord);
+            }
+            else
+            {
+                DoOutputDebugString("CAPEExceptionFilter: Error, unhandled single-step exception at: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+            
             return EXCEPTION_CONTINUE_EXECUTION;
         }
         
@@ -473,13 +488,18 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         
 		return EXCEPTION_CONTINUE_EXECUTION;
     }
+    else if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+    {
+        // This is likely our own DoOutputDebugString function!
+        // So we let Windows handle this so we get our output.
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     else if (OriginalExceptionHandler)
     {
         // As it's not a bp, and the sample has registered its own handler
         // we try that handler as it could be anti-debug
         DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's own handler.\n");
         OriginalExceptionHandler(ExceptionInfo);
-        DoOutputDebugString("CAPEExceptionFilter: Returned from sample's own handler.\n");
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     
@@ -987,6 +1007,82 @@ BOOL ClearSingleStepMode(PCONTEXT Context)
 
     SingleStepHandler = NULL;
     
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo)
+//**************************************************************************************
+// This function allows us to get past an execution breakpoint while leaving it set. It
+// diaables the breakpoint, sets single-step mode to step over the instruction, whereupon 
+// the breakpoint is restored in ResumeAfterExecutionBreakpoint and execution resumed.
+{
+	PDR7 Dr7;
+
+	if (Context == NULL)
+        return FALSE;
+
+    Dr7 = (PDR7)&(Context->Dr7);
+    
+	switch(pBreakpointInfo->Register)
+	{
+        case 0:
+            Dr7->L0 = 0;
+            break;
+        case 1:
+            Dr7->L1 = 0;
+            break;
+        case 2:
+            Dr7->L2 = 0;
+            break;
+        case 3:
+            Dr7->L3 = 0;
+            break;
+	}
+
+    // set the trap flag
+    Context->EFlags |= FL_TF;
+    
+    // set the 'trap index' so we know which 'register' we're skipping
+    // (off by one to allow 'set'/'unset' to be signified by !0/0)
+    TrapIndex = pBreakpointInfo->Register + 1;
+    
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context)
+//**************************************************************************************
+{
+	PDR7 Dr7;
+
+	if (Context == NULL)
+        return FALSE;
+
+    Dr7 = (PDR7)&(Context->Dr7);
+    
+	switch(TrapIndex-1)
+	{
+        case 0:
+            Dr7->L0 = 1;
+            break;
+        case 1:
+            Dr7->L1 = 1;
+            break;
+        case 2:
+            Dr7->L2 = 1;
+            break;
+        case 3:
+            Dr7->L3 = 1;
+            break;
+	}
+
+    // Clear the trap flag
+    Context->EFlags &= ~FL_TF;
+    
+    // clear the 'trap index'
+    TrapIndex = 0;
+
     return TRUE;
 }
 
@@ -1744,6 +1840,7 @@ BOOL InitialiseDebugger(void)
     
     // Initialise any global variables
     ChildProcessId = 0;
+    SingleStepHandler = NULL;
     
     // Ensure wow64 patch is installed if needed
     WoW64fix();
