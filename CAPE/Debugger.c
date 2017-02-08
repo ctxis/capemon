@@ -502,9 +502,15 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         OriginalExceptionHandler(ExceptionInfo);
         return EXCEPTION_CONTINUE_EXECUTION;
     }
+    else if (ExceptionInfo->ExceptionRecord->ExceptionCode == STATUS_ACCESS_VIOLATION)
+    {
+        // We want to know more about this class of crash
+        g_config.debug = 2;
+        return cuckoomon_exception_handler(ExceptionInfo);
+    }
     
     // Some other exception occurred. Pass it to next handler
-    DoOutputDebugString("CAPEExceptionFilter: Passing non-breakpoint exception.\n");
+    DoOutputDebugString("CAPEExceptionFilter: Passing non-breakpoint exception: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionCode);
     
     return cuckoomon_exception_handler(ExceptionInfo);
     //return EXCEPTION_CONTINUE_SEARCH;
@@ -1610,7 +1616,7 @@ BOOL SetBreakpoint
 	pBreakpointInfo->Callback       = Callback;
 
     OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
-    //AddVectoredContinueHandler(1, CAPEExceptionFilter);
+    //AddVectoredExceptionHandler(1, CAPEExceptionFilter);
 	
     __try  
     {  

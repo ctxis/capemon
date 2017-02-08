@@ -1125,11 +1125,13 @@ void init_CAPE()
     
     DumpCount = 0;
 
-    // This is package (and technique) dependent:
+    // This flag controls whether a dump is automatically
+    // made at the end of a process' lifetime.
+    // It is normally only set in the base packages.
     g_config.procmemdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
-    g_config.debug = 0;
+    // g_config.debug = 2;
 
 #ifndef _WIN64	 
     // Start the debugger thread
