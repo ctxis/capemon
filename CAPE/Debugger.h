@@ -36,6 +36,7 @@ typedef BOOL (cdecl *SINGLE_STEP_HANDLER)(struct _EXCEPTION_POINTERS*);
 extern "C" {
 #endif
 
+LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 
 BOOL SetHardwareBreakpoint
 (

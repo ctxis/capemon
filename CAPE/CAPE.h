@@ -1,6 +1,7 @@
 extern HMODULE s_hInst;
 extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
+BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
 extern int DumpCurrentProcessNewEP(DWORD NewEP);
 extern int DumpCurrentProcess();
 extern int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);

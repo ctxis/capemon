@@ -22,7 +22,9 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <WinNT.h>
 #include <Shlwapi.h>
 #include <stdint.h>
-#include <Psapi.h>
+#include <psapi.h>
+#include <string.h>
+#include <strsafe.h>
 
 #include "CAPE.h"
 #include "Debugger.h"
@@ -74,6 +76,62 @@ void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned in
 	}
 	
 	return;
+}
+//*********************************************************************************************************************************
+BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize)
+//*********************************************************************************************************************************
+
+{
+	char DriveStrings[BUFSIZE];
+	DriveStrings[0] = '\0';
+
+	if (DriveLetterFilePath == NULL || *lpdwBufferSize < MAX_PATH)
+	{
+		*lpdwBufferSize = MAX_PATH;
+		return FALSE;
+	}
+	
+	if (GetLogicalDriveStrings(BUFSIZE-1, DriveStrings)) 
+	{
+        char DeviceName[MAX_PATH];
+        char szDrive[3] = " :";
+        BOOL FoundDevice = FALSE;
+        char* p = DriveStrings;
+
+        do 
+        {
+            *szDrive = *p;
+
+            if (QueryDosDevice(szDrive, DeviceName, MAX_PATH))
+            {
+                size_t DeviceNameLength = strlen(DeviceName);
+
+                if (DeviceNameLength < MAX_PATH) 
+                {
+                    FoundDevice = _strnicmp(DeviceFilePath, DeviceName, DeviceNameLength) == 0;
+
+                    if (FoundDevice && *(DeviceFilePath + DeviceNameLength) == ('\\')) 
+                    {
+                        // Construct DriveLetterFilePath replacing device path with DOS path
+                        char NewPath[MAX_PATH];
+                        StringCchPrintf(NewPath, MAX_PATH, TEXT("%s%s"), szDrive, DeviceFilePath+DeviceNameLength);
+                        StringCchCopyN(DriveLetterFilePath, MAX_PATH, NewPath, strlen(NewPath));
+                    }
+                }
+            }
+
+            // Go to the next NULL character.
+            while (*p++);
+        } 
+        while (!FoundDevice && *p); // end of string
+    }
+    else
+    {
+        DoOutputErrorString("TranslatePathFromDeviceToLetter: GetLogicalDriveStrings failed");
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 //**************************************************************************************
@@ -947,6 +1005,9 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
         DoOutputDebugString("DumpMemory: Failed to allocate memory for buffer copy.\n");
         return FALSE;
     }
+        else DoOutputDebugString("DumpMemory: DEBUG: Allocated space for buffer copy at 0x%x size 0x%x.\n", BufferCopy, Size);
+
+    DoOutputDebugString("DumpMemory: DEBUG: About to create copy of buffer 0x%x size 0x%x.\n", Buffer, Size);
     
     __try  
     {  
@@ -1166,6 +1227,15 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     DumpCount = 0;
+
+    // This flag controls whether a dump is automatically
+    // made at the end of a process' lifetime.
+    // It is normally only set in the base packages,
+    // or upon submission. (This overrides submission.)
+    g_config.procmemdump = 0;
+
+    // Cuckoo debug output level for development (0=none, 2=max)
+    g_config.debug = 2;
     
 #ifndef _WIN64	 
     // Start the debugger thread

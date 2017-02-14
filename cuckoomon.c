@@ -30,6 +30,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "unhook.h"
 #include "bson.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 volatile int dummy_val;
 
@@ -770,6 +772,13 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 
 	if (g_config.debug == 1 && ExceptionInfo->ExceptionRecord->ExceptionCode < 0xc0000000)
 		return EXCEPTION_CONTINUE_SEARCH;
+
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+		return EXCEPTION_CONTINUE_SEARCH;
+#ifndef _WIN64
+    if (DEBUGGER_ENABLED && ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+		return CAPEExceptionFilter(ExceptionInfo);
+#endif
 
 	hook_disable();
 

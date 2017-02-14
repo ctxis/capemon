@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include "ntapi.h"
 #include <tlhelp32.h>
+#include <psapi.h>
 #include "hooking.h"
 #include "log.h"
 #include "pipe.h"
@@ -281,8 +282,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 
 	NTSTATUS ret;
 	struct InjectionInfo *CurrentInjectionInfo;
-
+    DWORD BufferSize = MAX_PATH;
+    char DevicePath[MAX_PATH];
+    unsigned int PathLength;
     int pid = 0;
+    
 
     if(ClientId != NULL) {
 		__try {
@@ -317,10 +321,19 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
             }
             else
             {
-                CurrentInjectionInfo->ProcessHandle = ProcessHandle;
-                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
+                CurrentInjectionInfo->ProcessHandle = *ProcessHandle;
+                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
                 CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
                 CurrentInjectionInfo->ImageDumped = FALSE;
+                CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
+
+                PathLength = GetProcessImageFileName(*ProcessHandle, DevicePath, BufferSize);
+
+				if (!PathLength)
+                    DoOutputErrorString("NtOpenProcess: Error obtaining target process name");
+                    
+                else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
+                    DoOutputErrorString("NtOpenProcess: Error translating target process path");                
             }
         }
         // else... Some samples call this multiple times for the same process, we can ignore
@@ -540,10 +553,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
         {
             DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view, faking.\n");
 
+			ret = STATUS_SUCCESS;
+
             LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
                 "RegionSize", map_size);
                 
-            return STATUS_SUCCESS;
+            return ret;
         }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;
@@ -576,7 +591,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-      
+/*    
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
     if (!CurrentInjectionInfo && pid == GetCurrentProcessId())
@@ -599,7 +614,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
             DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
         
     }    
-
+*/
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
