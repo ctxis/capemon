@@ -996,7 +996,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
 	
 	dwBytesWritten = 0;
     
-    DoOutputDebugString("DumpMemory: CAPE output file succssfully created: %s", FullPathName);
+    DoOutputDebugString("DumpMemory: CAPE output file successfully created: %s", FullPathName);
 
 	BufferCopy = (LPVOID)((BYTE*)malloc(Size));
     

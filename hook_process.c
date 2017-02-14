@@ -591,7 +591,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-/*    
+    
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
     if (!CurrentInjectionInfo && pid == GetCurrentProcessId())
@@ -612,9 +612,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
         }
         else
             DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
-        
     }    
-*/
+
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
