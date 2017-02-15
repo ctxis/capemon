@@ -7,6 +7,7 @@ extern int DumpCurrentProcess();
 extern int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);
 extern int DumpPE(LPCVOID Buffer);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
+int DumpImageInCurrentProcess(DWORD ImageBase);
 unsigned int DumpSize;
 
 //Global switch for debugger

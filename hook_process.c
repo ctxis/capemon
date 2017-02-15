@@ -31,6 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int DumpImageInCurrentProcess(DWORD ImageBase);
 extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
@@ -394,7 +395,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
                         {
                             SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
                             
-                            CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(CurrentSectionView->LocalView);
+                            CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)CurrentSectionView->LocalView);
                             
                             if (CurrentInjectionInfo->ImageDumped)
                             {
@@ -533,7 +534,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
     _In_      HANDLE ProcessHandle,
     _In_opt_  PVOID BaseAddress
 ) {
-    PINJECTIONSECTIONVIEW CurrentSectionView, PreviousSectionView; 
+    PINJECTIONSECTIONVIEW CurrentSectionView; 
     SIZE_T map_size = 0; MEMORY_BASIC_INFORMATION mbi;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	DWORD protect = PAGE_READWRITE;
@@ -733,7 +734,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(Buffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)Buffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
@@ -842,7 +843,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, hProcess, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(lpBuffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)lpBuffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {

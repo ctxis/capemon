@@ -371,7 +371,7 @@ PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE
 		
         if (SectionViewList == NULL)
         {
-            DoOutputDebugString("InjectionAddSectionView: failed to allocate memory for initial section view list.\n");
+            DoOutputDebugString("AddSectionView: failed to allocate memory for initial section view list.\n");
             return NULL;
         }
         
@@ -438,8 +438,24 @@ BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView)
         if (CurrentSectionView == SectionView)
         {
             // Unlink this from the list and free the memory
-            PreviousSectionView->NextSectionView = CurrentSectionView->NextSectionView;
+            if (PreviousSectionView && CurrentSectionView->NextSectionView)
+            {
+                PreviousSectionView->NextSectionView = CurrentSectionView->NextSectionView;
+                DoOutputDebugString("DropSectionView: removed a view from section view list.\n");
+            }
+            else if (PreviousSectionView && CurrentSectionView->NextSectionView == NULL)
+            {
+                PreviousSectionView->NextSectionView = NULL;
+                DoOutputDebugString("DropSectionView: removed the view from the end of the section view list.\n");
+            }
+            else if (!PreviousSectionView)
+            {
+                SectionViewList = NULL;
+                DoOutputDebugString("DropSectionView: removed the head of the section view list.\n");
+            }
+            
             free(CurrentSectionView);
+            
             return TRUE;            
         }
         
@@ -649,10 +665,10 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 for (k=0; k<Size; k++)
                     *(DecryptedBuffer+k) = *(DecryptedBuffer+k)^i;
                 
-                DumpPE(DecryptedBuffer);
+                DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                 
                 free(DecryptedBuffer);
-				return TRUE;
+				return i;
 			}
 			else
 			{
@@ -721,7 +737,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 for (k=0; k<Size; k=k+2)
                     *(WORD*)(DecryptedBuffer+k) = *(WORD*)(DecryptedBuffer+k)^TestKey;
                 
-                DumpPE(DecryptedBuffer);
+                DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                 
                 free(DecryptedBuffer);
 				return TRUE;
@@ -764,8 +780,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     for (k=0; k<Size; k=k+4)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                    
-                    DumpPE(DecryptedBuffer);
+                
+                    DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                     
                     free(DecryptedBuffer);
                     return TRUE;
@@ -821,7 +837,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     for (k=0; k<Size; k=k+4)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
                     
-                    DumpPE(DecryptedBuffer);
+                    DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                     
                     free(DecryptedBuffer);
                     return TRUE;
@@ -866,8 +882,6 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
-    DoOutputDebugString("ScanForPE: Entry, size 0x%x, Buffer 0x%x\n", Size, Buffer);
-    
     if (Size == 0)
     {
         DoOutputDebugString("ScanForPE: Error, zero size given\n");
@@ -890,11 +904,11 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                     continue;
                 }
 
-                //if ((ULONG)pDosHeader->e_lfanew > Size-p)
-                //{
-                //    // e_lfanew points beyond end of region
-                //    continue;
-                //}
+                if ((ULONG)pDosHeader->e_lfanew > Size-p)
+                {
+                    // e_lfanew points beyond end of region
+                    continue;
+                }
                 
                 pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
                 
@@ -923,7 +937,7 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
         }  
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
+            DoOutputDebugString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
             return 0;
         }
     }
@@ -1005,9 +1019,6 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
         DoOutputDebugString("DumpMemory: Failed to allocate memory for buffer copy.\n");
         return FALSE;
     }
-        else DoOutputDebugString("DumpMemory: DEBUG: Allocated space for buffer copy at 0x%x size 0x%x.\n", BufferCopy, Size);
-
-    DoOutputDebugString("DumpMemory: DEBUG: About to create copy of buffer 0x%x size 0x%x.\n", Buffer, Size);
     
     __try  
     {  

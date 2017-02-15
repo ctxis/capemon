@@ -358,7 +358,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
                         
                         CapeMetaData->TargetPid = pid;
                         
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess(CurrentSectionView->LocalView);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)CurrentSectionView->LocalView);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
