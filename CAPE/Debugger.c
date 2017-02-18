@@ -86,15 +86,12 @@ DWORD LengthMask[MAX_DEBUG_REGISTER_DATA_SIZE + 1] = DEBUG_REGISTER_LENGTH_MASKS
 DWORD MainThreadId;
 struct ThreadBreakpoints *MainThreadBreakpointList;
 LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
-LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 SINGLE_STEP_HANDLER SingleStepHandler;
 DWORD WINAPI PipeThread(LPVOID lpParam);
 DWORD RemoteFuncAddress;
 HANDLE hParentPipe;
 
 extern LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
-LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
-
 extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
@@ -497,14 +494,15 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
     else if (OriginalExceptionHandler)
     {
         // As it's not a bp, and the sample has registered its own handler
-        // we try that handler as it could be anti-debug
-        DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's own handler.\n");
-        OriginalExceptionHandler(ExceptionInfo);
-        return EXCEPTION_CONTINUE_EXECUTION;
+        // we return EXCEPTION_EXECUTE_HANDLER
+        DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, re-registering sample's handler.\n");
+        SetUnhandledExceptionFilter(OriginalExceptionHandler);
+        return EXCEPTION_EXECUTE_HANDLER;
     }
     else if (ExceptionInfo->ExceptionRecord->ExceptionCode == STATUS_ACCESS_VIOLATION)
     {
         // We want to know more about this class of crash
+        DoOutputDebugString("CAPEExceptionFilter: Access violation caught, turning up debug level to capture info.\n");
         g_config.debug = 2;
         return cuckoomon_exception_handler(ExceptionInfo);
     }
@@ -1615,8 +1613,10 @@ BOOL SetBreakpoint
 	pBreakpointInfo->Type	        = Type;
 	pBreakpointInfo->Callback       = Callback;
 
-    OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
-    //AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+    if (VECTORED_HANDLER)
+        AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+    else
+        OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
 	
     __try  
     {  
@@ -1847,7 +1847,8 @@ BOOL InitialiseDebugger(void)
     // Initialise any global variables
     ChildProcessId = 0;
     SingleStepHandler = NULL;
-    
+    VECTORED_HANDLER = FALSE;
+
     // Ensure wow64 patch is installed if needed
     WoW64fix();
     

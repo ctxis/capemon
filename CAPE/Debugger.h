@@ -8,6 +8,8 @@ void* CAPE_var;
 #define BP_READWRITE   0x03
 
 LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
+LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+BOOL VECTORED_HANDLER;
 
 DWORD ChildProcessId;
 DWORD RemoteFuncAddress;

@@ -88,14 +88,22 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     BOOL ret = 1;
     LPTOP_LEVEL_EXCEPTION_FILTER res;
 
-	if (g_config.debug)
-		res = NULL;
-	else if (DEBUGGER_ENABLED)
+	if (DEBUGGER_ENABLED)
     {
-		DoOutputDebugString("SetUnhandledExceptionFilter hook: bypassing function as CAPE debugger active.\n");
-        res = OriginalExceptionHandler;
+		//DoOutputDebugString("SetUnhandledExceptionFilter hook: bypassing function as CAPE debugger active.\n");
+        //res = OriginalExceptionHandler;
+        //OriginalExceptionHandler = lpTopLevelExceptionFilter;
+        DoOutputDebugString("SetUnhandledExceptionFilter hook: swicthing CAPE debugger to vectored handler.\n");
+        AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+        VECTORED_HANDLER = TRUE;
         OriginalExceptionHandler = lpTopLevelExceptionFilter;
+        if (g_config.debug)
+            res = NULL;
+		else
+            res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
     }
+	else if (g_config.debug)
+		res = NULL;
 	else
 		res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
 
