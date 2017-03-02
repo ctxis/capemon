@@ -1023,6 +1023,7 @@ void init_CAPE()
 {
     // Initialise CAPE global variables
     //
+#ifndef STANDALONE
     CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
@@ -1030,6 +1031,7 @@ void init_CAPE()
     
     // This is package (and technique) dependent:
     CapeMetaData->DumpType = UPX;
+#endif
  
 #ifndef _WIN64	 
     // Start the debugger thread

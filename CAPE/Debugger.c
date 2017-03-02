@@ -103,7 +103,8 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
 
-PVOID OEP;
+typedef void (WINAPI *PWIN32ENTRY)();
+PWIN32ENTRY OEP;
 
 void DebugOutputThreadBreakpoints();
 BOOL RestoreExecutionBreakpoint(PCONTEXT Context);
@@ -1554,6 +1555,22 @@ BOOL InitialiseDebugger(void)
 }
 
 //**************************************************************************************
+DWORD_PTR GetNestedStackPointer(void)
+//**************************************************************************************
+{   
+    CONTEXT context;
+
+    RtlCaptureContext(&context);
+ 
+#ifdef _WIN64
+    return (DWORD_PTR)context.Rsp;
+#else
+    return (DWORD_PTR)context.Esp;
+#endif        
+}
+
+#ifndef _WIN64
+//**************************************************************************************
 __declspec (naked dllexport) void DebuggerInit(void)
 //**************************************************************************************
 {   
@@ -1595,6 +1612,40 @@ __declspec (naked dllexport) void DebuggerInit(void)
         jmp		OEP
     }
 }
+#else
+#pragma optimize("", off)
+//**************************************************************************************
+void DebuggerInit(void)
+//**************************************************************************************
+{   
+    DWORD_PTR StackPointer;
+	unsigned int Register;
+
+    StackPointer = GetNestedStackPointer() - 8; // this offset has been determined experimentally - TODO: tidy
+    
+	if (InitialiseDebugger() == FALSE)
+        DoOutputDebugString("Debugger initialisation failure!\n");
+	else
+        DoOutputDebugString("Debugger initialised, ESP = 0x%x\n", StackPointer);
+    
+// Target specific code
+
+// StackWriteCallback implemented in CAPE_UPX.c   
+    if (SetNextAvailableBreakpoint(MainThreadId, &Register, 1, (BYTE*)StackPointer, BP_WRITE, StackWriteCallback))
+	{
+		DoOutputDebugString("DebuggerInit: breakpoint %d set on stack write.\n");
+    }
+	else	
+		DoOutputDebugString("DebuggerInit: SetNextAvailableBreakpoint failed\n");
+
+// End of target specific code
+
+	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
+
+    OEP();
+}
+#pragma optimize("", on)
+#endif
 
 BOOL SendDebuggerMessage(DWORD Input)
 { 

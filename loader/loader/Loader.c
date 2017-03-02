@@ -609,8 +609,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     {
         // usage: loader.exe debug <binary> <commandline> <dll debugger>
         int pid, tid;
-        //PROCESS_INFORMATION pi;
-        //STARTUPINFOA si;
         BOOL fSuccess, fConnected;
         int RetVal;
         CONTEXT ctx;
@@ -619,7 +617,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         HANDLE hPipe, hProcess, hThread; 
         char lpszPipename[MAX_PATH];
 
-                
         if (__argc != 7)
             return ERROR_ARGCOUNT;
         pid = atoi(__argv[2]);
@@ -744,9 +741,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
 #ifndef _WIN64       
-        OEP = ctx.Eax;
+        OEP = ctx.Eax;  // eax holds eip on 32-bit
 #else
-        OEP = ctx.Rax;
+        OEP = ctx.Rcx;  // rcx holds rip on 64-bit
 #endif        
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
 #ifndef _WIN64       
@@ -791,7 +788,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
 #else
-            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+            ctx.Rcx = RemoteFuncAddress;		// rcx holds new entry point
 #endif        
             if (!SetThreadContext(hThread, &ctx))
             {
@@ -960,9 +957,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
 #ifndef _WIN64       
-        OEP = ctx.Eax;
-#else
-        OEP = ctx.Rax;
+        OEP = ctx.Eax;  // eax holds eip on 32-bit
+#else                 
+        OEP = ctx.Rcx;  // rcx holds rip on 64-bit
 #endif        
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
@@ -1008,7 +1005,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
 #else
-            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+            ctx.Rcx = RemoteFuncAddress;		// rcx holds new entry point
 #endif        
             if (!SetThreadContext(pi.hThread, &ctx))
             {
