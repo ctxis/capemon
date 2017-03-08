@@ -66,6 +66,8 @@ void ExtractionClearAll(void)
     
     return;
 }
+
+#ifndef _WIN64
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
     if (LastEIP)
@@ -160,6 +162,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         return TRUE;
     }
 }
+#endif
 
 BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
@@ -228,7 +231,11 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
         if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &EPBPRegister, 0, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
         {
             EntryPointExecBpSet = TRUE;
+#ifdef _WIN64
+            DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x (RIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Rip);
+#else
             DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x (EIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Eip);
+#endif
         }
         else
         {
@@ -241,7 +248,11 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
         if (ContextSetBreakpoint(ExceptionInfo->ContextRecord, EPBPRegister, 0, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
         {
             EntryPointExecBpSet = TRUE;
+#ifdef _WIN64
+            DoOutputDebugString("EntryPointWriteCallback: Updated EntryPoint execution bp %d to 0x%x (RIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Rip);
+#else
             DoOutputDebugString("EntryPointWriteCallback: Updated EntryPoint execution bp %d to 0x%x (EIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Eip);
+#endif
             
             // since it looks like the writing is happening at most a word at a time, let's try and catch the end of the write for another dump attempt
             //SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
@@ -286,7 +297,11 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
         {
             if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, (BYTE*)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
             {
+#ifdef _WIN64
+                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (RIP = 0x%x).\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Rip);
+#else
                 DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (EIP = 0x%x).\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Eip);
+#endif
             }
             else
             {
@@ -299,7 +314,11 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
         {
             if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)&(pNtHeader->OptionalHeader.AddressOfEntryPoint), BP_WRITE, EntryPointWriteCallback))
             {
+#ifdef _WIN64
+                DoOutputDebugString("PEHeaderWriteCallback: set write bp on AddressOfEntryPoint location (RIP = 0x%x).\n", ExceptionInfo->ContextRecord->Rip);
+#else
                 DoOutputDebugString("PEHeaderWriteCallback: set write bp on AddressOfEntryPoint location (EIP = 0x%x).\n", ExceptionInfo->ContextRecord->Eip);
+#endif
             }   
             else
             {
@@ -371,7 +390,11 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     
     if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)AllocationBase+e_lfanew, BP_WRITE, PEHeaderWriteCallback))
     {
+#ifdef _WIN64
+        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (RIP = 0x%x)\n", (BYTE*)AllocationBase + e_lfanew, ExceptionInfo->ContextRecord->Rip);
+#else
         DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (EIP = 0x%x)\n", (BYTE*)AllocationBase + e_lfanew, ExceptionInfo->ContextRecord->Eip);
+#endif
     }
     else
     {
@@ -545,7 +568,11 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
                 // Deal with the situation where the breakpoint triggers after e_lfanew has already been written
                 if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)pDosHeader + pDosHeader->e_lfanew, BP_WRITE, PEHeaderWriteCallback))
                 {
+#ifdef _WIN64
+                    DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location 0x%x (RIP = 0x%x)\n", (BYTE*)pDosHeader + pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Rip);
+#else
                     DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location 0x%x (EIP = 0x%x)\n", (BYTE*)pDosHeader + pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Eip);
+#endif
                 }
                 else
                 {
@@ -557,7 +584,11 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
         //e_lfanew is a long, therefore dword in size
         else if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
         {
+#ifdef _WIN64
+            DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location: 0x%x (RIP = 0x%x)\n", (BYTE*)&pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Rip);
+#else
             DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location: 0x%x (EIP = 0x%x)\n", (BYTE*)&pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Eip);
+#endif
         }
         else
         {
@@ -584,7 +615,11 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
         if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, 0, (BYTE*)AllocationBase, BP_EXEC, MidPageExecCallback))
         {
             AllocationBaseExecBpSet = TRUE;
+#ifdef _WIN64
+            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d (RIP = 0x%x)\n", Register, AllocationBase, AllocationBaseExecBpSet, ExceptionInfo->ContextRecord->Rip);
+#else
             DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d (EIP = 0x%x)\n", Register, AllocationBase, AllocationBaseExecBpSet, ExceptionInfo->ContextRecord->Eip);
+#endif			
         }
         else
         {

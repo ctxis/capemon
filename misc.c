@@ -1260,6 +1260,8 @@ int is_shutting_down()
 {
 	lasterror_t lasterror;
 	HANDLE mutex_handle;
+    PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
 	LPCVOID PEPointer;
 	int ret = 0;
 
@@ -1280,7 +1282,7 @@ int is_shutting_down()
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer) || IsDisguisedPE(AllocationBase, AllocationSize))
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -1307,6 +1309,22 @@ int is_shutting_down()
                         DoOutputDebugString("Shutdown mutex: successfully dumped module at 0x%x.\n", AllocationBase);
                         ClearAllBreakpoints(NULL);       
                     }
+                }
+                else if (IsDisguisedPE(AllocationBase, AllocationSize))
+                {
+                    // Fix the PE header in the dump
+                    pDosHeader = (PIMAGE_DOS_HEADER)AllocationBase;
+                    PEImage = (BYTE*)malloc(AllocationSize);
+                    memcpy(PEImage, AllocationBase, AllocationSize);
+
+                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                    DumpImageInCurrentProcess((DWORD)PEImage);
+                    
+                    free(PEImage);
+
+                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
                 }
                 else
                 {

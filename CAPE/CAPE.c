@@ -964,7 +964,7 @@ int DumpCurrentProcess()
 }
 
 //**************************************************************************************
-int DumpModuleInCurrentProcess(DWORD ModuleBase)
+int DumpModuleInCurrentProcess(DWORD_PTR ModuleBase)
 //**************************************************************************************
 {
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
@@ -979,7 +979,7 @@ int DumpModuleInCurrentProcess(DWORD ModuleBase)
 	return 0;
 }
 //**************************************************************************************
-int DumpImageInCurrentProcess(DWORD ImageBase)
+int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
 //**************************************************************************************
 {
     PIMAGE_DOS_HEADER pDosHeader;
@@ -1118,6 +1118,7 @@ void init_CAPE()
 {
     // Initialise CAPE global variables
     //
+#ifndef STANDALONE
     CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
@@ -1132,13 +1133,12 @@ void init_CAPE()
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;
+#endif
 
-#ifndef _WIN64	 
     // Start the debugger thread
     // if required by package
     if (DEBUGGER_ENABLED)
         launch_debugger();
-#endif
     
     return;
 }

@@ -609,13 +609,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     {
         // usage: loader.exe debug <binary> <commandline> <dll debugger>
         int pid, tid;
-        //PROCESS_INFORMATION pi;
-        //STARTUPINFOA si;
         BOOL fSuccess, fConnected;
         int RetVal;
         CONTEXT ctx;
         TCHAR DebugOutput[MAX_PATH];
-        DWORD cbBytesRead, cbWritten, cbReplyBytes, OEP, RemoteFuncAddress; 
+        DWORD cbBytesRead, cbWritten, cbReplyBytes;
+        DWORD_PTR OEP, RemoteFuncAddress;
         HANDLE hPipe, hProcess, hThread; 
         char lpszPipename[MAX_PATH];
 
@@ -631,7 +630,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (hProcess == NULL) 
         {
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("OpenProcess failed, GLE=%d.\n"), GetLastError());
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: OpenProcess failed, GLE=%d.\n"), GetLastError());
             OutputDebugString(DebugOutput);
             return -18;
         }
@@ -640,7 +639,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (hThread == NULL) 
         {
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("OpenThread failed, GLE=%d.\n"), GetLastError());
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: OpenThread failed, GLE=%d.\n"), GetLastError());
             OutputDebugString(DebugOutput);
             return -19;
         }
@@ -666,7 +665,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (hPipe == INVALID_HANDLE_VALUE) 
         {
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("CreateNamedPipe failed, GLE=%d.\n"), GetLastError());
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: CreateNamedPipe failed, GLE=%d.\n"), GetLastError());
             OutputDebugString(DebugOutput);
             return -14;
         }
@@ -684,14 +683,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (fConnected) 
         { 
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Client connected\n"));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Client connected\n"));
             OutputDebugString(DebugOutput);	
             
             fSuccess = ReadFile
             ( 
                 hPipe,        			// handle to pipe 
                 &RemoteFuncAddress,     // buffer to receive data 
-                sizeof(DWORD),			// size of buffer 
+                sizeof(DWORD_PTR),			// size of buffer 
                 &cbBytesRead, 			// number of bytes read 
                 NULL          			// not overlapped I/O
             );
@@ -699,7 +698,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         else 
         {
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("The client could not connect, closing pipe.\n"));
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: The client could not connect, closing pipe.\n"));
             OutputDebugString(DebugOutput);		
             CloseHandle(hPipe);
             return -15;
@@ -710,13 +709,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (GetLastError() == ERROR_BROKEN_PIPE)
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-                _stprintf_s(DebugOutput, MAX_PATH, TEXT("Client disconnected, GLE=%d.\n"), GetLastError());
+                _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Client disconnected, GLE=%d.\n"), GetLastError());
                 OutputDebugString(DebugOutput);
             }
             else
             {
                 memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-                _stprintf_s(DebugOutput, MAX_PATH, TEXT("ReadFile failed, last error=%d.\n"), GetLastError());
+                _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: ReadFile failed, last error=%d.\n"), GetLastError());
                 OutputDebugString(DebugOutput);
             }
         }
@@ -724,16 +723,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (!RemoteFuncAddress)
         {
             memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Successfully read from pipe, however RemoteFuncAddress = 0, last error=%d.\n"), GetLastError());
+            _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Successfully read from pipe, however RemoteFuncAddress = 0, last error=%d.\n"), GetLastError());
             OutputDebugString(DebugOutput);
             return -16;
         }
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-        _stprintf_s(DebugOutput, MAX_PATH, TEXT("Successfully received debugger init address: 0x%x.\n"), RemoteFuncAddress);
+        _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Successfully received debugger init address: 0x%x.\n"), RemoteFuncAddress);
         OutputDebugString(DebugOutput);		
 
-        //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
         ctx.ContextFlags = CONTEXT_ALL;
         if (!GetThreadContext(hThread, &ctx))
         {
@@ -744,9 +742,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
 #ifndef _WIN64       
-        OEP = ctx.Eax;
+        OEP = ctx.Eax;  // eax holds eip on 32-bit
 #else
-        OEP = ctx.Rax;
+        OEP = ctx.Rcx;  // rcx holds rip on 64-bit
 #endif        
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
 #ifndef _WIN64       
@@ -757,7 +755,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         OutputDebugString(DebugOutput);		
         
         cbWritten = 0;
-        cbReplyBytes = sizeof(DWORD);
+        cbReplyBytes = sizeof(DWORD_PTR);
         
         // Write the reply to the pipe. 
         fSuccess = WriteFile
@@ -787,11 +785,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Child process created, suspended, DLL successfully injected\n"));
             OutputDebugString(DebugOutput);
 
-            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            ctx.ContextFlags = CONTEXT_ALL;
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
 #else
-            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+            ctx.Rcx = RemoteFuncAddress;		// rcx holds new entry point
 #endif        
             if (!SetThreadContext(hThread, &ctx))
             {
@@ -826,7 +824,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         int RetVal;
         CONTEXT ctx;
         TCHAR DebugOutput[MAX_PATH];
-        DWORD  dwThreadId, cbBytesRead, cbWritten, cbReplyBytes, OEP, RemoteFuncAddress, ExitCode; 
+        DWORD  dwThreadId, cbBytesRead, cbWritten, cbReplyBytes, ExitCode;
+        DWORD_PTR OEP, RemoteFuncAddress;
         HANDLE hPipe; 
         char lpszPipename[MAX_PATH]; 
                 
@@ -908,7 +907,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             ( 
                 hPipe,        			// handle to pipe 
                 &RemoteFuncAddress,     // buffer to receive data 
-                sizeof(DWORD),			// size of buffer 
+                sizeof(DWORD_PTR),			// size of buffer 
                 &cbBytesRead, 			// number of bytes read 
                 NULL          			// not overlapped I/O
             );
@@ -950,7 +949,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         _stprintf_s(DebugOutput, MAX_PATH, TEXT("Successfully received debugger init address: 0x%x.\n"), RemoteFuncAddress);
         OutputDebugString(DebugOutput);		
 
-        //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
         ctx.ContextFlags = CONTEXT_ALL;
         if (!GetThreadContext(pi.hThread, &ctx))
         {
@@ -961,9 +959,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
 #ifndef _WIN64       
-        OEP = ctx.Eax;
-#else
-        OEP = ctx.Rax;
+        OEP = ctx.Eax;  // eax holds eip on 32-bit
+#else                 
+        OEP = ctx.Rcx;  // rcx holds rip on 64-bit
 #endif        
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
@@ -975,7 +973,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         OutputDebugString(DebugOutput);	
         
         cbWritten = 0;
-        cbReplyBytes = sizeof(DWORD);
+        cbReplyBytes = sizeof(DWORD_PTR);
         
         // Write the reply to the pipe. 
         fSuccess = WriteFile
@@ -1005,12 +1003,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             _stprintf_s(DebugOutput, MAX_PATH, TEXT("Loader: Child process created, suspended, DLL successfully injected\n"));
             OutputDebugString(DebugOutput);
 
-            //ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_DEBUG_REGISTERS;
             ctx.ContextFlags = CONTEXT_ALL;
 #ifndef _WIN64       
             ctx.Eax = RemoteFuncAddress;		// eax holds new entry point
 #else
-            ctx.Rax = RemoteFuncAddress;		// eax holds new entry point
+            ctx.Rcx = RemoteFuncAddress;		// rcx holds new entry point
 #endif        
             if (!SetThreadContext(pi.hThread, &ctx))
             {
@@ -1045,6 +1042,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             OutputDebugString(DebugOutput);                        
         }
         
+        return 1;
     }
     else if (!strcmp(__argv[1], "dump")) 
     {

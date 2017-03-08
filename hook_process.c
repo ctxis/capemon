@@ -344,6 +344,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
     __in      NTSTATUS ExitStatus
 ) {
 	// Process will terminate. Default logging will not work. Be aware: return value not valid
+    PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
 	LPCVOID PEPointer;
 	lasterror_t lasterror;
 	MEMORY_BASIC_INFORMATION MemInfo;
@@ -365,7 +367,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                 memset(&MemInfo, 0, sizeof(MemInfo));
                 VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -392,6 +394,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                         DoOutputDebugString("NtTerminateProcess hook: successfully dumped module.\n");
                         ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
+                }
+                else if (IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                {
+                    // Fix the PE header in the dump
+                    pDosHeader = (PIMAGE_DOS_HEADER)MemInfo.AllocationBase;
+                    PEImage = (BYTE*)malloc(MemInfo.RegionSize);
+                    memcpy(PEImage, MemInfo.AllocationBase, MemInfo.RegionSize);
+
+                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                    DumpImageInCurrentProcess((DWORD)PEImage);
+                    
+                    free(PEImage);
+
+                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
                 }
                 else
                 {
@@ -430,7 +448,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                 memset(&MemInfo, 0, sizeof(MemInfo));
                 VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -458,6 +476,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
                         ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);       
                     }
                 }
+                else if (IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                {
+                    // Fix the PE header in the dump
+                    pDosHeader = (PIMAGE_DOS_HEADER)MemInfo.AllocationBase;
+                    PEImage = (BYTE*)malloc(MemInfo.RegionSize);
+                    memcpy(PEImage, MemInfo.AllocationBase, MemInfo.RegionSize);
+
+                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                    DumpImageInCurrentProcess((DWORD)PEImage);
+                    
+                    free(PEImage);
+
+                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
+                }                
                 else
                 {
                     AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
@@ -615,6 +649,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     ULONG AllocationType,
     __in     ULONG Protect
 ) {
+    PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
 	LPCVOID PEPointer;
     MEMORY_BASIC_INFORMATION MemInfo;
 
@@ -639,7 +675,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
                 memset(&MemInfo, 0, sizeof(MemInfo));
                 VirtualQuery(AllocationBase, &MemInfo, sizeof(MemInfo));
                 
-                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer) || IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                if (PeImageDetected || ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer))
                 {
                     if (PEPointer)
                     {
@@ -673,6 +709,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
                         DoOutputDebugString("NtAllocateVirtualMemory hook: successfully dumped module at 0x%x.\n", AllocationBase);
                     }
                 }
+                else if (IsDisguisedPE(MemInfo.AllocationBase, MemInfo.RegionSize))
+                {
+                    // Fix the PE header in the dump
+                    pDosHeader = (PIMAGE_DOS_HEADER)MemInfo.AllocationBase;
+                    PEImage = (BYTE*)malloc(MemInfo.RegionSize);
+                    memcpy(PEImage, MemInfo.AllocationBase, MemInfo.RegionSize);
+
+                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                    DumpImageInCurrentProcess((DWORD)PEImage);
+                    
+                    free(PEImage);
+
+                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
+                }                
                 else if (ScanForNonZero(AllocationBase, AllocationSize))
                 {
                     DoOutputDebugString("NtAllocateVirtualMemory hook: No PE detected, attempting raw dump of memory image at: 0x%x.\n", AllocationBase);
@@ -889,6 +941,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	LPCVOID PEPointer;
 	int Register;
 
+
+
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
@@ -1050,7 +1104,6 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 	ret = Old_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect,
         lpflOldProtect);
 
-
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
 		lasterror_t lasterrors;
@@ -1070,7 +1123,21 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(lpAddress, dwSize))
                 {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
+                    if (ScanForPE(meminfo.AllocationBase, meminfo.RegionSize, &PEPointer))
+                    {
+                        //SetCapeMetaData(EXTRACTION_PE, 0, NULL, PEPointer);
+                        DoOutputDebugString("VirtualProtectEx hook: Found a PE image.\n");
+
+                        if (DumpImageInCurrentProcess((DWORD)PEPointer))
+                        {
+                            DoOutputDebugString("VirtualProtectEx hook: Found and dumped a PE image.\n");
+                        }
+                        else
+                        {
+                            DoOutputDebugString("VirtualProtectEx hook: Found a PE image but failed to dump it.\n");
+                        }                    
+                    }
+                    else if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = lpAddress;
@@ -1149,7 +1216,6 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
             
             if ((DWORD)lpAddress < (DWORD)AllocationBase && (DWORD)lpAddress >= ((DWORD)AllocationBase + AllocationSize))
             {
-
                 // we check if the buffer has already been written to 
                 if (ScanForNonZero(lpAddress, dwSize))
                 {

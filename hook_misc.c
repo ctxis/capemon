@@ -93,7 +93,7 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
 		//DoOutputDebugString("SetUnhandledExceptionFilter hook: bypassing function as CAPE debugger active.\n");
         //res = OriginalExceptionHandler;
         //OriginalExceptionHandler = lpTopLevelExceptionFilter;
-        DoOutputDebugString("SetUnhandledExceptionFilter hook: swicthing CAPE debugger to vectored handler.\n");
+        DoOutputDebugString("SetUnhandledExceptionFilter hook: switching CAPE debugger to vectored handler.\n");
         AddVectoredExceptionHandler(1, CAPEExceptionFilter);
         VECTORED_HANDLER = TRUE;
         OriginalExceptionHandler = lpTopLevelExceptionFilter;

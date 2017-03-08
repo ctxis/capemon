@@ -262,6 +262,8 @@ static HANDLE g_terminate_event_handle;
 
 static DWORD WINAPI _terminate_event_thread(LPVOID param)
 {
+    PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
 	LPCVOID PEPointer;
 
 	hook_disable();
@@ -278,7 +280,7 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
                 AllocationDumped = TRUE;
                 PEPointer = NULL;
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer) || IsDisguisedPE(AllocationBase, AllocationSize))
+                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
                 {
                     if (PEPointer)
                         AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
@@ -305,6 +307,22 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
                         DoOutputDebugString("Terminate event: successfully dumped module.\n");
                         ClearAllBreakpoints(NULL);       
                     }
+                }
+                else if (IsDisguisedPE(AllocationBase, AllocationSize))
+                {
+                    // Fix the PE header in the dump
+                    pDosHeader = (PIMAGE_DOS_HEADER)AllocationBase;
+                    PEImage = (BYTE*)malloc(AllocationSize);
+                    memcpy(PEImage, AllocationBase, AllocationSize);
+
+                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+                    DumpImageInCurrentProcess((DWORD)PEImage);
+                    
+                    free(PEImage);
+
+                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
                 }
                 else
                 {
