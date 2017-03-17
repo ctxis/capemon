@@ -2,12 +2,16 @@ extern HMODULE s_hInst;
 extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
+int DumpMemory(LPCVOID Buffer, unsigned int Size);
 extern int DumpCurrentProcessNewEP(DWORD NewEP);
 extern int DumpCurrentProcess();
 extern int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);
 extern int DumpPE(LPCVOID Buffer);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
+int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
+int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 int DumpImageInCurrentProcess(DWORD ImageBase);
+void DumpSectionViewsForPid(DWORD Pid);
 unsigned int DumpSize;
 
 //Global switch for debugger

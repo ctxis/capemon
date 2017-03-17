@@ -340,10 +340,12 @@ PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
 {
     PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
 
+    //TODO remove debug
     DoOutputDebugString("GetSectionView: Global section view list 0x%x, looking for handle 0x%x\n", CurrentSectionView, SectionHandle);
 	
     while (CurrentSectionView)
 	{
+        //TODO remove debug
         DoOutputDebugString("GetSectionView: looking at section handle 0x%x.\n", CurrentSectionView->SectionHandle);
         if (CurrentSectionView->SectionHandle == SectionHandle)
         {
@@ -467,24 +469,138 @@ BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView)
 }
 
 //**************************************************************************************
+void DumpSectionViewsForPid(DWORD Pid)
+//**************************************************************************************
+{
+	struct InjectionInfo *CurrentInjectionInfo;
+    PINJECTIONSECTIONVIEW CurrentSectionView;
+    DWORD BufferSize = MAX_PATH;
+    LPVOID PEPointer = NULL;
+    BOOL Dumped = FALSE;
+    
+    DoOutputDebugString("DumpSectionViewsForPid: DEEEEEEEEEEEEEEEEEEEBUG.\n");
+    
+    CurrentInjectionInfo = GetInjectionInfo(Pid);
+
+    if (CurrentInjectionInfo == NULL)
+    {
+        DoOutputDebugString("DumpSectionViewsForPid: No injection info for pid %d.\n", Pid);
+        return;
+    }
+
+    CurrentSectionView = SectionViewList;
+
+    while (CurrentSectionView)
+    {
+        if (CurrentSectionView->TargetProcessId == Pid)
+        {
+            DoOutputDebugString("DumpSectionViewsForPid: Shared section view found with pid %d.\n", Pid);
+            
+            if (CurrentSectionView->LocalView)
+            {
+                PEPointer = CurrentSectionView->LocalView;
+                
+                while (ScanForPE(PEPointer, CurrentSectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)CurrentSectionView->LocalView), &PEPointer))
+                {
+                    DoOutputDebugString("DumpSectionViewsForPid: Dumping PE image from shared section view, local address 0x%x.\n", PEPointer);
+
+                    CapeMetaData->DumpType = INJECTION_PE;
+                    CapeMetaData->TargetPid = Pid;
+
+                    if (DumpImageInCurrentProcess((DWORD)PEPointer))
+                    {
+                        DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
+                        Dumped = TRUE;
+                    }
+                    else
+                        DoOutputDebugString("DumpSectionViewsForPid: Failed to dump PE image from shared section view.\n");
+                        
+                    ((BYTE*)PEPointer)++;
+                }
+                
+                if (Dumped == FALSE)
+                {
+                    DoOutputDebugString("DumpSectionViewsForPid: no PE file found in shared section view, attempting raw dump.\n");
+                    
+                    CapeMetaData->DumpType = INJECTION_SHELLCODE;
+                    
+                    CapeMetaData->TargetPid = Pid;
+                    
+                    if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
+                    {
+                        DoOutputDebugString("DumpSectionViewsForPid: Dumped shared section view.");
+                        Dumped = TRUE;
+                    }
+                    else
+                        DoOutputDebugString("DumpSectionViewsForPid: Failed to dump shared section view.");                    
+                }
+            }
+        }
+        
+        //DropSectionView(CurrentSectionView);
+        
+        CurrentSectionView = CurrentSectionView->NextSectionView;
+    }
+    
+    if (Dumped == FALSE)
+        DoOutputDebugString("DumpSectionViewsForPid: no shared section views found for pid %d.\n", Pid);   
+
+    return;
+}
+
+//**************************************************************************************
 char* GetName()
 //**************************************************************************************
 {
-    char *OutputFilename;
+	char *OutputFilename, *FullPathName;
     SYSTEMTIME Time;
+    DWORD RetVal;
+	
+    FullPathName = (char*) malloc(MAX_PATH);
 
+    if (FullPathName == NULL)
+    {
+		DoOutputErrorString("GetName: Error allocating memory for full path string");
+		return 0;    
+    }
+    
     OutputFilename = (char*)malloc(MAX_PATH);
     
     if (OutputFilename == NULL)
     {
-        DoOutputErrorString("GetName: failed to allocate memory");
+        DoOutputErrorString("GetName: failed to allocate memory for file name string");
         return 0;
     }
     
     GetSystemTime(&Time);
     sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), Time.wMilliseconds, Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
     
-	return OutputFilename;
+	// We want to dump CAPE output to the 'analyzer' directory
+    memset(FullPathName, 0, MAX_PATH);
+	
+    strncpy_s(FullPathName, MAX_PATH, g_config.analyzer, strlen(g_config.analyzer)+1);
+
+	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
+	{
+		DoOutputDebugString("GetName: Error, CAPE destination path too long.");
+        free(OutputFilename); free(FullPathName);
+		return 0;
+	}
+
+    PathAppend(FullPathName, "CAPE");
+
+	RetVal = CreateDirectory(FullPathName, NULL);
+
+	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
+	{
+		DoOutputDebugString("GetName: Error creating output directory");
+        free(OutputFilename); free(FullPathName);
+		return 0;
+	}
+
+    PathAppend(FullPathName, OutputFilename);
+
+	return FullPathName;
 }
 
 //**************************************************************************************
@@ -950,61 +1066,26 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
 int DumpMemory(LPCVOID Buffer, unsigned int Size)
 //**************************************************************************************
 {
-	char *OutputFilename, *FullPathName;
-	DWORD RetVal, dwBytesWritten;
+	char *FullPathName;
+	DWORD dwBytesWritten;
 	HANDLE hOutputFile;
     LPVOID BufferCopy;
 
-	FullPathName = (char*) malloc(MAX_PATH);
-
-    if (FullPathName == NULL)
-    {
-		DoOutputErrorString("DumpMemory: Error allocating memory for strings");
-		return 0;    
-    }
-    
-    OutputFilename = GetName();
-    
-	// We want to dump CAPE output to the 'analyzer' directory
-    memset(FullPathName, 0, MAX_PATH);
-	
-    strncpy_s(FullPathName, MAX_PATH, g_config.analyzer, strlen(g_config.analyzer)+1);
-
-	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
-	{
-		DoOutputDebugString("DumpMemory: Error, CAPE destination path too long.");
-        free(OutputFilename); free(FullPathName);
-		return 0;
-	}
-
-    PathAppend(FullPathName, "CAPE");
-
-	RetVal = CreateDirectory(FullPathName, NULL);
-
-	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
-	{
-		DoOutputDebugString("DumpMemory: Error creating output directory");
-        free(OutputFilename); free(FullPathName);
-		return 0;
-	}
-
-    PathAppend(FullPathName, OutputFilename);
-	
-    DoOutputDebugString("DumpMemory: FullPathName = %s", FullPathName);
-    
+	FullPathName = GetName();
+        
 	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 	{
 		DoOutputDebugString("DumpMemory: CAPE output filename exists already: %s", FullPathName);
-        free(OutputFilename); free(FullPathName);
+        free(FullPathName);
 		return 0;
 	}
 
 	if (hOutputFile == INVALID_HANDLE_VALUE)
 	{
 		DoOutputErrorString("DumpMemory: Could not create CAPE output file");
-        free(OutputFilename); free(FullPathName);
+        free(FullPathName);
 		return 0;		
 	}	
 	
@@ -1033,7 +1114,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
 		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
-        free(OutputFilename); free(FullPathName); free(BufferCopy);
+        free(FullPathName); free(BufferCopy);
 		return 0;
 	}
 
@@ -1042,7 +1123,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     CapeOutputFile(FullPathName);
     
     // We can free the filename buffers
-    free(OutputFilename); free(FullPathName); free(BufferCopy);
+    free(FullPathName); free(BufferCopy);
 	
     return 1;
 }

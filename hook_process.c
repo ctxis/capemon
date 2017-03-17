@@ -287,7 +287,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     char DevicePath[MAX_PATH];
     unsigned int PathLength;
     int pid = 0;
-    
 
     if(ClientId != NULL) {
 		__try {
@@ -308,13 +307,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess,
         ObjectAttributes, ClientId);
         
-    if (NT_SUCCESS(ret) && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
+    if (NT_SUCCESS(ret)){// && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
         CurrentInjectionInfo = GetInjectionInfo(pid);
         
         if (CurrentInjectionInfo == NULL)
         {   // First call for this process, create new info
             CurrentInjectionInfo = CreateInjectionInfo(pid);
-            DoOutputDebugString("NtOpenProcess: Injection info created for pid 0x%x.\n", pid);
+            DoOutputDebugString("NtOpenProcess: Injection info created for pid %d.\n", pid);
         
             if (CurrentInjectionInfo == NULL)
             {
@@ -330,9 +329,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 
                 PathLength = GetProcessImageFileName(*ProcessHandle, DevicePath, BufferSize);
 
-				if (!PathLength)
+                if (!PathLength)
+                {
                     DoOutputErrorString("NtOpenProcess: Error obtaining target process name");
-                    
+                    _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
+                }
                 else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
                     DoOutputErrorString("NtOpenProcess: Error translating target process path");                
             }
@@ -352,16 +353,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 ) {
 	NTSTATUS ret;
 	struct InjectionInfo *CurrentInjectionInfo;
-    PINJECTIONSECTIONVIEW CurrentSectionView;
-    
+
     DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
 
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
-    if (CurrentInjectionInfo && (CurrentInjectionInfo->WriteDetected))
+    if (CurrentInjectionInfo)
     {
-        if (CurrentInjectionInfo->ImageDumped == FALSE)
+        if (CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
         {
             SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
             
@@ -376,57 +376,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
             else
                 DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
         }
-    }
-    else if (CurrentInjectionInfo)
-    {
-        CurrentSectionView = SectionViewList;
 
-        while (CurrentSectionView)
-        {
-            if (CurrentSectionView->TargetProcessId == pid)
-            {
-                if (CurrentSectionView->LocalView)
-                {
-                    if (ScanForPE(CurrentSectionView->LocalView, 1, NULL))
-                    {
-                        DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d (by section view), local view at 0x%x.\n", pid, CurrentSectionView->LocalView);
-
-                        if (CurrentInjectionInfo->ImageDumped == FALSE)
-                        {
-                            SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                            
-                            CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)CurrentSectionView->LocalView);
-                            
-                            if (CurrentInjectionInfo->ImageDumped)
-                            {
-                                DoOutputDebugString("NtResumeProcess hook: Dumped PE image from buffer.\n");
-                                DropSectionView(CurrentSectionView);
-                            }
-                            else
-                                DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
-                        }                    
-                    }
-                    else
-                    {
-                        DoOutputDebugString("NtResumeProcess hook: invalid PE file in buffer, attempting raw dump.\n");
-                        
-                        CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                        
-                        CapeMetaData->TargetPid = pid;
-                        
-                        if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
-						{
-                            DoOutputDebugString("NtResumeProcess hook: Dumped shared section view.");
-                            DropSectionView(CurrentSectionView);
-                        }
-                        else
-                            DoOutputDebugString("NtResumeProcess hook: Failed to dump shared section view.");                    
-                    }
-                }
-            }
-            
-            CurrentSectionView = CurrentSectionView->NextSectionView;
-        }
+        DumpSectionViewsForPid(pid);
     }
     
 	ret = Old_NtResumeProcess(ProcessHandle);
@@ -584,14 +535,18 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 	__in     UINT InheritDisposition,
 	__in     ULONG AllocationType,
 	__in     ULONG Win32Protect
-	) {
+) {
 	struct InjectionInfo *CurrentInjectionInfo;
     struct InjectionSectionView *CurrentSectionViewInfo;
+    char DevicePath[MAX_PATH];
+    unsigned int PathLength;
+    DWORD BufferSize = MAX_PATH;
 	
     NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
-	DWORD pid = pid_from_process_handle(ProcessHandle);
+	
+    DWORD pid = pid_from_process_handle(ProcessHandle);
     
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
@@ -612,9 +567,51 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
             DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
         }
         else
+        {
             DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
+        }
     }    
+    else if (!CurrentInjectionInfo && pid != GetCurrentProcessId())
+    {
+        CurrentInjectionInfo = CreateInjectionInfo(pid);
+        
+        DoOutputDebugString("NtMapViewOfSection hook: Injection info created for pid %d.\n", pid);
+    
+        if (CurrentInjectionInfo == NULL)
+        {
+            DoOutputDebugString("NtMapViewOfSection hook: Cannot create new injection info - FATAL ERROR.\n");
+        }
+        else
+        {
+            CurrentInjectionInfo->ProcessHandle = ProcessHandle;
+            CurrentInjectionInfo->ProcessId = pid;
+            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
+            CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+            CurrentInjectionInfo->ImageDumped = FALSE;
+            CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
 
+            PathLength = GetProcessImageFileName(ProcessHandle, DevicePath, BufferSize);
+
+            if (!PathLength)
+            {
+                DoOutputErrorString("NtMapViewOfSection hook: Error obtaining target process name");
+                _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
+            }
+            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
+                DoOutputErrorString("NtMapViewOfSection hook: Error translating target process path");
+                
+            CurrentSectionViewInfo = AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
+
+            if (CurrentSectionViewInfo)
+            {
+                CurrentSectionViewInfo->TargetProcessId = pid;
+                DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
+            }
+            else
+                DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
+        }
+    }
+    
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");

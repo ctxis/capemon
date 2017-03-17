@@ -7,8 +7,12 @@ void* CAPE_var;
 #define BP_RESERVED    0x02
 #define BP_READWRITE   0x03
 
-DWORD Injection_ProcessId;
-DWORD RemoteFuncAddress;
+LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
+LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+BOOL VECTORED_HANDLER;
+
+DWORD ChildProcessId;
+DWORD_PTR RemoteFuncAddress;
 
 typedef struct BreakpointInfo 
 {
@@ -36,9 +40,8 @@ typedef BOOL (cdecl *SINGLE_STEP_HANDLER)(struct _EXCEPTION_POINTERS*);
 extern "C" {
 #endif
 
-LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 
-BOOL SetHardwareBreakpoint
+BOOL SetBreakpoint
 (
     DWORD	ThreadId,
     int		Register,
@@ -48,9 +51,9 @@ BOOL SetHardwareBreakpoint
 	PVOID	Callback
 );
 
-BOOL ClearHardwareBreakpoint(DWORD ThreadId, int Register);
+BOOL ClearBreakpoint(DWORD ThreadId, int Register);
 
-BOOL ContextSetHardwareBreakpoint
+BOOL ContextSetBreakpoint
 (
     PCONTEXT	Context,
     int			Register,
@@ -65,14 +68,16 @@ BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register)
 BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL SetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
-BOOL ContextClearHardwareBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
+BOOL ContextClearBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
+BOOL ClearBreakpointsInRange(DWORD ThreadId, PVOID BaseAddress, SIZE_T Size);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
-BOOL ContextClearAllDebugRegisters(PCONTEXT Context);
-BOOL ClearAllDebugRegisters(HANDLE hThread);
+BOOL ContextClearAllBreakpoints(PCONTEXT Context);
+BOOL ClearAllBreakpoints(DWORD ThreadId);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 BOOL InitialiseDebugger(void);
 BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD CreationFlags);
+BOOL SendDebuggerMessage(DWORD Input);
 int launch_debugger(void);
 
 #ifdef __cplusplus

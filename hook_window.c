@@ -22,6 +22,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "misc.h"
 #include "pipe.h"
 #include "log.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 typedef DWORD (WINAPI * __GetWindowThreadProcessId)(
 	__in HWND hWnd,
@@ -140,6 +144,54 @@ HOOKDEF(HWND, WINAPI, FindWindowExW,
     return ret;
 }
 
+HOOKDEF(BOOL, WINAPI, PostMessageA,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+) {
+	BOOL ret;
+	/*
+	DWORD pid;
+	lasterror_t lasterror;
+
+	get_lasterrors(&lasterror);
+	GetWindowThreadProcessId(hWnd, &pid);
+	if (pid != GetCurrentProcessId())
+		pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
+	set_lasterrors(&lasterror);
+	*/
+	ret = Old_PostMessageA(hWnd, Msg, wParam, lParam);
+
+	LOQ_bool("windows", "ph", "WindowHandle", hWnd, "Message", Msg);
+
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, PostMessageW,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+) {
+	BOOL ret;
+	/*
+	DWORD pid;
+	lasterror_t lasterror;
+
+	get_lasterrors(&lasterror);
+	GetWindowThreadProcessId(hWnd, &pid);
+	if (pid != GetCurrentProcessId())
+		pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
+	set_lasterrors(&lasterror);
+	*/
+	ret = Old_PostMessageW(hWnd, Msg, wParam, lParam);
+
+	LOQ_bool("windows", "ph", "WindowHandle", hWnd, "Message", Msg);
+
+	return ret;
+}
+
 HOOKDEF(BOOL, WINAPI, SendNotifyMessageA,
 	_In_  HWND hWnd,
 	_In_  UINT Msg,
@@ -169,7 +221,7 @@ HOOKDEF(BOOL, WINAPI, SendNotifyMessageW,
 	_In_  UINT Msg,
 	_In_  WPARAM wParam,
 	_In_  LPARAM lParam
-	) {
+) {
 	BOOL ret;
 	/*
 	DWORD pid;
@@ -206,6 +258,7 @@ HOOKDEF(LONG, WINAPI, SetWindowLongA,
 		if (!stricmp(classname, "Shell_TrayWnd") && nIndex == 0) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			isbad = TRUE;
+            DumpSectionViewsForPid(pid);
 		}
 	}
 	set_lasterrors(&lasterror);
@@ -236,6 +289,7 @@ HOOKDEF(LONG_PTR, WINAPI, SetWindowLongPtrA,
 		if (!stricmp(classname, "Shell_TrayWnd") && nIndex == 0) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			isbad = TRUE;
+            DumpSectionViewsForPid(pid);            
 		}
 	}
 	set_lasterrors(&lasterror);
@@ -266,6 +320,7 @@ HOOKDEF(LONG, WINAPI, SetWindowLongW,
 		if (!stricmp(classname, "Shell_TrayWnd") && nIndex == 0) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			isbad = TRUE;
+            DumpSectionViewsForPid(pid);            
 		}
 	}
 	set_lasterrors(&lasterror);
@@ -297,6 +352,7 @@ HOOKDEF(LONG_PTR, WINAPI, SetWindowLongPtrW,
 		if (!stricmp(classname, "Shell_TrayWnd") && nIndex == 0) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			isbad = TRUE;
+            DumpSectionViewsForPid(pid);            
 		}
 	}
 	set_lasterrors(&lasterror);

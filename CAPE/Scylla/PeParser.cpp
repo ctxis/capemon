@@ -662,10 +662,10 @@ DWORD PeParser::isMemoryNotNull( BYTE * data, int dataSize )
 	return 0;
 }
 
-bool PeParser::savePeFileToDisk(const CHAR *newFile, BOOL CapeFile)
+bool PeParser::savePeFileToDisk(const CHAR *newFile)
 {
 	bool retValue = true;
-	char *HashString;
+	char *CapeName;
 
 	DWORD dwFileOffset = 0, dwWriteSize = 0;
 
@@ -791,32 +791,63 @@ bool PeParser::savePeFileToDisk(const CHAR *newFile, BOOL CapeFile)
             
             if (!GetFullPathName(CAPE_OUTPUT_FILE, MAX_PATH, CapeOutputPath, NULL))
             {
-                DoOutputErrorString("There was a problem obtaining the full file path");
+                DoOutputErrorString("savePeFileToDisk: There was a problem obtaining the full file path");
                 return 0;            
             }
             
-            HashString = GetName();
+            CapeName = GetName();
             
-            if (MoveFile(CapeOutputPath, HashString))
+            if (MoveFile(CapeOutputPath, CapeName))
             {
                 memset(CapeOutputPath, 0, MAX_PATH);
                 
-                if (!GetFullPathName(HashString, MAX_PATH, CapeOutputPath, NULL))
+                if (!GetFullPathName(CapeName, MAX_PATH, CapeOutputPath, NULL))
                 {
-                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    DoOutputErrorString("savePeFileToDisk: There was a problem obtaining the full file path");
                     return 0;            
                 }
 
 				CapeOutputFile(CapeOutputPath);
                 return 1;
             }
+            else if (GetLastError() == ERROR_ALREADY_EXISTS)    // have seen this occasionally
+            {
+                DoOutputDebugString("savePeFileToDisk: Name clash, trying to obtain new name...");
+                
+                CapeName = GetName();
+                
+                if (MoveFile(CapeOutputPath, CapeName))
+                {
+                    memset(CapeOutputPath, 0, MAX_PATH);
+                    
+                    if (!GetFullPathName(CapeName, MAX_PATH, CapeOutputPath, NULL))
+                    {
+                        DoOutputErrorString("savePeFileToDisk: There was a problem obtaining the full file path");
+                        return 0;            
+                    }
+
+                    CapeOutputFile(CapeOutputPath);
+                    return 1;
+                }
+                else
+                {
+                    DoOutputErrorString("savePeFileToDisk: Failed twice to rename file");
+                    
+                    if (!DeleteFile(CapeOutputPath))
+                    {
+                        DoOutputErrorString("savePeFileToDisk: There was a problem deleting the file: %s", CapeOutputPath);
+                    }
+                    
+                    return 0;
+                }                
+            }
             else
             {
-                DoOutputErrorString("There was a problem renaming the file");
+                DoOutputErrorString("savePeFileToDisk: There was a problem renaming the file");
 				
                 if (!DeleteFile(CapeOutputPath))
                 {
-                    DoOutputErrorString("There was a problem deleting the file: %s", CapeOutputPath);
+                    DoOutputErrorString("savePeFileToDisk: There was a problem deleting the file: %s", CapeOutputPath);
                 }
                 
                 return 0;
@@ -827,16 +858,11 @@ bool PeParser::savePeFileToDisk(const CHAR *newFile, BOOL CapeFile)
 	return retValue;
 }
 
-bool PeParser::savePeFileToDisk(const CHAR *newFile)
-{
-    return savePeFileToDisk(newFile, TRUE);
-}
-
 bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
 {
 	bool retValue = true;
 	DWORD dwWriteSize = 0;
-	char *HashString;
+	char *CapeName;
 
 	if (getNumberOfSections() != listPeSection.size())
 	{
@@ -851,7 +877,7 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
     
 	if (openWriteFileHandle(newFile))
 	{
-        DoOutputDebugString("Number of sections: %d, PointerToRawData: 0x%x, SizeOfRawData: 0x%x\n", getNumberOfSections(), listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData, listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData);
+        //DoOutputDebugString("Number of sections: %d, PointerToRawData: 0x%x, SizeOfRawData: 0x%x\n", getNumberOfSections(), listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData, listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData);
         
         dwWriteSize = listPeSection[getNumberOfSections()-1].sectionHeader.PointerToRawData
             + listPeSection[getNumberOfSections()-1].sectionHeader.SizeOfRawData;
@@ -871,19 +897,19 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
             
             if (!GetFullPathName(CAPE_OUTPUT_FILE, MAX_PATH, CapeOutputPath, NULL))
             {
-                DoOutputErrorString("There was a problem obtaining the full file path");
+                DoOutputErrorString("saveCompletePeToDisk: There was a problem obtaining the full file path");
                 return 0;            
             }
             
-            HashString = GetName();
+            CapeName = GetName();
             
-            if (MoveFile(CapeOutputPath, HashString))
+            if (MoveFile(CapeOutputPath, CapeName))
             {
                 memset(CapeOutputPath, 0, MAX_PATH);
                 
-                if (!GetFullPathName(HashString, MAX_PATH, CapeOutputPath, NULL))
+                if (!GetFullPathName(CapeName, MAX_PATH, CapeOutputPath, NULL))
                 {
-                    DoOutputErrorString("There was a problem obtaining the full file path");
+                    DoOutputErrorString("saveCompletePeToDisk: There was a problem obtaining the full file path");
                     return 0;            
                 }
 
@@ -892,11 +918,11 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
             }
             else
             {
-                DoOutputErrorString("There was a problem renaming the file");
+                DoOutputErrorString("saveCompletePeToDisk: There was a problem renaming the file");
 				
                 if (!DeleteFile(CapeOutputPath))
                 {
-                    DoOutputErrorString("There was a problem deleting the file: %s", CapeOutputPath);
+                    DoOutputErrorString("saveCompletePeToDisk: There was a problem deleting the file: %s", CapeOutputPath);
                 }
                 
                 return 0;
@@ -1217,27 +1243,6 @@ void PeParser::alignAllSectionHeaders()
 	}
 
 	std::sort(listPeSection.begin(), listPeSection.end(), PeFileSectionSortByVirtualAddress); //sort by VirtualAddress ascending
-}
-
-bool PeParser::dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath, BOOL CapeFile)
-{
-	moduleBaseAddress = modBase;
-
-	if (readPeSectionsFromProcess())
-	{
-		setDefaultFileAlignment();
-
-		setEntryPointVa(entryPoint);
-
-		alignAllSectionHeaders();
-		fixPeHeader();
-
-		getFileOverlay();
-
-		return savePeFileToDisk(dumpFilePath, CapeFile);
-	}
-	
-	return false;
 }
 
 bool PeParser::dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath)

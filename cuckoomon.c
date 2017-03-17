@@ -270,6 +270,8 @@ static hook_t g_hooks[] = {
 	// won't end up logging. We need another hook type which logs the hook and then every function
 	// called by that hook (modulo perhaps some blacklisted functions for this specific hook type)
     //HOOK(user32, EnumWindows),
+	HOOK(user32, PostMessageA),
+	HOOK(user32, PostMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -632,7 +634,7 @@ VOID CALLBACK DllLoadNotification(
 	_In_opt_ PVOID                       Context)
 {
 	PWCHAR dllname;
-	COPY_UNICODE_STRING(library, NotificationData->Loaded.BaseDllName);
+	COPY_UNICODE_STRING(library, NotificationData->Loaded.FullDllName);
 
 	if (g_config.debug) {
 		int ret = 0;
@@ -775,10 +777,9 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
 		return EXCEPTION_CONTINUE_SEARCH;
-#ifndef _WIN64
+
     if (DEBUGGER_ENABLED && ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
 		return CAPEExceptionFilter(ExceptionInfo);
-#endif
 
 	hook_disable();
 
@@ -931,6 +932,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
+        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif
