@@ -79,7 +79,7 @@
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>CAPE_Extraction</TargetName>
+    <TargetName>Extraction</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -415,7 +415,6 @@
     <ClInclude Include="CAPE\Scylla\IATSearch.h" />
     <ClInclude Include="CAPE\Scylla\ImportRebuilder.h" />
     <ClInclude Include="CAPE\Scylla\ImportsHandling.h" />
-    <ClInclude Include="CAPE\Scylla\multitree.h" />
     <ClInclude Include="CAPE\Scylla\NativeWinApi.h" />
     <ClInclude Include="CAPE\Scylla\PeParser.h" />
     <ClInclude Include="CAPE\Scylla\ProcessAccessHelp.h" />

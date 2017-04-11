@@ -26,20 +26,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "log.h"
 #include "pipe.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
-extern BOOL ClearAllBreakpoints(HANDLE hThread);
 extern BOOL AllocationWriteDetected;
 extern BOOL PeImageDetected;
 extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
-extern int DumpImageInCurrentProcess(DWORD ModuleBase);
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
-extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
-extern int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
 extern void ExtractionClearAll(void);
 
 static _NtQueryInformationProcess pNtQueryInformationProcess;
@@ -1260,9 +1257,8 @@ int is_shutting_down()
 {
 	lasterror_t lasterror;
 	HANDLE mutex_handle;
-    PBYTE PEImage;
-    PIMAGE_DOS_HEADER pDosHeader;
-	LPCVOID PEPointer;
+    PGUARDPAGES CurrentGuardPages;
+    MEMORY_BASIC_INFORMATION meminfo;
 	int ret = 0;
 
 	if (process_shutting_down)
@@ -1273,81 +1269,56 @@ int is_shutting_down()
 	mutex_handle = OpenMutex(SYNCHRONIZE, FALSE, g_config.shutdown_mutex);
     
     if(mutex_handle != NULL) {
+
+    CurrentGuardPages = GuardPageList;
+    
+    while (CurrentGuardPages)
+    {
+        if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
+            CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+
+        CurrentGuardPages = CurrentGuardPages->NextGuardPages;
+    }
+    
         if (AllocationBase && AllocationSize && !AllocationDumped)
         {
-            if (ScanForNonZero(AllocationBase, AllocationSize))
+            memset(&meminfo, 0, sizeof(meminfo));
+
+            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
             {
-                DoOutputDebugString("Shutdown mutex: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-
-                AllocationDumped = TRUE;
-                PEPointer = NULL;
+                DoOutputErrorString("Shutdown mutex: unable to query memory region 0x%x", AllocationBase);
+            }
+            else if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
+            {
+                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (AllocationDumped)
+                    DoOutputDebugString("Shutdown mutex: PE image(s) detected and dumped.\n");
+                else
                 {
-                    if (PEPointer)
-                        AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
-                    else
-                        AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
+                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
                     
-                    if (!AllocationDumped)
-                    {
-                        AllocationDumped = TRUE;
-                        AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-                        
-                        if (!AllocationDumped)
-                        {
-                            DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
-                        }
-                        else
-                        {
-                            DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                            ClearAllBreakpoints(NULL);       
-                        }
-                    }
+                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+                    
+                    if (AllocationDumped)
+                        DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
                     else
-                    {
-                        DoOutputDebugString("Shutdown mutex: successfully dumped module at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
-                    }
+                        DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
                 }
-                else if (IsDisguisedPE(AllocationBase, AllocationSize))
+                
+                if (!AllocationDumped)
                 {
-                    // Fix the PE header in the dump
-                    pDosHeader = (PIMAGE_DOS_HEADER)AllocationBase;
-                    PEImage = (BYTE*)malloc(AllocationSize);
-                    memcpy(PEImage, AllocationBase, AllocationSize);
-
-                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
-                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
-
-                    DumpImageInCurrentProcess((DWORD)PEImage);
-                    
-                    free(PEImage);
-
-                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
+                    DoOutputDebugString("Shutdown mutex: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
+                    ClearAllBreakpoints((DWORD)NULL);       
                 }
                 else
                 {
-                    AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-
-                    if (!AllocationDumped)
-                    {
-                        DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
-                    }
-                    else
-                    {
-                        DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ClearAllBreakpoints(NULL);       
-                    }
+                    DoOutputDebugString("Shutdown mutex: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
+                    ExtractionClearAll();
                 }
             }
-            else
-            {
-                DoOutputDebugString("Shutdown mutex: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
-                ExtractionClearAll();
-            }
         }
-        
+
 		log_flush();
         CloseHandle(mutex_handle);
         ret = 1;
@@ -1922,4 +1893,18 @@ out:
 	set_lasterrors(&lasterror);
 
 	return ImageBase;
+}
+
+PEXCEPTION_ROUTINE get_thread_seh_list()
+{
+#ifdef _WIN64
+	return 0;
+#else
+    PNT_TIB pTib = (PNT_TIB)(NtCurrentTeb());
+    
+    if (pTib && pTib->ExceptionList && pTib->ExceptionList->Handler)
+        return pTib->ExceptionList->Handler;
+    else
+        return 0;
+#endif
 }

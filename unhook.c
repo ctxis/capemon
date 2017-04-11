@@ -24,23 +24,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "misc.h"
 #include "config.h"
 #include <Sddl.h>
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 #define UNHOOK_MAXCOUNT 2048
 #define UNHOOK_BUFSIZE 32
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
 extern BOOL AllocationWriteDetected;
-extern BOOL ClearAllBreakpoints(HANDLE hThread);
 extern BOOL PeImageDetected;
 extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
-extern int DumpImageInCurrentProcess(DWORD ModuleBase);
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
-extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
-extern int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
 extern void ExtractionClearAll(void);
 
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
@@ -262,87 +259,60 @@ static HANDLE g_terminate_event_handle;
 
 static DWORD WINAPI _terminate_event_thread(LPVOID param)
 {
-    PBYTE PEImage;
-    PIMAGE_DOS_HEADER pDosHeader;
-	LPCVOID PEPointer;
+    PGUARDPAGES CurrentGuardPages;
+    MEMORY_BASIC_INFORMATION meminfo;
 
 	hook_disable();
 
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
         
+        CurrentGuardPages = GuardPageList;
+        
+        while (CurrentGuardPages)
+        {
+            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
+                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+
+            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
+        }
+
         if (AllocationBase && AllocationSize && !AllocationDumped)
         {
-            if (ScanForNonZero(AllocationBase, AllocationSize))
+            memset(&meminfo, 0, sizeof(meminfo));
+            
+            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
             {
-                DoOutputDebugString("Terminate event: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-
-                AllocationDumped = TRUE;
-                PEPointer = NULL;
+                DoOutputErrorString("Terminate event: unable to query memory region 0x%x", AllocationBase);
+            }
+            else if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
+            {
+                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
                 
-                if (PeImageDetected || ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+                if (AllocationDumped)
+                    DoOutputDebugString("Terminate event: PE image(s) detected and dumped.\n");
+                else
                 {
-                    if (PEPointer)
-                        AllocationDumped = DumpImageInCurrentProcess((DWORD)PEPointer);
-                    else
-                        AllocationDumped = DumpImageInCurrentProcess((DWORD)AllocationBase);
+                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
                     
-                    if (!AllocationDumped)
-                    {
-                        AllocationDumped = TRUE;
-                        AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-                        
-                        if (!AllocationDumped)
-                        {
-                            DoOutputDebugString("Terminate event: failed to dump memory range at 0x%x.\n", AllocationBase);
-                        }
-                        else
-                        {
-                            DoOutputDebugString("Terminate event: successfully dumped memory range.\n");
-                            ClearAllBreakpoints(NULL);       
-                        }
-                    }
+                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+                    
+                    if (AllocationDumped)
+                        DoOutputDebugString("Terminate event: successfully dumped memory range at 0x%x.\n", AllocationBase);
                     else
-                    {
-                        DoOutputDebugString("Terminate event: successfully dumped module.\n");
-                        ClearAllBreakpoints(NULL);       
-                    }
+                        DoOutputDebugString("Terminate event: failed to dump memory range at 0x%x.\n", AllocationBase);
                 }
-                else if (IsDisguisedPE(AllocationBase, AllocationSize))
+                
+                if (!AllocationDumped)
                 {
-                    // Fix the PE header in the dump
-                    pDosHeader = (PIMAGE_DOS_HEADER)AllocationBase;
-                    PEImage = (BYTE*)malloc(AllocationSize);
-                    memcpy(PEImage, AllocationBase, AllocationSize);
-
-                    *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
-                    *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
-
-                    DumpImageInCurrentProcess((DWORD)PEImage);
-                    
-                    free(PEImage);
-
-                    DoOutputDebugString("NtTerminateProcess hook: Dumped disguised PE payload.");
+                    DoOutputDebugString("Terminate event: Successfully dumped previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
+                    ClearAllBreakpoints((DWORD)NULL);       
                 }
                 else
                 {
-                    AllocationDumped = DumpMemory(AllocationBase, AllocationSize);
-
-                    if (!AllocationDumped)
-                    {
-                        DoOutputDebugString("Terminate event: failed to dump memory range at 0x%x.\n", AllocationBase);
-                    }
-                    else
-                    {
-                        DoOutputDebugString("Terminate event: successfully dumped memory range.\n");
-                        ClearAllBreakpoints(NULL);       
-                    }
+                    DoOutputDebugString("Terminate event: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
+                    ExtractionClearAll();
                 }
-            }
-            else
-            {
-                DoOutputDebugString("Terminate event: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
-                ExtractionClearAll();
             }
         }
 

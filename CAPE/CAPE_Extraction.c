@@ -27,18 +27,24 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 extern _NtAllocateVirtualMemory pNtAllocateVirtualMemory;
 #endif
 
+extern ULONG_PTR g_our_dll_base;
+extern DWORD g_our_dll_size;
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
-extern int DumpImageInCurrentProcess(DWORD ModuleBase);
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern BOOL DumpPEsInRange(LPVOID Buffer, unsigned int Size);
+extern int DumpMemory(LPVOID Buffer, unsigned int Size);
+extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+extern int ScanPageForNonZero(LPVOID Address);
 
 SIZE_T AllocationSize;
 PVOID AllocationBase;
 
 PVOID *pAllocationBase;
 PSIZE_T pRegionSize;
+
+PGUARDPAGES GuardedPagesToStep;
 
 BOOL AllocationWriteDetected;
 BOOL PeImageDetected;
@@ -48,7 +54,7 @@ BOOL AllocationBaseExecBpSet;
 BOOL EntryPointExecBpSet;
 static unsigned int EPBPRegister;
 
-static DWORD BasePointer, FirstEIP, LastEIP, CurrentEIP, LastDelta, TotalDelta, DeltaMax, LoopDeltaMax;
+static DWORD_PTR BasePointer, FirstEIP, LastEIP, CurrentEIP, LastDelta, TotalDelta, DeltaMax, LoopDeltaMax;
 
 void ExtractionClearAll(void)
 {
@@ -58,6 +64,7 @@ void ExtractionClearAll(void)
     AllocationSize = 0;
     AllocationBase = NULL;
     CapeMetaData->Address = NULL;
+    
     
     AllocationWriteDetected = FALSE;
     PeImageDetected = FALSE;
@@ -95,7 +102,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             {
                 SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
 
-                if (!AllocationDumped && DumpImageInCurrentProcess((DWORD)AllocationBase))
+                if (!AllocationDumped && DumpPEsInRange(AllocationBase, AllocationSize))
                 {
                     AllocationDumped = TRUE;
                     DoOutputDebugString("Trace: successfully dumped from loop end at 0x%x.\n", CurrentEIP);
@@ -122,7 +129,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         {
             SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
             
-            if (!AllocationDumped && DumpImageInCurrentProcess((DWORD)AllocationBase))
+            if (!AllocationDumped && DumpPEsInRange(AllocationBase, AllocationSize))
             {
                 AllocationDumped = TRUE;
                 DoOutputDebugString("Trace: successfully dumped module 0x%x bytes after last write, EIP: 0x%x\n", TotalDelta, CurrentEIP);
@@ -164,8 +171,194 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 }
 #endif
 
+//            if ((ULONG_PTR)FaultingAddress >= g_our_dll_base && (ULONG_PTR)FaultingAddress < (g_our_dll_base + g_our_dll_size))
+
+//**************************************************************************************
+BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
+//**************************************************************************************
+{
+    PGUARDPAGES CurrentGuardPages = GuardedPagesToStep;
+
+    if (LastEIP)
+    {
+#ifdef _WIN64
+        CurrentEIP = ExceptionInfo->ContextRecord->Rip;
+#else
+        CurrentEIP = ExceptionInfo->ContextRecord->Eip;
+#endif
+        
+        if (CurrentEIP == LastEIP)
+        {
+            // We want to keep stepping until we're past the instruction
+            SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
+            return TRUE;
+        }
+        else
+        {   
+            if (CurrentGuardPages == NULL)
+            {
+                DoOutputDebugString("StepOverGuardPageFault error: GuardedPagesToStep not set.\n");
+                return FALSE;
+            }
+
+            if (ReinstateGuardPages(CurrentGuardPages))
+            {
+                //DoOutputDebugString("StepOverGuardPageFault: Reinstated page guard.\n");
+                GuardedPagesToStep = NULL;
+                LastEIP = (DWORD_PTR)NULL;
+                CurrentEIP = (DWORD_PTR)NULL;
+                return TRUE;
+            }
+
+            DoOutputDebugString("StepOverGuardPageFault: Failed to reinstate page guard.\n");
+            return FALSE;        
+        }
+    }
+    else
+    {
+#ifdef _WIN64
+        LastEIP = ExceptionInfo->ContextRecord->Rip;
+#else
+        LastEIP = ExceptionInfo->ContextRecord->Eip;
+#endif
+        
+        if (CurrentGuardPages->LastWriteAddress)
+        {
+            if (!SystemInfo.dwPageSize)
+                GetSystemInfo(&SystemInfo);
+            
+            // we want to flag writes that occur beyond the first page
+            if (ScanPageForNonZero(CurrentGuardPages->LastWriteAddress) && (DWORD_PTR)CurrentGuardPages->LastWriteAddress >= (DWORD_PTR)CurrentGuardPages->BaseAddress + SystemInfo.dwPageSize)
+            {
+                if (!CurrentGuardPages->WriteDetected)
+                {
+                    DoOutputDebugString("StepOverGuardPageFault: DEBUG trigger write to 0x%x, base 0x%x, pagesize 0x%x.\n", CurrentGuardPages->LastWriteAddress, CurrentGuardPages->BaseAddress, SystemInfo.dwPageSize);
+                    CurrentGuardPages->WriteDetected = TRUE;
+                    
+                    // we only care about reads that come after writes
+                    CurrentGuardPages->ReadDetected = FALSE;
+                }
+            }
+        }
+        
+        SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
+        return TRUE;
+    }
+}
+
+//**************************************************************************************
+BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
+//**************************************************************************************
+{
+    DWORD AccessType        = (DWORD)ExceptionInfo->ExceptionRecord->ExceptionInformation[0];
+    PVOID AccessAddress     = (PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1];
+    PVOID FaultingAddress   = (PVOID)ExceptionInfo->ExceptionRecord->ExceptionAddress;
+    
+    PGUARDPAGES CurrentGuardPages = GetGuardPages(AccessAddress);
+    
+    if (CurrentGuardPages == NULL)
+    {
+        DoOutputDebugString("ExtractionGuardPageHandler error: address 0x%x not in guarded pages.\n", AccessAddress);
+        return FALSE;
+    }
+    
+    switch (AccessType)
+    {
+        case EXCEPTION_WRITE_FAULT:
+        
+            //DoOutputDebugString("ExtractionGuardPageHandler: Write detected at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
+
+            CurrentGuardPages->LastWriteAddress = AccessAddress;
+            
+            GuardedPagesToStep = CurrentGuardPages;
+            
+            SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
+            
+            break;
+            
+        case EXCEPTION_READ_FAULT:
+        
+            if (CurrentGuardPages->WriteDetected)
+            {
+                if (!(CurrentGuardPages->Protect & (PAGE_EXECUTE_READWRITE || PAGE_EXECUTE_READ || PAGE_EXECUTE)) && !CurrentGuardPages->PagesDumped && !CurrentGuardPages->ReadDetected)
+                {
+                    DoOutputDebugString("ExtractionGuardPageHandler: Read detected after previous write at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
+                    
+                    if (DisableGuardPages(CurrentGuardPages))
+                    {
+                        CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+                        if (CurrentGuardPages->PagesDumped)    
+                            DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
+                    }
+                    else
+                    {
+                        DoOutputDebugString("ExtractionGuardPageHandler: Failed to disable guard pages for dump.\n");
+                    }
+                    
+                    // if dumping failed (for example, because of an incomplete image) 
+                    // we want to re-enable guard pages so we can try again
+                    //if (!CurrentGuardPages->PagesDumped)
+                    //{
+                    //    ReinstateGuardPages(CurrentGuardPages);
+                    //}
+                }
+            }
+            
+            CurrentGuardPages->ReadDetected = TRUE;
+            CurrentGuardPages->LastReadBy = FaultingAddress;
+            
+            break;
+            
+        case EXCEPTION_EXECUTE_FAULT:
+        
+            DoOutputDebugString("ExtractionGuardPageHandler: Execution detected at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
+            
+            if (!(CurrentGuardPages->Protect & (PAGE_EXECUTE_READWRITE || PAGE_EXECUTE_READ || PAGE_EXECUTE)))
+            {
+                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - pages not marked with execute flag in guarded pages list.\n");                
+            }
+            
+            if (!CurrentGuardPages->PagesDumped)
+            {
+                DoOutputDebugString("ExtractionGuardPageHandler: Execution within guarded page detected, dumping.\n");
+                
+                    if (DisableGuardPages(CurrentGuardPages))
+                    {
+                        CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+                        if (CurrentGuardPages->PagesDumped)    
+                            DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
+                        else
+                        {
+                            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, CurrentGuardPages->BaseAddress);
+                            
+                            CurrentGuardPages->PagesDumped = DumpMemory(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+                            
+                            if (CurrentGuardPages->PagesDumped)
+                                DoOutputDebugString("ExtractionGuardPageHandler: shellcode detected and dumped.\n");
+                            else
+                                DoOutputDebugString("ExtractionGuardPageHandler: failed to dump detected shellcode.\n");
+                        }
+                    }
+                else
+                {
+                    DoOutputDebugString("ExtractionGuardPageHandler: Failed to disable guard pages for dump.\n");
+                }
+            }
+            
+            break;
+            
+        default:
+            DoOutputDebugString("ExtractionGuardPageHandler: Unknown access type: 0x%x - error.\n", AccessType);
+            return FALSE;
+    }
+    
+    return TRUE;
+}
+
 BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
+	MEMORY_BASIC_INFORMATION meminfo;
+
 	if (pBreakpointInfo == NULL)
 	{
 		DoOutputDebugString("EntryPointExecCallback executed with pBreakpointInfo NULL.\n");
@@ -178,25 +371,37 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 		return FALSE;
 	}
 
-	DoOutputDebugString("EntryPointExecCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("EntryPointExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
+    memset(&meminfo, 0, sizeof(meminfo));
+
+    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
+    {
+        DoOutputErrorString("EntryPointExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
+        return FALSE;
+    }
+
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
 
     if (AllocationDumped == TRUE)
     {
         DoOutputDebugString("EntryPointExecCallback: allocation already dumped, clearing breakpoint.\n");
         ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
     }
-    else if (DumpImageInCurrentProcess((DWORD)AllocationBase))
-    {
-        AllocationDumped = TRUE;
-        DoOutputDebugString("EntryPointExecCallback: successfully dumped module.\n");       
-        ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);        
-    }
     else
     {
-        DoOutputDebugString("EntryPointExecCallback: failed to dump PE module.\n");
-        return FALSE;
+        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+        
+        if (AllocationDumped)
+        {
+            DoOutputDebugString("EntryPointExecCallback hook: PE image(s) detected and dumped.\n");
+            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);            
+        }
+        else
+        {
+            DoOutputDebugString("EntryPointExecCallback: failed to dump PE module.\n");
+            return FALSE;
+        }
     }
 	
     DoOutputDebugString("EntryPointExecCallback executed successfully.\n");
@@ -218,9 +423,9 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
 		return FALSE;
 	}
 
-	DoOutputDebugString("EntryPointWriteCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("EntryPointWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
-    if ((DWORD)pBreakpointInfo->Address < (DWORD)AllocationBase || (DWORD)pBreakpointInfo->Address > (DWORD)AllocationBase + AllocationSize)
+    if ((DWORD_PTR)pBreakpointInfo->Address < (DWORD_PTR)AllocationBase || (DWORD_PTR)pBreakpointInfo->Address > (DWORD_PTR)AllocationBase + AllocationSize)
     {
         DoOutputDebugString("EntryPointWriteCallback: current AddressOfEntryPoint is not within allocated region. We assume it's only partially written and await further writes.\n");
         return TRUE;        
@@ -271,8 +476,11 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
 
 BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
+#ifdef _WIN64
+	PIMAGE_NT_HEADERS64 pNtHeader;
+#else
 	PIMAGE_NT_HEADERS32 pNtHeader;
-    
+#endif    
     if (pBreakpointInfo == NULL)
 	{
 		DoOutputDebugString("PEHeaderWriteCallback executed with pBreakpointInfo NULL.\n");
@@ -285,7 +493,7 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
 		return FALSE;
 	}
 
-	DoOutputDebugString("PEHeaderWriteCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("PEHeaderWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
     pNtHeader = (PIMAGE_NT_HEADERS)pBreakpointInfo->Address;
     
@@ -298,9 +506,9 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
             if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, (BYTE*)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
             {
 #ifdef _WIN64
-                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (RIP = 0x%x).\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Rip);
+                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (RIP = 0x%x).\n", (DWORD_PTR)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Rip);
 #else
-                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (EIP = 0x%x).\n", (DWORD)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Eip);
+                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (EIP = 0x%x).\n", (DWORD_PTR)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Eip);
 #endif
             }
             else
@@ -361,7 +569,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 		return FALSE;
 	}
 
-	DoOutputDebugString("PEPointerWriteCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("PEPointerWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
     e_lfanew = *(long*)((pBreakpointInfo->Address));
 
@@ -375,7 +583,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
     if (e_lfanew && (*(DWORD*)((unsigned char*)AllocationBase+e_lfanew) == IMAGE_NT_SIGNATURE))
     {
-        if (DumpImageInCurrentProcess((DWORD)pBreakpointInfo->Address))
+        if (DumpPEsInRange(AllocationBase, AllocationSize))
         {
             AllocationDumped = TRUE;
             ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);        
@@ -409,8 +617,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
 BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	MEMORY_BASIC_INFORMATION MemInfo;
-	LPCVOID PEPointer;
+	MEMORY_BASIC_INFORMATION meminfo;
     
     if (pBreakpointInfo == NULL)
 	{
@@ -424,39 +631,66 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
 		return FALSE;
 	}
 
-	DoOutputDebugString("MidPageExecCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("MidPageExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
-    memset(&MemInfo, 0, sizeof(MemInfo));
+    memset(&meminfo, 0, sizeof(meminfo));
 
-    VirtualQuery(pBreakpointInfo->Address, &MemInfo, sizeof(MemInfo));
-    
-    DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", MemInfo.AllocationBase, MemInfo.RegionSize);
-
-    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, AllocationBase);
-    
-    if (ScanForPE(MemInfo.AllocationBase, MemInfo.RegionSize, &PEPointer))
+    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
     {
-        SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
-
-        if (DumpImageInCurrentProcess((DWORD)PEPointer))
-        {
-            DoOutputDebugString("MidPageExecCallback: Found and dumped a PE image.\n");
-            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-        }
-        else
-        {
-            DoOutputDebugString("MidPageExecCallback: Found a PE image but failed to dump it.\n");
-        }
+        DoOutputErrorString("MidPageExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
+        return FALSE;
     }
-    else if (DumpMemory(MemInfo.AllocationBase, MemInfo.RegionSize))
+
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
+
+    if ((DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
     {
-        DoOutputDebugString("MidPageExecCallback: Dumped region of execution.\n");
+        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
+        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
+    }
+    else if ((DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
+    {
+        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, meminfo.RegionSize);
+        AllocationDumped = DumpPEsInRange(meminfo.BaseAddress, meminfo.RegionSize);
+    }
+        
+    if (AllocationDumped)
+    {
+        DoOutputDebugString("MidPageExecCallback: PE image(s) detected and dumped.\n");
         ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
     }
     else
     {
-        DoOutputDebugString("MidPageExecCallback: failed to dump PE module.\n");
-        return FALSE;
+        if ((DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+            
+            AllocationDumped = DumpMemory(meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
+            
+            if (AllocationDumped)
+            {
+                DoOutputDebugString("MidPageExecCallback: successfully dumped memory range at 0x%x.\n", meminfo.AllocationBase);
+                ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
+            }
+        }
+        else if ((DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.BaseAddress);
+            
+            AllocationDumped = DumpMemory(meminfo.BaseAddress, meminfo.RegionSize);
+            
+            if (AllocationDumped)
+            {
+                DoOutputDebugString("MidPageExecCallback: successfully dumped memory range at 0x%x.\n", meminfo.BaseAddress);
+                ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
+            }
+        }
+    }
+    
+    if (!AllocationDumped)
+    {
+        DoOutputDebugString("MidPageExecCallback: failed to dump memory range at 0x%x.\n", AllocationBase);
+        ExtractionClearAll();
     }
 	
     DoOutputDebugString("MidPageExecCallback executed successfully.\n");
@@ -464,54 +698,64 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
 	return TRUE;
 }
 
-BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
+BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	LPCVOID PEPointer;
+    MEMORY_BASIC_INFORMATION meminfo;
+    //LPVOID PEPointer;
     
     if (pBreakpointInfo == NULL)
 	{
-		DoOutputDebugString("ShellCodeExecCallback executed with pBreakpointInfo NULL.\n");
+		DoOutputDebugString("ShellcodeExecCallback executed with pBreakpointInfo NULL.\n");
 		return FALSE;
 	}
 	
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ShellCodeExecCallback executed with NULL thread handle.\n");
+		DoOutputDebugString("ShellcodeExecCallback executed with NULL thread handle.\n");
 		return FALSE;
 	}
 
-	DoOutputDebugString("ShellCodeExecCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("ShellcodeExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
-    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, AllocationBase);
+    memset(&meminfo, 0, sizeof(meminfo));
 
-    if (ScanForPE(AllocationBase, AllocationSize, &PEPointer))
+    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
     {
-        SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
-
-        if (DumpImageInCurrentProcess((DWORD)PEPointer))
-        {
-            AllocationDumped = TRUE;
-            DoOutputDebugString("ShellCodeExecCallback: Found and dumped a PE image.\n");
-            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-        }
-        else
-        {
-            DoOutputDebugString("ShellCodeExecCallback: Found a PE image but failed to dump it.\n");
-        }
+        DoOutputErrorString("ShellcodeExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
+        return FALSE;
     }
-    else if (DumpMemory(AllocationBase, AllocationSize))
+    
+    DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, meminfo.RegionSize);
+
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
+
+    AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+    
+    if (AllocationDumped)
     {
-        AllocationDumped = TRUE;
-        DoOutputDebugString("ShellCodeExecCallback: Dumped region of execution.\n");
+        DoOutputDebugString("ShellcodeExecCallback: PE image(s) detected and dumped.\n");
         ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
     }
     else
     {
-        DoOutputDebugString("ShellCodeExecCallback: failed to dump PE module.\n");
-        return FALSE;
+        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+        
+        AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+        
+        if (AllocationDumped)
+        {
+            DoOutputDebugString("ShellcodeExecCallback: successfully dumped memory range at 0x%x.\n", AllocationBase);
+            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
+        }
+    }
+    
+    if (!AllocationDumped)
+    {
+        DoOutputDebugString("ShellcodeExecCallback: failed to dump memory range at 0x%x.\n", AllocationBase);
+        ExtractionClearAll();
     }
 	
-    DoOutputDebugString("ShellCodeExecCallback executed successfully.\n");
+    DoOutputDebugString("ShellcodeExecCallback executed successfully.\n");
 	
 	return TRUE;
 }
@@ -533,7 +777,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
 		return FALSE;
 	}
 
-	DoOutputDebugString("BaseAddressWriteCallback: Breakpoint %i Size=0x%x and Address=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("BaseAddressWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
     
     AllocationWriteDetected = TRUE;
     
@@ -551,7 +795,7 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
 
                 SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
                 
-                if (DumpImageInCurrentProcess((DWORD)pBreakpointInfo->Address))
+                if (DumpPEsInRange(AllocationBase, AllocationSize))
                 {
                     AllocationDumped = TRUE;
                     DoOutputDebugString("BaseAddressWriteCallback: successfully dumped module.\n");
