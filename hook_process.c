@@ -476,7 +476,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (ret != STATUS_CONFLICTING_ADDRESSES) {
+	if (ret != STATUS_CONFLICTING_ADDRESSES && (Protect != PAGE_READWRITE || GetCurrentProcessId() != our_getprocessid(ProcessHandle))) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	}
@@ -736,8 +736,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
 
-    LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "RegionSize", RegionSize, "FreeType", FreeType);
+	if (GetCurrentProcessId() != our_getprocessid(ProcessHandle)) {
+		LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+			"RegionSize", RegionSize, "FreeType", FreeType);
+	}
 
 	return ret;
 }
@@ -851,4 +853,26 @@ HOOKDEF_NOTAIL(WINAPI, NtRaiseException,
 		cuckoomon_exception_handler(&exc);
 
 	return 0;
+}
+
+HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
+	void
+) {
+	HANDLE ret = Old_GetProcessHeap();
+
+	LOQ_handle("process", "");//, "Handle", ret);
+
+	return ret;
+}
+
+HOOKDEF(LPVOID, WINAPI, HeapAlloc,
+  HANDLE hHeap,
+  DWORD  dwFlags,
+  SIZE_T dwBytes
+) {
+    LPVOID ret = Old_HeapAlloc(hHeap, dwFlags, dwBytes);
+    
+    //LOQ_nonnull("process", "phh", "HeapHandle", hHeap, "Flags", dwFlags, "Size", dwBytes);
+    
+    return ret;
 }

@@ -4,6 +4,7 @@
 #include <vector>
 //#include "DumpSectionGui.h"
 
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
 extern "C" char* GetName();
 
 class PeFileSection {
@@ -69,14 +70,12 @@ public:
 	bool readPeSectionsFromProcess();
 	bool readPeSectionsFromFile();
 	bool savePeFileToDisk(const CHAR * newFile);
-	bool savePeFileToDisk(const CHAR * newFile, BOOL CapeFile);
 	bool saveCompletePeToDisk(const CHAR * newFile);
 	void removeDosStub();
 	void alignAllSectionHeaders();
 	void fixPeHeader();
 	void setDefaultFileAlignment();
 	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath);
-	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath, BOOL CapeFile);
 	bool dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR * dumpFilePath, std::vector<PeSection> & sectionList);
 
 	void setEntryPointVa(DWORD_PTR entryPoint);
@@ -92,6 +91,8 @@ public:
 	DWORD getSectionAddressRVAByIndex( int index );
 
     PIMAGE_NT_HEADERS getCurrentNtHeader();
+	std::vector<PeFileSection> listPeSection;
+    
 protected:
 	PeParser();
 
@@ -115,7 +116,6 @@ protected:
 	DWORD dosStubSize;
 	PIMAGE_NT_HEADERS32 pNTHeader32;
 	PIMAGE_NT_HEADERS64 pNTHeader64;
-	std::vector<PeFileSection> listPeSection;
 	BYTE * overlayData;
 	DWORD overlaySize;
 	/************************************************************************/

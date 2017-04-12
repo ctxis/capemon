@@ -34,6 +34,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 volatile int dummy_val;
 
 extern void init_CAPE();
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 
 void disable_tail_call_optimization(void)
 {
@@ -83,6 +85,8 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
+
+    //HOOK_SPECIAL(kernel32, HeapAlloc),
 
 	// has special handling
 
@@ -348,9 +352,9 @@ static hook_t g_hooks[] = {
     // Misc Hooks
     //
 
-	//HOOK(ntdll, memcpy),
-	HOOK(msvcrt, memcpy),
-    HOOK(msvcrt, srand),
+	//HOOK(msvcrt, memcpy),
+	//HOOK(ntdll, memcpy),  
+	HOOK(kernel32, GetProcessHeap),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -768,9 +772,17 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 	}
 #endif
 
-
 	if (g_config.debug == 1 && ExceptionInfo->ExceptionRecord->ExceptionCode < 0xc0000000)
 		return EXCEPTION_CONTINUE_SEARCH;
+
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+		return EXCEPTION_CONTINUE_SEARCH;
+
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+		return CAPEExceptionFilter(ExceptionInfo);
+
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION)
+		return CAPEExceptionFilter(ExceptionInfo);
 
 	hook_disable();
 
@@ -822,6 +834,7 @@ next:
 			eipptr[0], eipptr[1], eipptr[2], eipptr[3], eipptr[4], eipptr[5], eipptr[6], eipptr[7], eipptr[8], eipptr[9], eipptr[10], eipptr[11], eipptr[12], eipptr[13], eipptr[14], eipptr[15]);
 	}
 	debug_message(msg);
+    DoOutputDebugString(msg);
 	if (dllname)
 		free(dllname);
 	free(msg);
@@ -923,7 +936,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
-        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif
@@ -1001,6 +1013,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
         // initialize the log file
         log_init(CUCKOODBG);
 
+        // initialise CAPE
+        init_CAPE();
+
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
 
@@ -1029,9 +1044,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		// initialize context watchdog
 		//init_watchdog();
-
-        // initialise CAPE
-        init_CAPE();
 
 #ifndef _WIN64
 		if (!g_config.no_stealth) {

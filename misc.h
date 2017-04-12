@@ -155,6 +155,8 @@ void specialname_map_init(void);
 char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset);
 int is_wow64_fs_redirection_disabled(void);
 
+//int wow64_disable_stack_copy(void);
+
 void set_dll_of_interest(ULONG_PTR BaseAddress);
 
 PWCHAR get_dll_basename(PUNICODE_STRING library);
@@ -198,3 +200,5 @@ wchar_t *ascii_to_unicode_dup(char *str);
 int is_stack_pivoted(void);
 
 LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
+
+PVOID get_process_image_base(HANDLE process_handle);

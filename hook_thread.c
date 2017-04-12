@@ -25,8 +25,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "lookup.h"
+#include "CAPE\Debugger.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 static lookup_t g_ignored_threads;
+
+extern DWORD ChildProcessId;
 
 void ignored_threads_init(void)
 {
@@ -369,7 +374,16 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
 	ENSURE_DWORD(lpThreadId);
 
 	pid = pid_from_process_handle(hProcess);
-	ret = Old_CreateRemoteThread(hProcess, lpThreadAttributes,
+
+    if (pid == ChildProcessId)
+    {
+        DoOutputDebugString("RemoteThread created in child process, sending address to debugger: 0x%x", lpStartAddress);
+        SendDebuggerMessage((DWORD)lpStartAddress);
+        ret = Old_CreateRemoteThread(hProcess, lpThreadAttributes,
+            dwStackSize, (LPTHREAD_START_ROUTINE)RemoteFuncAddress, lpParameter, dwCreationFlags | CREATE_SUSPENDED,
+            lpThreadId);
+    }
+    else ret = Old_CreateRemoteThread(hProcess, lpThreadAttributes,
         dwStackSize, lpStartAddress, lpParameter, dwCreationFlags | CREATE_SUSPENDED,
         lpThreadId);
 

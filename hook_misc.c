@@ -27,13 +27,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "ignore.h"
 #include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-
-extern struct CapeMetadata *CapeMetaData;
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int DumpImageInCurrentProcess(DWORD ImageBase);
-extern int IsDisguisedPE(LPCVOID Buffer, unsigned int Size);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -92,7 +88,18 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     BOOL ret = 1;
     LPTOP_LEVEL_EXCEPTION_FILTER res;
 
-	if (g_config.debug)
+	if (DEBUGGER_ENABLED && !VECTORED_HANDLER)
+    {
+        DoOutputDebugString("SetUnhandledExceptionFilter hook: switching CAPE debugger to vectored handler.\n");
+        AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+        VECTORED_HANDLER = TRUE;
+        OriginalExceptionHandler = lpTopLevelExceptionFilter;
+        if (g_config.debug)
+            res = NULL;
+		else
+            res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
+    }
+	else if (g_config.debug)
 		res = NULL;
 	else
 		res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
@@ -562,10 +569,6 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	__in ULONG CompressedBufferSize,
 	__out PULONG FinalUncompressedSize
 ) {
-    PBYTE PEImage;
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
-
 	NTSTATUS ret = Old_RtlDecompressBuffer(CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
 		CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
 
@@ -575,44 +578,8 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
     if ((ret == STATUS_SUCCESS || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0))
 	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
 	{
-        pDosHeader = (PIMAGE_DOS_HEADER)UncompressedBuffer;
-		
-        // Check if we have a valid DOS and PE header at the beginning of UncompressedBuffer
-        if (pDosHeader->e_magic == IMAGE_DOS_SIGNATURE) 
-		{
-            if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
-                return ret;
-                
-            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
-    
-            if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
-                return ret;
-
-			DoOutputDebugString("Executable binary detected.");
-			
-            CapeMetaData->DumpType = COMPRESSION;
-            DumpImageInCurrentProcess((DWORD)UncompressedBuffer);
-            DoOutputDebugString("Dumped PE module.");
-		}
-		else if (IsDisguisedPE(UncompressedBuffer, UncompressedBufferSize))
-        {					
-            // We want to fix the PE header in the dump (for e.g. disassembly etc)
-            PEImage = (BYTE*)malloc(UncompressedBufferSize);
-            memcpy(PEImage, UncompressedBuffer, UncompressedBufferSize);
-
-            *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
-            *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
-
-            CapeMetaData->DumpType = COMPRESSION;
-            DumpImageInCurrentProcess((DWORD)PEImage);
-            
-            free(PEImage);
-
-            if (ret == STATUS_SUCCESS)
-                DoOutputDebugString("Dumped disguised PE payload.");
-            else
-                DoOutputDebugString("Dumped disguised PE payload with BAD COMPRESSION BUFFER - maybe incomplete/bloated.");
-		}
+        DoOutputDebugString("RtlDecompressBuffer hook: scanning region 0x%x - 0x%x for PE image(s).\n", UncompressedBuffer, (DWORD_PTR)UncompressedBuffer + *FinalUncompressedSize);
+		DumpPEsInRange(UncompressedBuffer, *FinalUncompressedSize);
 	}
     
     return ret;
@@ -1080,12 +1047,11 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void.
+	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
 
 	Old_memcpy(dest, src, count);
 	
-    if (count > 0xa00)
-        LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
 	
 	return;
 }
