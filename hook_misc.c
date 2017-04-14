@@ -578,7 +578,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
     if ((ret == STATUS_SUCCESS || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0))
 	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
 	{
-        DoOutputDebugString("RtlDecompressBuffer hook: scanning region 0x%x - 0x%x for PE image(s).\n", UncompressedBuffer, (DWORD_PTR)UncompressedBuffer + *FinalUncompressedSize);
+        DoOutputDebugString("RtlDecompressBuffer hook: scanning region 0x%x size 0x%x for PE image(s).\n", UncompressedBuffer, *FinalUncompressedSize);
 		DumpPEsInRange(UncompressedBuffer, *FinalUncompressedSize);
 	}
     
