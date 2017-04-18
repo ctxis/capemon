@@ -170,7 +170,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
             {
                 CurrentInjectionInfo->ProcessHandle = lpProcessInformation->hProcess;
                 CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
-                CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+                CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
                 CurrentInjectionInfo->ImageDumped = FALSE;
 
                 CapeMetaData->TargetProcess = (char*)malloc(MAX_PATH);

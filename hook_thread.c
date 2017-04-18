@@ -28,9 +28,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int DumpImageInCurrentProcess(DWORD ImageBase);
-extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
+extern int DumpImageInCurrentProcess(DWORD_PTR ImageBase);
+extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
 
 static lookup_t g_ignored_threads;
 
@@ -255,23 +255,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
 	ret = Old_NtSetContextThread(ThreadHandle, Context);
     
     CurrentInjectionInfo = GetInjectionInfo(pid);
-
-    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+    
+	if (Context->ContextFlags & CONTEXT_CONTROL)
     {
 #ifdef _WIN64
-		CurrentInjectionInfo->EntryPoint = Context->Rcx - CurrentInjectionInfo->ImageBase;  // rcx holds rip on 64-bit
+        if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+            CurrentInjectionInfo->EntryPoint = Context->Rcx - CurrentInjectionInfo->ImageBase;  // rcx holds rip on 64-bit
+		
+        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rip);
 #else
-		CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;  // eax holds eip on 32-bit
+        if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+            CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;  // eax holds eip on 32-bit
+		
+        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eip);
 #endif
         DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
     }
-    
-	if (Context->ContextFlags & CONTEXT_CONTROL)
-#ifdef _WIN64
-		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rip);
-#else
-		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eip);
-#endif
 	else
 		LOQ_ntstatus("threading", "p", "ThreadHandle", ThreadHandle);
 

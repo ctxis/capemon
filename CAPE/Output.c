@@ -41,11 +41,11 @@ void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...)
 
     memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
     _vsntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, lpOutputString, args);
+#ifdef STANDALONE
     OutputDebugString(DebugOutput);
-
+#else
     memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
     _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", DebugOutput);
-#ifndef STANDALONE
     pipe(PipeOutput, strlen(PipeOutput));
 #endif
     va_end(args);
@@ -78,11 +78,11 @@ void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...)
     
     memset(ErrorOutput, 0, MAX_PATH*sizeof(TCHAR));
     _sntprintf_s(ErrorOutput, MAX_PATH, MAX_PATH, "Error %d (0x%x) - %s: %s", ErrorCode, ErrorCode, DebugOutput, (char*)lpMsgBuf);
+#ifdef STANDALONE
     OutputDebugString(ErrorOutput);
-
+#else
     memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
     _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", ErrorOutput);
-#ifndef STANDALONE
     pipe(PipeOutput, strlen(PipeOutput));
 #endif
     
@@ -153,13 +153,14 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
         _sntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, "Process dump output file: %s", lpOutputFile);
+#ifdef STANDALONE
         OutputDebugString(DebugOutput);
-
+#else
         memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
         _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "FILE_DUMP:%s", lpOutputFile);
-#ifndef STANDALONE
         pipe(PipeOutput, strlen(PipeOutput));
 #endif
+
 	}
 	else if (CapeMetaData && CapeMetaData->DumpType != PROCDUMP)
 	{
@@ -190,12 +191,15 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
             // Extraction-specific format
             _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n0x%x\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, (DWORD)CapeMetaData->Address);
         }
-		else if (CapeMetaData->DumpType == INJECTION_PE || CapeMetaData->DumpType == INJECTION_SHELLCODE)
+		else if (CapeMetaData->DumpType == INJECTION_PE || CapeMetaData->DumpType == INJECTION_SHELLCODE || CapeMetaData->DumpType == EVILGRAB_PAYLOAD || CapeMetaData->DumpType == EVILGRAB_DATA)
         {
             if (CapeMetaData->TargetProcess && CapeMetaData->ProcessPath)
             // Injection-specific format
                 _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n%s\n%d\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, CapeMetaData->TargetProcess, CapeMetaData->TargetPid);
         }
+		else
+            if (CapeMetaData->ProcessPath)
+				_snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath);
 
         if (FALSE == WriteFile(hMetadata, Buffer, strlen(Buffer), &dwBytesWritten, NULL))
 		{
@@ -209,11 +213,11 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
         
         memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
         _sntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, "CAPE Output file: %s", lpOutputFile);
+#ifdef STANDALONE
         OutputDebugString(DebugOutput);
-
+#else
         memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
         _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "FILE_CAPE:%s", lpOutputFile);
-#ifndef STANDALONE
         pipe(PipeOutput, strlen(PipeOutput));
 #endif
 	}

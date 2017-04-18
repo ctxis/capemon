@@ -32,9 +32,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern int DumpMemory(LPCVOID Buffer, unsigned int Size);
-extern int DumpImageInCurrentProcess(DWORD ImageBase);
-extern int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
+extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
+extern int DumpImageInCurrentProcess(DWORD_PTR ImageBase);
+extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -323,7 +323,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
             {
                 CurrentInjectionInfo->ProcessHandle = *ProcessHandle;
                 CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
-                CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+                CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
                 CurrentInjectionInfo->ImageDumped = FALSE;
                 CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
 
@@ -586,7 +586,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
             CurrentInjectionInfo->ProcessHandle = ProcessHandle;
             CurrentInjectionInfo->ProcessId = pid;
             CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
-            CurrentInjectionInfo->EntryPoint = (DWORD)NULL;
+            CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
             CurrentInjectionInfo->ImageDumped = FALSE;
             CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
 
@@ -731,12 +731,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)Buffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD_PTR)Buffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
                             DoOutputDebugString("NtWriteVirtualMemory hook: Dumped PE image from buffer.\n");
-                            CurrentInjectionInfo->BufferBase = Buffer;
+                            CurrentInjectionInfo->BufferBase = (LPVOID)Buffer;
                             CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
                         }
                         else
@@ -749,7 +749,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                     
                     CapeMetaData->DumpType = INJECTION_SHELLCODE;
                     CapeMetaData->TargetPid = pid;
-                    if (DumpMemory(Buffer, *NumberOfBytesWritten))
+                    if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
                         DoOutputDebugString("NtWriteVirtualMemory hook: Dumped malformed PE image from buffer.");
                     else
                         DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump malformed PE image from buffer.");                    
@@ -773,7 +773,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                         // dump injected code to .bin file
                         CapeMetaData->DumpType = INJECTION_SHELLCODE;
                         CapeMetaData->TargetPid = pid;
-                        if (DumpMemory(Buffer, *NumberOfBytesWritten))
+                        if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
                             DoOutputDebugString("NtWriteVirtualMemory hook: Dumped injected code from buffer.");
                         else
                             DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump injected code from buffer.");
@@ -840,12 +840,12 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, hProcess, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD)lpBuffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD_PTR)lpBuffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
                             DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer.\n");
-                            CurrentInjectionInfo->BufferBase = lpBuffer;
+                            CurrentInjectionInfo->BufferBase = (LPVOID)lpBuffer;
                             CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
                         }
                         else
@@ -858,7 +858,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                     
                     CapeMetaData->DumpType = INJECTION_SHELLCODE;
                     CapeMetaData->TargetPid = pid;
-                    if (DumpMemory(lpBuffer, *lpNumberOfBytesWritten))
+                    if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
                         DoOutputDebugString("WriteProcessMemory hook: Dumped malformed PE image from buffer.");
                     else
                         DoOutputDebugString("WriteProcessMemory hook: Failed to dump malformed PE image from buffer.");                    
@@ -882,7 +882,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                         // dump injected code to .bin file
                         CapeMetaData->DumpType = INJECTION_SHELLCODE;
                         CapeMetaData->TargetPid = pid;
-                        if (DumpMemory(lpBuffer, *lpNumberOfBytesWritten))
+                        if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
                             DoOutputDebugString("WriteProcessMemory hook: Dumped injected code from buffer.");
                         else
                             DoOutputDebugString("WriteProcessMemory hook: Failed to dump injected code from buffer.");

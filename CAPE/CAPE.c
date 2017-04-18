@@ -47,6 +47,7 @@ extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buf
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void CapeOutputFile(LPCTSTR lpOutputFile);
+extern int IsPeImageVirtual(DWORD_PTR Buffer);
 extern int ScyllaDumpCurrentProcess(DWORD NewOEP);
 extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
 extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP);
@@ -77,10 +78,10 @@ void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned in
 	
 	return;
 }
+
 //*********************************************************************************************************************************
 BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize)
 //*********************************************************************************************************************************
-
 {
 	char DriveStrings[BUFSIZE];
 	DriveStrings[0] = '\0';
@@ -263,7 +264,6 @@ PINJECTIONINFO GetInjectionInfo(DWORD ProcessId)
     DWORD CurrentProcessId;  
 	
     PINJECTIONINFO CurrentInjectionInfo = InjectionInfoList;
-    
 	while (CurrentInjectionInfo)
 	{
 		CurrentProcessId = CurrentInjectionInfo->ProcessId;
@@ -478,8 +478,6 @@ void DumpSectionViewsForPid(DWORD Pid)
     LPVOID PEPointer = NULL;
     BOOL Dumped = FALSE;
     
-    DoOutputDebugString("DumpSectionViewsForPid: DEEEEEEEEEEEEEEEEEEEBUG.\n");
-    
     CurrentInjectionInfo = GetInjectionInfo(Pid);
 
     if (CurrentInjectionInfo == NULL)
@@ -506,8 +504,9 @@ void DumpSectionViewsForPid(DWORD Pid)
 
                     CapeMetaData->DumpType = INJECTION_PE;
                     CapeMetaData->TargetPid = Pid;
+                    CapeMetaData->Address = PEPointer;
 
-                    if (DumpImageInCurrentProcess((DWORD)PEPointer))
+                    if (DumpImageInCurrentProcess((DWORD_PTR)PEPointer))
                     {
                         DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
                         Dumped = TRUE;
@@ -583,7 +582,8 @@ char* GetName()
 	if (strlen(FullPathName) + strlen("\\CAPE\\") + strlen(OutputFilename) >= MAX_PATH)
 	{
 		DoOutputDebugString("GetName: Error, CAPE destination path too long.");
-        free(OutputFilename); free(FullPathName);
+        free(OutputFilename); 
+        free(FullPathName);
 		return 0;
 	}
 
@@ -594,7 +594,8 @@ char* GetName()
 	if (RetVal == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
 		DoOutputDebugString("GetName: Error creating output directory");
-        free(OutputFilename); free(FullPathName);
+        free(OutputFilename); 
+        free(FullPathName);
 		return 0;
 	}
 
@@ -781,6 +782,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 for (k=0; k<Size; k++)
                     *(DecryptedBuffer+k) = *(DecryptedBuffer+k)^i;
                 
+                CapeMetaData->Address = DecryptedBuffer;
                 DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                 
                 free(DecryptedBuffer);
@@ -853,6 +855,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                 for (k=0; k<Size; k=k+2)
                     *(WORD*)(DecryptedBuffer+k) = *(WORD*)(DecryptedBuffer+k)^TestKey;
                 
+                CapeMetaData->Address = DecryptedBuffer;
                 DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                 
                 free(DecryptedBuffer);
@@ -896,7 +899,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     
                     for (k=0; k<Size; k=k+4)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                
+                    
+                    CapeMetaData->Address = DecryptedBuffer;
                     DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                     
                     free(DecryptedBuffer);
@@ -953,6 +957,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     for (k=0; k<Size; k=k+4)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
                     
+                    CapeMetaData->Address = DecryptedBuffer;
                     DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
                     
                     free(DecryptedBuffer);
@@ -970,7 +975,40 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
-int ScanForNonZero(LPCVOID Buffer, unsigned int Size)
+int ScanPageForNonZero(LPVOID Address)
+//**************************************************************************************
+{
+    unsigned int p;
+	DWORD_PTR AddressOfPage;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("Failed to obtain system page size.\n");
+        return 0;
+    }
+    
+    AddressOfPage = ((DWORD_PTR)Address/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
+    
+    __try  
+    {  
+        for (p=0; p<SystemInfo.dwPageSize-1; p++)
+            if (*((char*)AddressOfPage+p) != 0)
+                return 1;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("ScanForNonZero: Exception occured reading memory address 0x%x\n", (char*)AddressOfPage+p);
+        return 0;
+    }
+
+    return 0;
+}
+
+//**************************************************************************************
+int ScanForNonZero(LPVOID Buffer, unsigned int Size)
 //**************************************************************************************
 {
     unsigned int p;
@@ -991,7 +1029,7 @@ int ScanForNonZero(LPCVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
-int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
+int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
 //**************************************************************************************
 {
     unsigned int p;
@@ -1010,8 +1048,6 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
         {  
             if (*((char*)Buffer+p) == 'M' && *((char*)Buffer+p+1) == 'Z')
             {
-                DoOutputDebugString("ScanForPE: MZ detected at 0x%x\n", p);
-                
                 pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
 
                 if ((ULONG)pDosHeader->e_lfanew == 0) 
@@ -1043,27 +1079,228 @@ int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset)
                 
                 if (Offset)
                 {
-                    *Offset = (LPCVOID)((char*)Buffer+p);
+                    *Offset = (LPVOID)((char*)Buffer+p);
                 }
                 
-                DoOutputDebugString("ScanForPE: PE image located at: 0x%x\n", p);
+                DoOutputDebugString("ScanForPE: PE image located at: 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
                 
                 return 1;
             }
         }  
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputDebugString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
+            DoOutputDebugString("ScanForPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
             return 0;
         }
     }
     
-    DoOutputDebugString("ScanForPE: No PE image located\n");
+    DoOutputDebugString("ScanForPE: No PE image located at 0x%x.\n", Buffer);
     return 0;
 }
 
 //**************************************************************************************
-int DumpMemory(LPCVOID Buffer, unsigned int Size)
+int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
+//**************************************************************************************
+{
+    unsigned int p;
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    if (Size == 0)
+    {
+        DoOutputDebugString("ScanForDisguisedPE: Error, zero size given\n");
+        return 0;
+    }
+    
+    for (p=0; p < Size - 0x41; p++) // we want to stop short of the look-ahead to e_lfanew
+    {
+        __try  
+        {  
+            pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
+            
+            if (!pDosHeader->e_lfanew || (ULONG)pDosHeader->e_lfanew > Size-p || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
+            {
+                continue;
+            }
+            
+            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+            
+            if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
+            {
+                continue;
+            }
+            
+            // Basic requirements
+            if 
+            (
+                pNtHeader->FileHeader.Machine == 0 || 
+                pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || 
+                pNtHeader->OptionalHeader.SizeOfHeaders == 0 ||
+                pNtHeader->OptionalHeader.FileAlignment == 0
+            ) 
+            {
+                DoOutputDebugString("ScanForDisguisedPE: Basic requirements failure.\n");
+                continue;
+            }
+
+            if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
+            {
+                DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
+                continue;
+            }
+
+            if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
+            {
+                DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
+                continue;
+            }
+            
+            if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
+            {
+                DoOutputDebugString("IsDisguisedPE: FileAlignment invalid.");
+                continue;
+            }
+            
+            if (Offset)
+            {
+                *Offset = (LPVOID)((char*)Buffer+p);
+            }
+            
+            DoOutputDebugString("ScanForDisguisedPE: PE image located at: 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
+            
+            return 1;
+        }  
+        __except(EXCEPTION_EXECUTE_HANDLER)  
+        {  
+            DoOutputDebugString("ScanForDisguisedPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
+            return 0;
+        }
+    }
+    
+    DoOutputDebugString("ScanForDisguisedPE: No PE image located in range 0x%x-0x%x.\n", Buffer, (DWORD_PTR)Buffer + Size);
+    return 0;
+}
+
+//**************************************************************************************
+int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
+//**************************************************************************************
+{
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    if (Size == 0)
+    {
+        DoOutputDebugString("IsDisguisedPE: Error, zero size given\n");
+        return 0;
+    }
+    
+    __try  
+    {  
+        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
+
+        if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
+        {
+            //DoOutputDebugString("IsDisguisedPE: e_lfanew bad.");
+            return 0;
+        }
+            
+        // more tests to establish it's PE
+        pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+
+        if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
+        {
+            // Basic requirements
+            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.");
+            return 0;
+        }
+
+        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
+        {
+            DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
+            return 0;
+        }
+
+        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
+        {
+            DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
+            return 0;
+        }
+
+        if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
+        {
+            DoOutputDebugString("IsDisguisedPE: OptionalHeader.Magic bad.");
+            return 0;
+        }
+        
+        // To pass the above tests it should now be safe to assume it's a PE image
+        return 1;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("IsDisguisedPE: Exception occured reading region at 0x%x\n", (DWORD_PTR)(Buffer));
+        return 0;
+    }
+    
+    DoOutputDebugString("IsDisguisedPE: No PE image located\n");
+    return 0;
+}
+
+//**************************************************************************************
+BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
+//**************************************************************************************
+{
+    PBYTE PEImage;
+    PIMAGE_DOS_HEADER pDosHeader;
+
+    BOOL RetVal = FALSE;
+    LPVOID PEPointer = Buffer;
+    
+    DoOutputDebugString("DumpPEsInRange: Scanning range 0x%x - 0x%x.\n", Buffer, (BYTE*)Buffer + Size);
+
+    while (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
+    {
+        pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
+        if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
+        {       
+            // We want to fix the PE header in the dump (for e.g. disassembly etc)
+            PEImage = (BYTE*)malloc(Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
+            memcpy(PEImage, PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
+            pDosHeader = (PIMAGE_DOS_HEADER)PEImage;
+            
+            *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+            *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+
+            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            
+            if (DumpImageInCurrentProcess((DWORD)PEImage))
+            {
+                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
+                RetVal = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+        }
+        else
+        {
+            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            
+            if (DumpImageInCurrentProcess((DWORD)PEPointer))
+            {
+                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
+                RetVal = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+        }
+        
+        ((BYTE*)PEPointer)++;
+    }
+    
+    return RetVal;
+}
+
+//**************************************************************************************
+int DumpMemory(LPVOID Buffer, unsigned int Size)
 //**************************************************************************************
 {
 	char *FullPathName;
@@ -1072,7 +1309,7 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     LPVOID BufferCopy;
 
 	FullPathName = GetName();
-        
+
 	hOutputFile = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     
 	if (hOutputFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
@@ -1114,16 +1351,21 @@ int DumpMemory(LPCVOID Buffer, unsigned int Size)
     if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
 	{
 		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
-        free(FullPathName); free(BufferCopy);
+        free(FullPathName); 
+        free(BufferCopy);
 		return 0;
 	}
 
 	CloseHandle(hOutputFile);
+
+    CapeMetaData->Address = Buffer;
+    CapeMetaData->Size = Size;
     
     CapeOutputFile(FullPathName);
     
     // We can free the filename buffers
-    free(FullPathName); free(BufferCopy);
+    free(FullPathName); 
+    free(BufferCopy);
 	
     return 1;
 }
@@ -1168,10 +1410,12 @@ int DumpCurrentProcess()
 }
 
 //**************************************************************************************
-int DumpModuleInCurrentProcess(DWORD ModuleBase)
+int DumpModuleInCurrentProcess(DWORD_PTR ModuleBase)
 //**************************************************************************************
 {
-	if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0))
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+
+    if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0))
 	{
         DumpCount++;
 		return 1;
@@ -1179,8 +1423,9 @@ int DumpModuleInCurrentProcess(DWORD ModuleBase)
 
 	return 0;
 }
+
 //**************************************************************************************
-int DumpImageInCurrentProcess(DWORD ImageBase)
+int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
 //**************************************************************************************
 {
     PIMAGE_DOS_HEADER pDosHeader;
@@ -1222,17 +1467,12 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
         return 0;
     }
         
-    // we perform a couple of tests to determine whether this is a 'raw' or 'virtual' image
-    // first we check if the SizeOfHeaders is a multiple of FileAlignment
-    if (pNtHeader->OptionalHeader.SizeOfHeaders % pNtHeader->OptionalHeader.FileAlignment
-    // let's also check if section 1 actually begins after the headers, i.e. raw image
-        || (*(DWORD*)((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders - 4) == 0)  // end of header is zero
-        && (*(DWORD*)((BYTE*)ImageBase + pNtHeader->OptionalHeader.SizeOfHeaders) != 0))    // beginning of raw section 1 is non-zero
+    if (IsPeImageVirtual(ImageBase) == FALSE)
     {
-        // looks like a 'raw'/'file' image, i.e. not loaded
+        DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump 'raw' PE image.\n");
+        
         if (ScyllaDumpPE(ImageBase))
         {
-            DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump 'raw' PE image.\n");
             DumpCount++;
             return 1; 
         }
@@ -1244,14 +1484,13 @@ int DumpImageInCurrentProcess(DWORD ImageBase)
         }
     }
 
-    // we should be dealing with a 'loaded' module image now, 
-    // not a 'raw' file image, so try dumping this way first
     DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump virtual PE image.\n");
     
     if (!ScyllaDumpProcess(GetCurrentProcess(), ImageBase, 0))
-    // if this fails, let's try dumping 'raw' just in case
-        if (!ScyllaDumpPE(ImageBase))
-            return 0;
+    {
+        DoOutputDebugString("DumpImageInCurrentProcess: Failed to dump PE as virtual image.\n");
+        return 0; 
+    }
 
     DumpCount++;
     return 1;	
@@ -1271,9 +1510,11 @@ int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase)
 }
 
 //**************************************************************************************
-int DumpPE(LPCVOID Buffer)
+int DumpPE(LPVOID Buffer)
 //**************************************************************************************
 {
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)Buffer);
+    
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{
         DumpCount++;
@@ -1313,10 +1554,15 @@ void init_CAPE()
 {
     // Initialise CAPE global variables
     //
+#ifndef STANDALONE
     CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
+    
+    // Specific to Injection package:
+    CapeMetaData->DumpType = INJECTION_SHELLCODE;  // default value for now, may be changed to INJECTION_PE
+    CapeMetaData->Address = NULL;
     
     DumpCount = 0;
 
@@ -1324,16 +1570,21 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    g_config.procmemdump = 0;
+    // g_config.procmemdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
-    g_config.debug = 2;
-    
-#ifndef _WIN64	 
+    // g_config.debug = 2;
+#endif
+
     // Start the debugger thread
     // if required by package
     if (DEBUGGER_ENABLED)
         launch_debugger();
+
+#ifdef _WIN64
+    DoOutputDebugString("CAPE initialised (64-bit).\n");
+#else
+    DoOutputDebugString("CAPE initialised (32-bit).\n");
 #endif
     
     return;

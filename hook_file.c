@@ -1222,9 +1222,6 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationA,
 			*lpVolumeSerialNumber = 0x46e70ca9;
 			debug_message("Changed Volume Serial Number.");
 		}
-
-
-
 	}	
 #endif	
     return ret;

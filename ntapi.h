@@ -480,8 +480,8 @@ typedef struct _PEB {
     BOOLEAN ReadImageFileExecOptions;
     BOOLEAN BeingDebugged;
     BOOLEAN Spare;
-    HANDLE  Mutant;
-    PVOID   ImageBaseAddress;
+	BYTE Reserved2[12];
+    PVOID ImageBaseAddress;
 	PPEB_LDR_DATA LoaderData;
 	PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
 	BYTE Reserved3[520];
@@ -496,7 +496,7 @@ typedef struct _PEB {
     BOOLEAN BeingDebugged;
     BOOLEAN Spare;
     HANDLE  Mutant;
-    PVOID   ImageBaseAddress;
+    PVOID ImageBaseAddress;
     PPEB_LDR_DATA LoaderData;
     PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
     PVOID   SubSystemData;
@@ -663,6 +663,8 @@ static inline void __writefsdword(unsigned int index, unsigned int value)
 #ifndef HKEY_CURRENT_USER_LOCAL_SETTINGS
 (( HKEY ) (ULONG_PTR)((LONG)0x80000007) )
 #endif
+
+typedef unsigned short RTL_ATOM, *PRTL_ATOM;
 
 typedef struct _SECTION_IMAGE_INFORMATION {
     VOID*               TransferAddress;
