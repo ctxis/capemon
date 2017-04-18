@@ -507,7 +507,7 @@ void DumpSectionViewsForPid(DWORD Pid)
                     CapeMetaData->TargetPid = Pid;
                     CapeMetaData->Address = PEPointer;
 
-                    if (DumpImageInCurrentProcess((DWORD)PEPointer))
+                    if (DumpImageInCurrentProcess((DWORD_PTR)PEPointer))
                     {
                         DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
                         Dumped = TRUE;
@@ -1247,7 +1247,7 @@ int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
-BOOL DumpPEsInRange(LPVOID Buffer, unsigned int Size)
+BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
 //**************************************************************************************
 {
     PBYTE PEImage;

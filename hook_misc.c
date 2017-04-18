@@ -108,6 +108,19 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     return res;
 }
 
+HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
+    __in    ULONG First,
+    __out   PVECTORED_EXCEPTION_HANDLER Handler
+) {
+	PVOID ret = 0;
+    
+    ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+	
+    LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
+    
+    return ret;
+}
+
 HOOKDEF(UINT, WINAPI, SetErrorMode,
 	_In_ UINT uMode
 ) {
@@ -1040,7 +1053,7 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+	int ret = 0;	// seems this is needed for LOQ_void.
 
 	Old_memcpy(dest, src, count);
 	
@@ -1053,7 +1066,7 @@ HOOKDEF(void, WINAPIV, srand,
 	unsigned int seed
 )
 {
-	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+	int ret = 0;	// seems this is needed for LOQ_void.
 
 	Old_srand(seed);
 

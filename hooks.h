@@ -248,13 +248,22 @@ extern HOOKDEF(BOOL, WINAPI, CopyFileW,
     __in  BOOL bFailIfExists
 );
 
-extern HOOKDEF(BOOL, WINAPI, CopyFileExW,
+extern HOOKDEF_NOTAIL(WINAPI, CopyFileExW,
     _In_      LPWSTR lpExistingFileName,
     _In_      LPWSTR lpNewFileName,
     _In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
     _In_opt_  LPVOID lpData,
     _In_opt_  LPBOOL pbCancel,
     _In_      DWORD dwCopyFlags
+);
+
+extern HOOKDEF_ALT(BOOL, WINAPI, CopyFileExW,
+	_In_      LPWSTR lpExistingFileName,
+	_In_      LPWSTR lpNewFileName,
+	_In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
+	_In_opt_  LPVOID lpData,
+	_In_opt_  LPBOOL pbCancel,
+	_In_      DWORD dwCopyFlags
 );
 
 extern HOOKDEF(BOOL, WINAPI, DeleteFileA,
@@ -761,6 +770,20 @@ extern HOOKDEF(BOOL, WINAPI, EnumWindows,
     _In_  LPARAM lParam
 );
 
+extern HOOKDEF(BOOL, WINAPI, PostMessageA,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
+extern HOOKDEF(BOOL, WINAPI, PostMessageW,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
 extern HOOKDEF(BOOL, WINAPI, SendNotifyMessageA,
 	_In_  HWND hWnd,
 	_In_  UINT Msg,
@@ -846,6 +869,29 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtCreateNamedPipeFile,
     IN          ULONG InBufferSize,
     IN          ULONG OutBufferSize,
     IN          PLARGE_INTEGER DefaultTimeOut
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtAddAtom,
+	IN	PWCHAR AtomName,
+	IN	ULONG	AtomNameLength,
+	OUT PRTL_ATOM Atom
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtDeleteAtom,
+	IN RTL_ATOM Atom
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtFindAtom,
+	IN	PWCHAR AtomName,
+	IN	ULONG AtomNameLength,
+	OUT PRTL_ATOM Atom OPTIONAL
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtAddAtomEx,
+	IN	PWCHAR AtomName,
+	IN	ULONG	AtomNameLength,
+	OUT PRTL_ATOM Atom,
+	IN	PVOID	Unknown
 );
 
 //
@@ -1359,6 +1405,11 @@ extern HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter
     _In_  LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExceptionFilter
 );
 
+extern HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
+    __in    ULONG First,
+    __out   PVECTORED_EXCEPTION_HANDLER Handler
+);
+
 extern HOOKDEF(UINT, WINAPI, SetErrorMode,
 	_In_ UINT uMode
 );
@@ -1795,6 +1846,15 @@ extern HOOKDEF(HRESULT, WINAPI, URLDownloadToFileW,
     LPWSTR szFileName,
     DWORD dwReserved,
     LPVOID lpfnCB
+);
+
+extern HOOKDEF(HRESULT, WINAPI, URLDownloadToCacheFileW,
+  _In_ LPUNKNOWN lpUnkcalled,
+  _In_ LPCWSTR szURL,
+  _Out_ LPWSTR szFilename,
+  _In_ DWORD cchFilename,
+  _Reserved_ DWORD dwReserved,
+  _In_opt_ VOID *pBSC
 );
 
 extern HOOKDEF(BOOL, WINAPI, InternetGetConnectedState,

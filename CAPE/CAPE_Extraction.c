@@ -33,7 +33,7 @@ extern DWORD g_our_dll_size;
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
-extern BOOL DumpPEsInRange(LPVOID Buffer, unsigned int Size);
+extern BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
 extern int ScanPageForNonZero(LPVOID Address);
