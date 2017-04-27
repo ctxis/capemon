@@ -225,7 +225,7 @@ extern "C" int ScyllaDumpPE(DWORD_PTR Buffer)
 
         if (!ScanForNonZero((LPVOID)PointerToLastSection, SizeOfLastSection))
         {
-            DoOutputDebugString("DumpPE: Empty last section, file image seems incomplete (from 0x%x to 0x%x).\n", PointerToLastSection, (DWORD_PTR)PointerToLastSection + SizeOfLastSection);
+            DoOutputDebugString("DumpPE: Empty or inaccessible last section, file image seems incomplete (from 0x%x to 0x%x).\n", PointerToLastSection, (DWORD_PTR)PointerToLastSection + SizeOfLastSection);
             return 0;
         }
 

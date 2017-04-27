@@ -363,6 +363,7 @@ static hook_t g_hooks[] = {
     HOOK(user32, SetWindowsHookExW),
     HOOK(user32, UnhookWindowsHookEx),
     HOOK(kernel32, SetUnhandledExceptionFilter),
+    HOOK(ntdll, RtlAddVectoredExceptionHandler),
 	HOOK(kernel32, SetErrorMode),
     HOOK(ntdll, LdrGetDllHandle),
     HOOK(ntdll, LdrGetProcedureAddress),

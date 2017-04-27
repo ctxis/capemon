@@ -149,6 +149,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
             }
             else {
                 ChildProcessId = lpProcessInformation->dwProcessId;
+                ChildThreadId = lpProcessInformation->dwThreadId;
             }
         }
         else {

@@ -1846,10 +1846,10 @@ unsigned int address_is_in_stack(DWORD Address)
             PNT_TIB pTib = (PNT_TIB)(NtCurrentTeb());
 
             if ((Address < (DWORD)pTib->StackBase) && (Address > (DWORD)pTib->StackLimit))
-                DoOutputDebugString("Address:0x%x within stack base = %p, limit = %p\r\n", Address, pTib->StackBase, pTib->StackLimit);
+                //DoOutputDebugString("Address 0x%x within stack base = %p, limit = %p\r\n", Address, pTib->StackBase, pTib->StackLimit);
                 return 1;
 			
-            DoOutputDebugString("Address:0x%x not within stack base = %p, limit = %p\r\n", Address, pTib->StackBase, pTib->StackLimit);
+            //DoOutputDebugString("Address 0x%x not within stack base = %p, limit = %p\r\n", Address, pTib->StackBase, pTib->StackLimit);
             return 0;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) {

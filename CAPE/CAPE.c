@@ -1146,19 +1146,19 @@ int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
 
             if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
             {
-                DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
+                DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
                 continue;
             }
 
             if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
             {
-                DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
+                DoOutputDebugString("ScanForDisguisedPE: SizeOfOptionalHeader bad.");
                 continue;
             }
             
             if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
             {
-                DoOutputDebugString("IsDisguisedPE: FileAlignment invalid.");
+                DoOutputDebugString("ScanForDisguisedPE: FileAlignment invalid.");
                 continue;
             }
             
@@ -1191,7 +1191,7 @@ int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
     
     if (Size == 0)
     {
-        DoOutputDebugString("IsDisguisedPE: Error, zero size given\n");
+        DoOutputDebugString("IsDisguisedPE: Error, zero size given.\n");
         return 0;
     }
     
@@ -1208,31 +1208,43 @@ int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
         // more tests to establish it's PE
         pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
 
-        if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
-        {
-            // Basic requirements
-            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.");
-            return 0;
-        }
-
-        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
-        {
-            DoOutputDebugString("IsDisguisedPE: Characteristics bad.");
-            return 0;
-        }
-
-        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
-        {
-            DoOutputDebugString("IsDisguisedPE: SizeOfOptionalHeader bad.");
-            return 0;
-        }
-
         if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
         {
             DoOutputDebugString("IsDisguisedPE: OptionalHeader.Magic bad.");
             return 0;
         }
         
+        if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
+        {
+            // Basic requirements
+            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.\n");
+            return 0;
+        }
+
+        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
+        {
+            DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
+            return 0;
+        }
+
+        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
+        {
+            DoOutputDebugString("ScanForDisguisedPE: SizeOfOptionalHeader bad.\n");
+            return 0;
+        }
+        
+        if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
+        {
+            DoOutputDebugString("ScanForDisguisedPE: FileAlignment invalid.\n");
+            return 0;
+        }
+        
+        if (pNtHeader->OptionalHeader.SectionAlignment < pNtHeader->OptionalHeader.FileAlignment) 
+        {																
+            DoOutputDebugString("ScanForDisguisedPE: FileAlignment greater than SectionAlignment.\n");
+            return 0;                  
+        }  
+
         // To pass the above tests it should now be safe to assume it's a PE image
         return 1;
     }  
@@ -1263,6 +1275,8 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
         {       
+            DoOutputDebugString("DumpPEsInRange: Disguised PE image (bad MZ and/or PE headers) at 0x%x.\n", PEPointer);
+            
             // We want to fix the PE header in the dump (for e.g. disassembly etc)
             PEImage = (BYTE*)malloc(Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
             memcpy(PEImage, PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));

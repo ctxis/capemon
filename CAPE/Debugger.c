@@ -80,10 +80,9 @@ DWORD LengthMask[MAX_DEBUG_REGISTER_DATA_SIZE + 1] = DEBUG_REGISTER_LENGTH_MASKS
 
 DWORD MainThreadId;
 struct ThreadBreakpoints *MainThreadBreakpointList;
-LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
 SINGLE_STEP_HANDLER SingleStepHandler;
 GUARD_PAGE_HANDLER GuardPageHandler;
-HANDLE hParentPipe;
+HANDLE hCapePipe;
 
 extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
@@ -98,9 +97,6 @@ extern DWORD MyGetThreadId(HANDLE hThread);
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-
-typedef void (WINAPI *PWIN32ENTRY)();
-PWIN32ENTRY OEP;
 
 void DebugOutputThreadBreakpoints();
 BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context);
@@ -812,17 +808,17 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
             return EXCEPTION_CONTINUE_SEARCH;
         }
     }
-    else if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
-    {
-        // This is likely our own DoOutputDebugString function!
-        // So we let Windows handle this so we get our output.
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    else if (OriginalExceptionHandler)
+    //else if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+    //{
+    //    // This could be useful output
+    //    // TODO: find string buffer(s) and send info to DoOutputDebugString
+    //    return EXCEPTION_CONTINUE_SEARCH;
+    //}
+    else if (!VECTORED_HANDLER && OriginalExceptionHandler)
     {
         if ((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size))
         {
-            // This is a CAPE exception, likely from the try/catch blocks in buffer scans
+            // This is a CAPE (or Cuckoo) exception
             return EXCEPTION_EXECUTE_HANDLER;
         }
         
@@ -831,6 +827,19 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's handler.\n");
         SetUnhandledExceptionFilter(OriginalExceptionHandler);
         return EXCEPTION_EXECUTE_HANDLER;
+    }
+    else if (VECTORED_HANDLER && SampleVectoredHandler)
+    {        
+        // As it's not a bp and the sample has registered its own handler
+        DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's vectored handler.\n");
+        SampleVectoredHandler(ExceptionInfo);
+    }
+    
+    if ((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size))
+    {
+        // This is a CAPE (or Cuckoo) exception
+        DoOutputDebugString("CAPEExceptionFilter: Exception in cuckoomon caught (expected in memory scans), passing to next handler.\n");
+        return EXCEPTION_CONTINUE_SEARCH;
     }
     
     // Some other exception occurred. Pass it to next handler.    
@@ -1948,9 +1957,15 @@ BOOL SetBreakpoint
 	pBreakpointInfo->Callback       = Callback;
 
     if (VECTORED_HANDLER)
-        AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+    {
+        CAPEExceptionFilterHandle = AddVectoredExceptionHandler(1, CAPEExceptionFilter);
+        OriginalExceptionHandler = NULL;
+    }
     else
+    {
         OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
+        CAPEExceptionFilterHandle = NULL;
+    }
 
     __try  
     {  
@@ -2181,6 +2196,7 @@ BOOL InitialiseDebugger(void)
     // Initialise any global variables
     ChildProcessId = 0;
     SingleStepHandler = NULL;
+    SampleVectoredHandler = NULL;
     VECTORED_HANDLER = TRUE;
 
 #ifndef _WIN64
@@ -2233,7 +2249,7 @@ __declspec (naked dllexport) void DebuggerInit(void)
 #endif
 // End of package specific code
 
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
+	DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
 
     _asm
     {
@@ -2279,16 +2295,16 @@ BOOL SendDebuggerMessage(DWORD Input)
 
     cbReplyBytes = sizeof(DWORD_PTR);
     
-    if (hParentPipe == NULL)
+    if (hCapePipe == NULL)
     {   
-        DoOutputErrorString("SendDebuggerMessage: hParentPipe NULL.");
+        DoOutputErrorString("SendDebuggerMessage: hCapePipe NULL.");
         return FALSE;
     }
 
     // Write the reply to the pipe. 
     fSuccess = WriteFile
     ( 
-        hParentPipe,        // handle to pipe 
+        hCapePipe,        // handle to pipe 
         &Input,     		// buffer to write from 
         cbReplyBytes, 		// number of bytes to write 
         &cbWritten,   		// number of bytes written 
@@ -2301,7 +2317,7 @@ BOOL SendDebuggerMessage(DWORD Input)
         return FALSE;
     }
 
-    DoOutputDebugString("SendDebuggerMessage: Sent message via pipe.\n");
+    DoOutputDebugString("SendDebuggerMessage: Sent message via pipe: 0x%x\n", Input);
     
     return TRUE;
 }
@@ -2407,36 +2423,41 @@ DWORD WINAPI DebuggerLaunch(LPVOID lpParam)
 		return -1;
 	}
 
-	DoOutputDebugString("Read OEP from pipe: 0x%x\n", OEP);
+	DoOutputDebugString("DebuggerLaunch: Read OEP from pipe: 0x%x\n", OEP);
     
-    fSuccess = ReadFile(
-        hPipe,    				
-        &OEP, 
-        sizeof(DWORD_PTR),  		 
-        &cbRead,
-        NULL);  
+    while (1)
+    {
+        fSuccess = ReadFile(
+            hPipe,    				
+            &OEP, 
+            sizeof(DWORD_PTR),  		 
+            &cbRead,
+            NULL);  
+            
+        if (!fSuccess && GetLastError() == ERROR_BROKEN_PIPE)
+        {
+            DoOutputDebugString("DebuggerLaunch: Pipe closed, no further updates to OEP\n");
+            CloseHandle(hPipe);
+            break;
+        }
         
-    if (!fSuccess && GetLastError() == ERROR_MORE_DATA)
-    {
-        DoOutputDebugString("DebuggerLaunch: ReadFile on Pipe: ERROR_MORE_DATA\n");
-        CloseHandle(hPipe);
-        return -1;
+        if (!fSuccess && GetLastError() == ERROR_MORE_DATA)
+        {
+            DoOutputDebugString("DebuggerLaunch: ReadFile on Pipe: ERROR_MORE_DATA\n");
+            CloseHandle(hPipe);
+            return -1;
+        }
+        
+        if (!fSuccess)
+        {
+            DoOutputErrorString("DebuggerLaunch: ReadFile from pipe failed");
+            CloseHandle(hPipe);
+            return -1;
+        }
+        else
+            DoOutputDebugString("DebuggerLaunch: Read updated EP from pipe: 0x%x\n", OEP);
     }
     
-    if (!fSuccess && GetLastError() == ERROR_BROKEN_PIPE)
-    {
-        DoOutputDebugString("DebuggerLaunch: Pipe closed, no further updates to OEP\n");
-        CloseHandle(hPipe);
-    }
-    else if (!fSuccess)
-    {
-        DoOutputErrorString("ReadFile from pipe failed");
-        CloseHandle(hPipe);
-        return -1;
-    }
-    else
-        DoOutputDebugString("Read thread EP from pipe: 0x%x\n", OEP);
-  
     ZeroMemory(&VersionInfo, sizeof(OSVERSIONINFO));
     VersionInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
     GetVersionEx(&VersionInfo);
@@ -2446,7 +2467,7 @@ DWORD WINAPI DebuggerLaunch(LPVOID lpParam)
     if (NT5)
     {
        	DoOutputDebugString("NT5: Leaving debugger thread alive.\n");
-        while(1)
+        while (1)
         {
             Sleep(500000);
         }
@@ -2484,7 +2505,7 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
         return FALSE;
     }
 
-    hParentPipe = CreateNamedPipe
+    hCapePipe = CreateNamedPipe
     ( 
         lpszPipename,             	
         PIPE_ACCESS_DUPLEX,       	
@@ -2498,7 +2519,7 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
         NULL
     );								
 
-    if (hParentPipe == INVALID_HANDLE_VALUE) 
+    if (hCapePipe == INVALID_HANDLE_VALUE) 
     {
         DoOutputErrorString("DebugNewProcess: CreateNamedPipe failed");
         return FALSE;
@@ -2507,23 +2528,23 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
     DoOutputDebugString("DebugNewProcess: Announcing new process to Cuckoo, pid: %d\n", ProcessId);
     pipe("DEBUGGER:%d,%d", ProcessId, ThreadId);
 
-    fConnected = ConnectNamedPipe(hParentPipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED); 
+    fConnected = ConnectNamedPipe(hCapePipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED); 
     fSuccess = FALSE;
     cbBytesRead = 0;
     
     if (!fConnected) 
     {
         DoOutputDebugString("DebugNewProcess: The client could not connect, closing pipe.\n");
-        CloseHandle(hParentPipe);
+        CloseHandle(hCapePipe);
         return FALSE;
     }
 
-    DoOutputDebugString("DebugNewProcess: Client connected\n");
+    DoOutputDebugString("DebugNewProcess: Client connected.\n");
     
     fSuccess = ReadFile
     ( 
-        hParentPipe,        
-        &RemoteFuncAddress, 
+        hCapePipe,        
+        &DebuggerEP, 
         sizeof(DWORD_PTR),		
         &cbBytesRead, 		
         NULL          		
@@ -2541,9 +2562,9 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
         }
     }
 
-    if (!RemoteFuncAddress)
+    if (!DebuggerEP)
     {
-        DoOutputErrorString("DebugNewProcess: Successfully read from pipe, however RemoteFuncAddress = 0.");
+        DoOutputErrorString("DebugNewProcess: Successfully read from pipe, however DebuggerEP = 0.");
         return FALSE;
     }
     
@@ -2566,7 +2587,7 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
     // Send the OEP to the new process 
     fSuccess = WriteFile
     ( 
-        hParentPipe,     
+        hCapePipe,     
         &OEP,		     
         cbReplyBytes,
         &cbWritten,  
@@ -2583,9 +2604,9 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
     Context.ContextFlags = CONTEXT_ALL;
     
 #ifdef _WIN64
-    Context.Rcx = RemoteFuncAddress;		// set the new EP to debugger_init
+    Context.Rcx = DebuggerEP;		// set the new EP to debugger_init
 #else
-    Context.Eax = RemoteFuncAddress;		
+    Context.Eax = DebuggerEP;		
 #endif  
     
     if (!SetThreadContext(hThread, &Context))

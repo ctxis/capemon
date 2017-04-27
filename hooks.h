@@ -1272,7 +1272,7 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     __in  HANDLE ThreadHandle,
-    __in  const CONTEXT *Context
+    __in  CONTEXT *Context
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSuspendThread,

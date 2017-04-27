@@ -33,6 +33,8 @@ extern DWORD g_our_dll_size;
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
+extern unsigned int address_is_in_stack(DWORD Address);
+
 extern BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
@@ -643,14 +645,14 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
 
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
 
-    if ((DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
+    if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
     {
         DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
         AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
     }
-    else if ((DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
+    else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
     {
-        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, meminfo.RegionSize);
+        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.BaseAddress, meminfo.RegionSize);
         AllocationDumped = DumpPEsInRange(meminfo.BaseAddress, meminfo.RegionSize);
     }
         
@@ -661,7 +663,7 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
     }
     else
     {
-        if ((DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
+        if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
         {
             SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
             
@@ -673,12 +675,15 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
                 ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
             }
         }
-        else if ((DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
+        else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
         {
             SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.BaseAddress);
             
-            AllocationDumped = DumpMemory(meminfo.BaseAddress, meminfo.RegionSize);
-            
+            if (ScanForNonZero(meminfo.BaseAddress, meminfo.RegionSize))
+                AllocationDumped = DumpMemory(meminfo.BaseAddress, meminfo.RegionSize);
+            else 
+                DoOutputDebugString("MidPageExecCallback: memory range at 0x%x is empty.\n", meminfo.BaseAddress);
+                
             if (AllocationDumped)
             {
                 DoOutputDebugString("MidPageExecCallback: successfully dumped memory range at 0x%x.\n", meminfo.BaseAddress);
@@ -849,6 +854,8 @@ BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION
     }
     else 
     {
+        DoOutputDebugString("BaseAddressWriteCallback: byte written to 0x%x: 0x%x.\n", pBreakpointInfo->Address, *(BYTE*)pBreakpointInfo->Address);
+        
         if (AllocationBaseExecBpSet == TRUE)
         {
             DoOutputDebugString("BaseAddressWriteCallback: allocation exec bp already set, doing nothing.\n");

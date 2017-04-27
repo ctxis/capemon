@@ -16,14 +16,6 @@ typedef struct _EXCEPTION_REGISTRATION_RECORD {
 
 typedef EXCEPTION_REGISTRATION_RECORD *PEXCEPTION_REGISTRATION_RECORD;
 
-PEXCEPTION_ROUTINE SEH_TopLevelHandler;
-LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
-LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
-BOOL VECTORED_HANDLER;
-
-DWORD ChildProcessId;
-DWORD_PTR RemoteFuncAddress;
-
 typedef struct BreakpointInfo 
 {
 	HANDLE	ThreadHandle;
@@ -61,34 +53,29 @@ struct GuardPages *GuardPageList;
 
 typedef BOOL (cdecl *SINGLE_STEP_HANDLER)(struct _EXCEPTION_POINTERS*);
 typedef BOOL (cdecl *GUARD_PAGE_HANDLER)(struct _EXCEPTION_POINTERS*);
+typedef BOOL (cdecl *SAMPLE_HANDLER)(struct _EXCEPTION_POINTERS*);
+
+typedef void (WINAPI *PWIN32ENTRY)();
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+PVOID CAPEExceptionFilterHandle;
+SAMPLE_HANDLER SampleVectoredHandler;
+PEXCEPTION_ROUTINE SEH_TopLevelHandler;
+LPTOP_LEVEL_EXCEPTION_FILTER OriginalExceptionHandler;
+BOOL VECTORED_HANDLER;
 
-BOOL SetBreakpoint
-(
-    DWORD	ThreadId,
-    int		Register,
-    int		Size,
-    LPVOID	Address,
-    DWORD	Type,
-	PVOID	Callback
-);
+DWORD ChildProcessId;
+DWORD ChildThreadId;
+DWORD_PTR DebuggerEP;
+PWIN32ENTRY OEP;
 
+BOOL SetBreakpoint(DWORD ThreadId, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL ClearBreakpoint(DWORD ThreadId, int Register);
-
-BOOL ContextSetBreakpoint
-(
-    PCONTEXT	Context,
-    int			Register,
-    int			Size,
-    LPVOID		Address,
-    DWORD		Type,
-	PVOID		Callback
-);
-
+BOOL ContextSetBreakpoint(PCONTEXT Context, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register);
 BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register);
 BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, DWORD Type, PVOID Callback);

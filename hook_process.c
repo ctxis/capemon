@@ -324,9 +324,53 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	__in  HANDLE ProcessHandle
 ) {
-	NTSTATUS ret;
+	CONTEXT Context;
+    DWORD_PTR ChildNewEP;
+    HANDLE ThreadHandle;
+    NTSTATUS ret;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
+
+    if (pid == ChildProcessId)
+    {
+        ThreadHandle = OpenThread(THREAD_ALL_ACCESS, TRUE, ChildThreadId);
+        
+        if (ThreadHandle == NULL) 
+        {
+            DoOutputErrorString("NtResumeProcess hook: OpenThread failed");
+        }
+        else
+        {
+            Context.ContextFlags = CONTEXT_ALL;
+            
+            if (GetThreadContext(ThreadHandle, &Context))
+            {
+#ifdef _WIN64
+                if (Context.Rcx != DebuggerEP)
+                {
+                    ChildNewEP = Context.Rcx;
+                    Context.Rcx = DebuggerEP;
+#else
+                if (Context.Eax != DebuggerEP)
+                {
+                    ChildNewEP = Context.Eax;
+                    Context.Eax = DebuggerEP;
+#endif
+                    if (SetThreadContext(ThreadHandle, &Context))
+                    {
+                        SendDebuggerMessage((DWORD_PTR)ChildNewEP);
+                        DoOutputDebugString("NtResumeProcess: Reset Debugger entry (0x%x) in child process, updated EP to 0x%x.\n", DebuggerEP, ChildNewEP);
+                    }
+                    else
+                        DoOutputDebugString("NtResumeProcess: Error - failed to ensure Debugger entry in child process.\n");
+                }
+            }
+            else
+            {
+                DoOutputDebugString("NtResumeProcess: GetThreadContext failed.\n");
+            }        
+        }
+    }
 
 	ret = Old_NtResumeProcess(ProcessHandle);
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
@@ -906,6 +950,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                     {
                         AllocationBaseExecBpSet = TRUE;
                         AllocationBase = *BaseAddress;
+                        AllocationSize = *NumberOfBytesToProtect;
                         DoOutputDebugString("NtProtectVirtualMemory hook: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, *BaseAddress, AllocationBaseExecBpSet);
                     }
                     else
@@ -987,6 +1032,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
                 }
             }
         }
+        else DoOutputDebugString("NtProtectVirtualMemory hook: DEBUG AllocationBase 0x%x AllocationSize 0x%x AllocationDumped %d\n", AllocationBase, AllocationSize, AllocationDumped);
     }
 	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
