@@ -31,8 +31,9 @@ typedef unsigned __int64 QWORD;
 #define CREATE_NEW_IAT_IN_SECTION FALSE
 #define OFT_SUPPORT FALSE
 
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
 //#define DEBUG_COMMENTS
+
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
 
 extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);

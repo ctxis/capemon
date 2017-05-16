@@ -22,11 +22,6 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define PE_HEADER_LIMIT 0x200
 #define ESTIMATED_LOOP_DELTA 0x50
 
-#ifdef STANDALONE
-#include "..\alloc.h"
-extern _NtAllocateVirtualMemory pNtAllocateVirtualMemory;
-#endif
-
 extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
 
@@ -57,6 +52,10 @@ BOOL EntryPointExecBpSet;
 static unsigned int EPBPRegister;
 
 static DWORD_PTR BasePointer, FirstEIP, LastEIP, CurrentEIP, LastDelta, TotalDelta, DeltaMax, LoopDeltaMax;
+
+BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
+BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize);
+BOOL SetMidPageBreakpoint(PVOID *Address, SIZE_T Size);
 
 void ExtractionClearAll(void)
 {
@@ -173,7 +172,152 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 }
 #endif
 
-//            if ((ULONG_PTR)FaultingAddress >= g_our_dll_base && (ULONG_PTR)FaultingAddress < (g_our_dll_base + g_our_dll_size))
+//**************************************************************************************
+void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect)
+//**************************************************************************************
+{
+    // TODO: This package is soon to be deprecated in favour of 'NewExtraction'
+    // so little point in putting more work in here for the moment.
+}
+
+//**************************************************************************************
+void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION meminfo;
+    PGUARDPAGES CurrentGuardPages;
+    int Register;
+    BOOL GuardedPages = FALSE;
+
+    DoOutputDebugString("ProtectionHandler: Address: 0x%x, RegionSize: 0x%x\n", Address, RegionSize);
+
+    if (!VirtualQuery(Address, &meminfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%x", Address);
+        return;
+    }
+    
+    CurrentGuardPages = GuardPageList;
+    
+    while (CurrentGuardPages)
+    {
+        if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
+            CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+
+        if (CurrentGuardPages->PagesDumped)
+        {
+            DoOutputDebugString("ProtectionHandler: PE image(s) within CAPE guarded pages detected and dumped.\n");
+            ExtractionClearAll();
+        } 
+        
+        CurrentGuardPages = CurrentGuardPages->NextGuardPages;
+    }
+    
+    if (AllocationBase == 0)    
+    {
+        if (Address == meminfo.BaseAddress)
+        {
+            // we check if the buffer has already been written to 
+            //if (ScanForNonZero(Address, RegionSize))
+            if (ScanForNonZero(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))
+            {
+                if (DumpPEsInRange(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))
+                {
+                    DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");
+                    ExtractionClearAll();
+                }     
+                else if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)Address, BP_EXEC, MidPageExecCallback))
+                {
+                    AllocationBaseExecBpSet = TRUE;
+                    AllocationBase = Address;
+                    AllocationSize = RegionSize;
+                    DoOutputDebugString("ProtectionHandler: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, Address, AllocationBaseExecBpSet);
+                }
+                else
+                {
+                    DoOutputDebugString("ProtectionHandler: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
+                    return;
+                }
+            }
+            else    // looks like it's still an empty buffer
+            {
+                DoOutputDebugString("ProtectionHandler: Setting initial write breakpoint on protection address: 0x%x\n", Address);
+                SetInitialWriteBreakpoint(Address, RegionSize);
+            }
+        }
+        else
+        {
+            DoOutputDebugString("ProtectionHandler: Setting mid-page exec breakpoint on protection address: 0x%x\n", Address);
+            SetMidPageBreakpoint(Address, RegionSize);             
+        }
+    }
+    else if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
+    {
+        DoOutputDebugString("ProtectionHandler: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
+        
+        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+        
+        if (AllocationDumped)
+        {
+            DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");
+            ExtractionClearAll();
+        }
+        else
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+            
+            AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+            
+            if (AllocationDumped)
+            {
+                DoOutputDebugString("ProtectionHandler: successfully dumped memory range at 0x%x.\n", AllocationBase);
+                ExtractionClearAll();
+            }
+        }
+        
+        if (!AllocationDumped)
+        {
+            DoOutputDebugString("ProtectionHandler: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
+            ExtractionClearAll();
+        }
+        
+        if ((DWORD_PTR)Address < (DWORD_PTR)AllocationBase || (DWORD_PTR)Address >= ((DWORD_PTR)AllocationBase + AllocationSize))
+        {
+            // we check if the buffer has already been written to 
+            if (ScanForNonZero(Address, RegionSize))
+            {                
+                // We want to switch our 'Allocation' pointers to this region,
+                // so let's dump anything in the previous region
+                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+                if (AllocationDumped)
+                {
+                    DoOutputDebugString("ProtectionHandler: Found and dumped PE image(s).\n");
+                    ExtractionClearAll();
+                }
+                
+                // Now we set up our new breakpoint
+                if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)Address, BP_EXEC, MidPageExecCallback))
+                {
+                    AllocationBaseExecBpSet = TRUE;
+                    AllocationBase = Address;
+                    AllocationSize = RegionSize;
+                    DoOutputDebugString("ProtectionHandler: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, Address, AllocationBaseExecBpSet);
+                }
+                else
+                {
+                    DoOutputDebugString("ProtectionHandler: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
+                    return;
+                }
+            }
+            else    // looks like it's still an empty buffer
+            {
+                DoOutputDebugString("ProtectionHandler: Setting initial write breakpoint on protection address: 0x%x\n", Address);
+
+                SetInitialWriteBreakpoint(Address, RegionSize);
+            }            
+        }
+    }
+}
 
 //**************************************************************************************
 BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
@@ -620,6 +764,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
 	MEMORY_BASIC_INFORMATION meminfo;
+    SIZE_T Size;
     
     if (pBreakpointInfo == NULL)
 	{
@@ -645,10 +790,19 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
 
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
 
+    if ((BYTE*)AllocationBase + AllocationSize > (BYTE*)meminfo.AllocationBase && meminfo.RegionSize)
+    {
+        Size = (BYTE*)AllocationBase + AllocationSize - (BYTE*)meminfo.AllocationBase;
+    }
+    else
+    {
+        Size = AllocationSize;
+    }
+    
     if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
     {
-        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
-        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
+        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, Size);
+        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, Size);
     }
     else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
     {
@@ -667,7 +821,7 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
         {
             SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
             
-            AllocationDumped = DumpMemory(meminfo.AllocationBase, (DWORD_PTR)meminfo.BaseAddress + meminfo.RegionSize - (DWORD_PTR)meminfo.AllocationBase);
+            AllocationDumped = DumpMemory(meminfo.AllocationBase, Size);
             
             if (AllocationDumped)
             {
@@ -679,7 +833,7 @@ BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
         {
             SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.BaseAddress);
             
-            if (ScanForNonZero(meminfo.BaseAddress, meminfo.RegionSize))
+            if (ScanForNonZero(meminfo.BaseAddress, Size))
                 AllocationDumped = DumpMemory(meminfo.BaseAddress, meminfo.RegionSize);
             else 
                 DoOutputDebugString("MidPageExecCallback: memory range at 0x%x is empty.\n", meminfo.BaseAddress);

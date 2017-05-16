@@ -46,6 +46,7 @@ extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
 
+extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
 extern void ExtractionClearAll(void);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
@@ -888,9 +889,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 ) {
 	NTSTATUS ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PGUARDPAGES CurrentGuardPages;
-	//LPVOID PEPointer;
-	int Register;
     BOOL GuardedPages = FALSE;
 
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
@@ -920,120 +918,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE) {
-        DoOutputDebugString("NtProtectVirtualMemory hook: BaseAddress:0x%x, NumberOfBytesToProtect: 0x%x, NewAccessProtection: 0x%x\n", *BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
-        
-        CurrentGuardPages = GuardPageList;
-        
-        while (CurrentGuardPages)
-        {
-            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-                
-            if (CurrentGuardPages->PagesDumped)
-            {
-                DoOutputDebugString("NtProtectVirtualMemory hook: PE image(s) within CAPE guarded pages detected and dumped.\n");
-                ExtractionClearAll();
-            }                
+	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE)
+        ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
 
-            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-        }
-        
-        if (AllocationBase == 0)    
-        {
-            if (*BaseAddress == meminfo.BaseAddress)
-            {
-                // we check if the buffer has already been written to 
-                if (ScanForNonZero(*BaseAddress, *NumberOfBytesToProtect))
-                {
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, MidPageExecCallback))
-                    {
-                        AllocationBaseExecBpSet = TRUE;
-                        AllocationBase = *BaseAddress;
-                        AllocationSize = *NumberOfBytesToProtect;
-                        DoOutputDebugString("NtProtectVirtualMemory hook: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, *BaseAddress, AllocationBaseExecBpSet);
-                    }
-                    else
-                    {
-                        DoOutputDebugString("NtProtectVirtualMemory hook: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                        return FALSE;
-                    }
-                }
-                else    // looks like it's still an empty buffer
-                {
-                    DoOutputDebugString("NtProtectVirtualMemory hook: Setting initial write breakpoint on protection address: 0x%x\n", *BaseAddress);
-                    SetInitialWriteBreakpoint(*BaseAddress, *NumberOfBytesToProtect);
-                }
-            }
-            else
-            {
-                DoOutputDebugString("NtProtectVirtualMemory hook: Setting mid-page exec breakpoint on protection address: 0x%x\n", *BaseAddress);
-                SetMidPageBreakpoint(*BaseAddress, *NumberOfBytesToProtect);             
-            }
-        }
-        else if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
-        {
-            DoOutputDebugString("NtProtectVirtualMemory hook: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-
-            memset(&meminfo, 0, sizeof(meminfo));
-
-            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-            {
-                DoOutputErrorString("NtProtectVirtualMemory hook: unable to query memory region 0x%x", AllocationBase);
-            }
-            else
-            {
-                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                
-                if (AllocationDumped)
-                {
-                    DoOutputDebugString("NtProtectVirtualMemory hook: PE image(s) detected and dumped.\n");
-                    ExtractionClearAll();
-                }     
-                else
-                {
-                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                    
-                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                        DoOutputDebugString("NtProtectVirtualMemory hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                }
-                
-                if (!AllocationDumped)
-                {
-                    DoOutputDebugString("NtProtectVirtualMemory hook: failed to dump memory range at 0x%x.\n", AllocationBase);
-                    ExtractionClearAll();
-                }
-                
-                if ((DWORD_PTR)*BaseAddress < (DWORD_PTR)AllocationBase || (DWORD_PTR)*BaseAddress >= ((DWORD_PTR)AllocationBase + AllocationSize))
-                {
-                    // we check if the buffer has already been written to 
-                    if (ScanForNonZero(*BaseAddress, *NumberOfBytesToProtect))
-                    {
-                        if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)*BaseAddress, BP_EXEC, MidPageExecCallback))
-                        {
-                            AllocationBaseExecBpSet = TRUE;
-                            AllocationBase = *BaseAddress;
-                            AllocationSize = *NumberOfBytesToProtect;
-                            DoOutputDebugString("NtProtectVirtualMemory hook: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, *BaseAddress, AllocationBaseExecBpSet);
-                        }
-                        else
-                        {
-                            DoOutputDebugString("NtProtectVirtualMemory hook: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                            return FALSE;
-                        }
-                    }
-                    else    // looks like it's still an empty buffer
-                    {
-                        DoOutputDebugString("NtProtectVirtualMemory hook: Setting initial write breakpoint on protection address: 0x%x\n", *BaseAddress);
-                        SetInitialWriteBreakpoint(*BaseAddress, *NumberOfBytesToProtect);
-                    }            
-                }
-            }
-        }
-        else DoOutputDebugString("NtProtectVirtualMemory hook: DEBUG AllocationBase 0x%x AllocationSize 0x%x AllocationDumped %d\n", AllocationBase, AllocationSize, AllocationDumped);
-    }
 	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
@@ -1061,8 +948,6 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 ) {
 	BOOL ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PGUARDPAGES CurrentGuardPages;
-    int Register;
     BOOL GuardedPages = FALSE;
 
 	if (flNewProtect == PAGE_EXECUTE_READ && GetCurrentProcessId() == our_getprocessid(hProcess) &&
@@ -1083,7 +968,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
         flNewProtect &= ~PAGE_GUARD;
         AddGuardPages(lpAddress, dwSize, flNewProtect);
     }
-            
+
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
 		lasterror_t lasterrors;
@@ -1092,131 +977,9 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize >= EXTRACTION_MIN_SIZE) {
-    
-        DoOutputDebugString("VirtualProtectEx hook, lpAddress:0x%x, dwSize: 0x%x\n", lpAddress, dwSize);
+	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize >= EXTRACTION_MIN_SIZE)
+        ProtectionHandler(lpAddress, dwSize, flNewProtect);
         
-        CurrentGuardPages = GuardPageList;
-        
-        while (CurrentGuardPages)
-        {
-            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-
-            if (CurrentGuardPages->PagesDumped)
-            {
-                DoOutputDebugString("VirtualProtectEx hook: PE image(s) within CAPE guarded pages detected and dumped.\n");
-                ExtractionClearAll();
-            } 
-            
-            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-        }
-        
-        if (AllocationBase == 0)    
-        {
-            if (lpAddress == meminfo.BaseAddress)
-            {
-                // we check if the buffer has already been written to 
-                if (ScanForNonZero(lpAddress, dwSize))
-                {
-                    if (DumpPEsInRange(lpAddress, dwSize))
-                    {
-                        DoOutputDebugString("VirtualProtectEx hook: PE image(s) detected and dumped.\n");
-                        ExtractionClearAll();
-                    }     
-                    else if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
-                    {
-                        AllocationBaseExecBpSet = TRUE;
-                        AllocationBase = lpAddress;
-                        AllocationSize = dwSize;
-                        DoOutputDebugString("VirtualProtectEx hook: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, lpAddress, AllocationBaseExecBpSet);
-                    }
-                    else
-                    {
-                        DoOutputDebugString("VirtualProtectEx hook: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                        return FALSE;
-                    }
-                }
-                else    // looks like it's still an empty buffer
-                {
-                    DoOutputDebugString("VirtualProtectEx hook: Setting initial write breakpoint on protection address: 0x%x\n", lpAddress);
-                    SetInitialWriteBreakpoint(lpAddress, dwSize);
-                }
-            }
-            else
-            {
-                DoOutputDebugString("VirtualProtectEx hook: Setting mid-page exec breakpoint on protection address: 0x%x\n", lpAddress);
-                SetMidPageBreakpoint(lpAddress, dwSize);             
-            }
-        }
-        else if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
-        {
-            DoOutputDebugString("VirtualProtectEx hook: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-            
-            AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-            
-            if (AllocationDumped)
-            {
-                DoOutputDebugString("VirtualProtectEx hook: PE image(s) detected and dumped.\n");
-                ExtractionClearAll();
-            }
-            else
-            {
-                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                
-                AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                
-                if (AllocationDumped)
-                {
-                    DoOutputDebugString("VirtualProtectEx hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                    ExtractionClearAll();
-                }
-            }
-            
-            if (!AllocationDumped)
-            {
-                DoOutputDebugString("VirtualProtectEx hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                ExtractionClearAll();
-            }
-            
-            if ((DWORD_PTR)lpAddress < (DWORD_PTR)AllocationBase || (DWORD_PTR)lpAddress >= ((DWORD_PTR)AllocationBase + AllocationSize))
-            {
-                // we check if the buffer has already been written to 
-                if (ScanForNonZero(lpAddress, dwSize))
-                {                
-                    // We want to switch our 'Allocation' pointers to this region,
-                    // so let's dump anything in the previous region
-                    AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                    if (AllocationDumped)
-                    {
-                        DoOutputDebugString("VirtualProtectEx hook: Found and dumped PE image(s).\n");
-                        ExtractionClearAll();
-                    }
-                    
-                    // Now we set up our new breakpoint
-                    if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)lpAddress, BP_EXEC, MidPageExecCallback))
-                    {
-                        AllocationBaseExecBpSet = TRUE;
-                        AllocationBase = lpAddress;
-                        AllocationSize = dwSize;
-                        DoOutputDebugString("VirtualProtectEx hook: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, lpAddress, AllocationBaseExecBpSet);
-                    }
-                    else
-                    {
-                        DoOutputDebugString("VirtualProtectEx hook: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                        return FALSE;
-                    }
-                }
-                else    // looks like it's still an empty buffer
-                {
-                    DoOutputDebugString("VirtualProtectEx hook: Setting initial write breakpoint on protection address: 0x%x\n", lpAddress);
-
-                    SetInitialWriteBreakpoint(lpAddress, dwSize);
-                }            
-            }
-        }
-    }
-
 	if (flNewProtect == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_bool("process", "ppphhHss", "ProcessHandle", hProcess, "Address", lpAddress,
