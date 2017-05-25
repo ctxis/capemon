@@ -1604,6 +1604,12 @@ extern HOOKDEF(LPVOID, WINAPI, HeapAlloc,
   _In_ SIZE_T dwBytes
 );
 
+extern HOOKDEF(PVOID, WINAPI, RtlAllocateHeap,
+    __in        PVOID  HeapHandle,
+    __in_opt    ULONG  Flags,
+    __in        SIZE_T Size
+);
+
 extern HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsA,
 	_In_opt_ const GUID   *ClassGuid,
 	_In_opt_       PCSTR Enumerator,

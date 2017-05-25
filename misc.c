@@ -26,18 +26,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "log.h"
 #include "pipe.h"
 #include "config.h"
-#include "CAPE\CAPE.h"
-#include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern BOOL SetInitialBreakpoint(PVOID *Address, SIZE_T RegionSize);
-extern BOOL AllocationWriteDetected;
-extern BOOL PeImageDetected;
-extern BOOL AllocationDumped;
-extern PVOID AllocationBase;
-extern SIZE_T AllocationSize;
-extern void ExtractionClearAll(void);
+
+extern void ProcessTrackedPages(void);
 
 static _NtQueryInformationProcess pNtQueryInformationProcess;
 static _NtQueryInformationThread pNtQueryInformationThread;
@@ -1257,8 +1250,6 @@ int is_shutting_down()
 {
 	lasterror_t lasterror;
 	HANDLE mutex_handle;
-    PGUARDPAGES CurrentGuardPages;
-    MEMORY_BASIC_INFORMATION meminfo;
 	int ret = 0;
 
 	if (process_shutting_down)
@@ -1269,56 +1260,7 @@ int is_shutting_down()
 	mutex_handle = OpenMutex(SYNCHRONIZE, FALSE, g_config.shutdown_mutex);
     
     if(mutex_handle != NULL) {
-
-    CurrentGuardPages = GuardPageList;
-    
-    while (CurrentGuardPages)
-    {
-        if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-            CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-
-        CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-    }
-    
-        if (AllocationBase && AllocationSize && !AllocationDumped)
-        {
-            memset(&meminfo, 0, sizeof(meminfo));
-
-            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-            {
-                DoOutputErrorString("Shutdown mutex: unable to query memory region 0x%x", AllocationBase);
-            }
-            else if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
-            {
-                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                
-                if (AllocationDumped)
-                    DoOutputDebugString("Shutdown mutex: PE image(s) detected and dumped.\n");
-                else
-                {
-                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                    
-                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                        DoOutputDebugString("Shutdown mutex: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                    else
-                        DoOutputDebugString("Shutdown mutex: failed to dump memory range at 0x%x.\n", AllocationBase);
-                }
-                
-                if (!AllocationDumped)
-                {
-                    DoOutputDebugString("Shutdown mutex: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                    ClearAllBreakpoints((DWORD)NULL);       
-                }
-                else
-                {
-                    DoOutputDebugString("Shutdown mutex: CAPE ignoring region: 0x%x as it is empty.\n", AllocationBase);
-                    ExtractionClearAll();
-                }
-            }
-        }
-
+        ProcessTrackedPages();
 		log_flush();
         CloseHandle(mutex_handle);
         ret = 1;
@@ -1895,16 +1837,13 @@ out:
 	return ImageBase;
 }
 
-PEXCEPTION_ROUTINE get_thread_seh_list()
+BOOLEAN is_address_in_ntdll(ULONG_PTR address)
 {
-#ifdef _WIN64
-	return 0;
-#else
-    PNT_TIB pTib = (PNT_TIB)(NtCurrentTeb());
-    
-    if (pTib && pTib->ExceptionList && pTib->ExceptionList->Handler)
-        return pTib->ExceptionList->Handler;
-    else
-        return 0;
-#endif
+	ULONG_PTR ntdll_base = (ULONG_PTR)GetModuleHandle("ntdll");
+	DWORD ntdll_size = get_image_size(ntdll_base);
+
+	if (address >= ntdll_base && address < (ntdll_base + ntdll_size))
+		return TRUE;
+	
+	return FALSE;
 }

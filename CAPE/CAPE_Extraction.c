@@ -20,7 +20,6 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE.h"
 
 #define PE_HEADER_LIMIT 0x200
-#define ESTIMATED_LOOP_DELTA 0x50
 
 extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
@@ -35,296 +34,358 @@ extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
 extern int ScanPageForNonZero(LPVOID Address);
 
-SIZE_T AllocationSize;
-PVOID AllocationBase;
+BOOL ActivateBreakpoints(PTRACKEDPAGES TrackedPages, struct _EXCEPTION_POINTERS* ExceptionInfo);
 
-PVOID *pAllocationBase;
-PSIZE_T pRegionSize;
-
-PGUARDPAGES GuardedPagesToStep;
-
-BOOL AllocationWriteDetected;
-BOOL PeImageDetected;
-BOOL AllocationDumped;
-BOOL AllocationBaseWriteBpSet;
-BOOL AllocationBaseExecBpSet;
-BOOL EntryPointExecBpSet;
+PTRACKEDPAGES GuardedPagesToStep;
 static unsigned int EPBPRegister;
+static DWORD_PTR LastEIP, CurrentEIP;
 
-static DWORD_PTR BasePointer, FirstEIP, LastEIP, CurrentEIP, LastDelta, TotalDelta, DeltaMax, LoopDeltaMax;
-
-BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
-BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize);
-BOOL SetMidPageBreakpoint(PVOID *Address, SIZE_T Size);
-
-void ExtractionClearAll(void)
+void ExtractionClearAll(PTRACKEDPAGES TrackedPages)
 {
-    if (AllocationBase && AllocationSize)
-        ClearBreakpointsInRange(GetCurrentThreadId(), AllocationBase, AllocationSize);                       
+    if (!TrackedPages->BaseAddress || !TrackedPages->RegionSize)
+    {
+        DoOutputDebugString("ExtractionClearAll: Error, BaseAddress or RegionSize zero: 0x%x, 0x%x.\n", TrackedPages->BaseAddress, TrackedPages->RegionSize);
+    }    
     
-    AllocationSize = 0;
-    AllocationBase = NULL;
     CapeMetaData->Address = NULL;
     
-    
-    AllocationWriteDetected = FALSE;
-    PeImageDetected = FALSE;
-    AllocationBaseExecBpSet = FALSE;
-    EntryPointExecBpSet = FALSE;
+    DropTrackedPages(TrackedPages);
     
     return;
 }
 
-#ifndef _WIN64
-BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
+//**************************************************************************************
+unsigned int DumpPEsInTrackedPages(PTRACKEDPAGES TrackedPages)
+//**************************************************************************************
 {
-    if (LastEIP)
+    PTRACKEDPAGES CurrentTrackedPages;
+    unsigned int PEsDumped;
+    BOOL TrackedPagesFound;
+    LPVOID BaseAddress;
+    SIZE_T Size;
+    
+    if (TrackedPages == NULL)
+	{
+        DoOutputDebugString("DumpPEsInTrackedPages: NULL passed as argument - error.\n");
+        return FALSE;
+	}    
+
+    if (TrackedPageList == NULL)
     {
-        CurrentEIP = ExceptionInfo->ContextRecord->Eip;
-        
-        if (CurrentEIP > LastEIP)
-        {
-            LastDelta = (unsigned int)(CurrentEIP - LastEIP);
-        }
-        else
-        {
-            LastDelta = (unsigned int)(LastEIP - CurrentEIP);
-        }
-        
-        if (CurrentEIP > FirstEIP)
-        {
-            TotalDelta = (unsigned int)(CurrentEIP - FirstEIP);
-            
-            if ((unsigned int)(CurrentEIP - FirstEIP) > DeltaMax)
-                DeltaMax = (unsigned int)(CurrentEIP - FirstEIP);
-            
-            if (LoopDeltaMax && DeltaMax > LoopDeltaMax && ExceptionInfo->ContextRecord->Ebp == BasePointer)
-            // attempt dump as writing may have ended
-            {
-                SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
+        DoOutputDebugString("DumpPEsInTrackedPages: Error - no tracked page list.\n");
+        return FALSE;
+    }
+    
+    CurrentTrackedPages = TrackedPageList;
 
-                if (!AllocationDumped && DumpPEsInRange(AllocationBase, AllocationSize))
-                {
-                    AllocationDumped = TRUE;
-                    DoOutputDebugString("Trace: successfully dumped from loop end at 0x%x.\n", CurrentEIP);
-                    ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);       
-                    return TRUE;
-                }
-                else
-                {
-                    DoOutputDebugString("Trace: failed to dump PE module from loop end at 0x%x (loop delta 0x%x).\n", CurrentEIP, (unsigned int)(CurrentEIP - FirstEIP));
-                    return FALSE;
-                }            
-            }
-        }
-        else
-        {
-            TotalDelta = (unsigned int)(FirstEIP - CurrentEIP);
+	while (CurrentTrackedPages)
+	{
+        if (CurrentTrackedPages->BaseAddress == TrackedPages->BaseAddress)
+            TrackedPagesFound = TRUE;
 
-            if (DeltaMax && DeltaMax > LoopDeltaMax)
-                LoopDeltaMax = DeltaMax; 
-        }
-        
-        // attempt dump as probably not in a loop, writing may have ended
-        if (TotalDelta > ESTIMATED_LOOP_DELTA && ExceptionInfo->ContextRecord->Ebp <= BasePointer)
-        {
-            SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
-            
-            if (!AllocationDumped && DumpPEsInRange(AllocationBase, AllocationSize))
-            {
-                AllocationDumped = TRUE;
-                DoOutputDebugString("Trace: successfully dumped module 0x%x bytes after last write, EIP: 0x%x\n", TotalDelta, CurrentEIP);
-                ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);       
-                return TRUE;
-            }
-            else
-            {
-                DoOutputDebugString("Trace: failed to dump PE module 0x%x bytes after last write, EIP: 0x%x", TotalDelta, CurrentEIP);
-                return FALSE;
-            }
-        }
-        else if (!LastDelta)
-        {
-            //DoOutputDebugString("Trace: repeating instruction at 0x%x.\n", CurrentEIP);
-            SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-        }
-        else
-        {
-            LastEIP = CurrentEIP;
-            //DoOutputDebugString("Trace: next instruction at 0x%x.\n", CurrentEIP);
-            SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-        }
-        
-        return TRUE;
+        CurrentTrackedPages = TrackedPages->NextTrackedPages;
+	}
+   
+    if (TrackedPagesFound == FALSE)
+    {
+        DoOutputDebugString("DumpPEsInTrackedPages: failed to locate tracked page(s) in tracked page list.\n");
+        return FALSE;
+    }
+
+    __try
+    {
+        BaseAddress = TrackedPages->BaseAddress;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputErrorString("DumpPEsInTrackedPages: Exception trying to access BaseAddress from tracked pages at 0x%x", TrackedPages);
+        return FALSE;
+    }       
+    
+    if (!VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("DumpPEsInTrackedPages: unable to query memory region 0x%x", TrackedPages->BaseAddress);
+        return FALSE;
+    }
+
+    if ((DWORD_PTR)TrackedPages->BaseAddress < (DWORD_PTR)TrackedPages->MemInfo.AllocationBase)
+    {
+        DoOutputDebugString("DumpPEsInTrackedPages: Anomaly detected - BaseAddress 0x%x below AllocationBase 0x%x.\n", TrackedPages->BaseAddress, TrackedPages->MemInfo.AllocationBase);
+        return FALSE;
+    }
+    
+    if ((BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize > (BYTE*)TrackedPages->MemInfo.AllocationBase && TrackedPages->MemInfo.RegionSize)
+    {
+        Size = (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize - (BYTE*)TrackedPages->MemInfo.AllocationBase;
     }
     else
     {
-        LastEIP = ExceptionInfo->ContextRecord->Eip;
-        BasePointer = ExceptionInfo->ContextRecord->Ebp;
-        FirstEIP = LastEIP;
-        DeltaMax = 0;
-        LoopDeltaMax = 0;
+        Size = TrackedPages->RegionSize;
+    }
+    
+    if ((DWORD_PTR)TrackedPages->MemInfo.AllocationBase < (DWORD_PTR)TrackedPages->BaseAddress)
+        BaseAddress = TrackedPages->MemInfo.AllocationBase;
+    else
+        BaseAddress = TrackedPages->BaseAddress;
+
+    PEsDumped = DumpPEsInRange(BaseAddress, Size);
+    
+    if (PEsDumped)
+    {
+        DoOutputDebugString("DumpPEsInTrackedPages: Dumped %d PE images from range range 0x%x - 0x%x.\n", PEsDumped, BaseAddress, (BYTE*)BaseAddress + Size);
+        TrackedPages->PagesDumped = TRUE;
+    }
+    else
+        DoOutputDebugString("DumpPEsInTrackedPages: No PE images found in range range 0x%x - 0x%x.\n", BaseAddress, (BYTE*)BaseAddress + Size);
+    
+	return PEsDumped;
+}
+
+//**************************************************************************************
+void ProcessTrackedPages()
+//**************************************************************************************
+{
+    PTRACKEDPAGES TrackedPages = TrackedPageList;
+    
+    while (TrackedPages && TrackedPages->BaseAddress && TrackedPages->RegionSize)
+    {
+        //DoOutputDebugString("ProcessTrackedPages: debug info: Address 0x%x Size 0x%x.\n", TrackedPages->BaseAddress, TrackedPages->RegionSize);
         
-        DoOutputDebugString("Entering single-step mode at 0x%x.\n", FirstEIP);
-        SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-        return TRUE;
+        if (TrackedPages->CanDump && !TrackedPages->PagesDumped && ScanForNonZero(TrackedPages->BaseAddress, TrackedPages->RegionSize))
+        {
+            TrackedPages->PagesDumped = DumpPEsInTrackedPages(TrackedPages);
+        
+            if (TrackedPages->PagesDumped)
+            {
+                DoOutputDebugString("ProcessTrackedPages: Found and dumped PE image(s) in range 0x%x - 0x%x.\n", TrackedPages->BaseAddress, (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+            }
+            else if (TrackedPages->Protect & EXECUTABLE_FLAGS)
+            {
+                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedPages->BaseAddress);
+                
+                TrackedPages->PagesDumped = DumpMemory(TrackedPages->BaseAddress, TrackedPages->RegionSize);
+                
+                if (TrackedPages->PagesDumped)
+                    DoOutputDebugString("ProcessTrackedPages: dumped executable memory range at 0x%x.\n", TrackedPages->BaseAddress);
+                else
+                    DoOutputDebugString("ProcessTrackedPages: failed to dump executable memory range at 0x%x.\n", TrackedPages->BaseAddress);
+            }
+        }
+        
+        TrackedPages = TrackedPages->NextTrackedPages;
     }
 }
-#endif
 
 //**************************************************************************************
 void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect)
 //**************************************************************************************
 {
-    // TODO: This package is soon to be deprecated in favour of 'NewExtraction'
-    // so little point in putting more work in here for the moment.
+    PTRACKEDPAGES TrackedPages = NULL;
+    
+    if (!BaseAddress || !RegionSize)
+    {
+        DoOutputDebugString("AllocationHandler: Error, BaseAddress or RegionSize zero: 0x%x, 0x%x.\n", BaseAddress, RegionSize);
+        return;    
+    }
+    
+    ProcessTrackedPages();
+    
+    if (RegionSize < EXTRACTION_MIN_SIZE)
+        return;
+    
+    // Whether we limit tracking to executable regions
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return;
+
+    DoOutputDebugString("AllocationHandler: BaseAddress:0x%x, RegionSize: 0x%x, Protect: 0x%x.\n", BaseAddress, RegionSize, Protect);
+    
+    if (TrackedPageList)
+        TrackedPages = GetTrackedPages(BaseAddress);
+    
+    // if memory was previously reserved but not committed
+    if (TrackedPages && !TrackedPages->Committed && (AllocationType & MEM_COMMIT))
+    {
+        DoOutputDebugString("AllocationHandler: Previously reserved, newly committed region at: 0x%x.\n", BaseAddress);
+    }   
+    else if (TrackedPages && (AllocationType & MEM_RESERVE))
+    {
+        DoOutputDebugString("AllocationHandler: Re-reserving region at: 0x%x.\n", BaseAddress);
+        return;
+    }
+    else if (TrackedPages)
+    {
+        // Surely anomolous?!
+        DoOutputDebugString("AllocationHandler: Anomaly detected, new allocation already in tracked page list: 0x%x.\n", BaseAddress);
+        DoOutputDebugString("AllocationHandler: Debug: TrackedPages->Committed %d AllocationType 0x%x.\n", TrackedPages->Committed, AllocationType);
+        return;
+    }
+    else
+        TrackedPages = AddTrackedPages(BaseAddress, RegionSize, Protect);
+
+    if (!TrackedPages)
+    {
+        DoOutputDebugString("AllocationHandler: Error, unable to locate or add allocation in tracked page list: 0x%x.\n", BaseAddress);
+        return;
+    }
+    
+    if (AllocationType & MEM_COMMIT)
+    {
+        // Allocation committed, we determine whether to guard pages
+        TrackedPages->Committed = TRUE;
+        
+        if (Protect & EXECUTABLE_FLAGS)
+        {
+            TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
+            
+            if (TrackedPages->Guarded)
+                DoOutputDebugString("AllocationHandler: Guarded newly allocated executable region at 0x%x.\n", BaseAddress);
+            else
+                DoOutputDebugString("AllocationHandler: Error - failed to guard newly allocated executable region at: 0x%x.\n", BaseAddress);        
+        }
+        else
+            DoOutputDebugString("AllocationHandler: Non-executable region at 0x%x tracked but not guarded.\n", BaseAddress);        
+    }
+    else
+    {   // Allocation not committed, so we can't guard yet
+        TrackedPages->Committed = FALSE;
+        TrackedPages->Guarded = FALSE;
+        DoOutputDebugString("AllocationHandler: Memory reserved but not committed at 0x%x.\n", BaseAddress);
+    }
+    
+    return;
 }
 
 //**************************************************************************************
 void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
 //**************************************************************************************
 {
-    MEMORY_BASIC_INFORMATION meminfo;
-    PGUARDPAGES CurrentGuardPages;
-    int Register;
-    BOOL GuardedPages = FALSE;
+    PTRACKEDPAGES TrackedPages = NULL;
+    
+    if (!Address || !RegionSize)
+    {
+        DoOutputDebugString("ProtectionHandler: Error, Address or RegionSize zero: 0x%x, 0x%x.\n", Address, RegionSize);
+        return;    
+    }
+    
+    ProcessTrackedPages();
 
-    DoOutputDebugString("ProtectionHandler: Address: 0x%x, RegionSize: 0x%x\n", Address, RegionSize);
+    if (RegionSize < EXTRACTION_MIN_SIZE)
+        return;
+    
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return;
+    
+    DoOutputDebugString("ProtectionHandler: Address:0x%x, NumberOfBytesToProtect: 0x%x, NewAccessProtection: 0x%x\n", Address, RegionSize, Protect);
 
-    if (!VirtualQuery(Address, &meminfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    if (TrackedPageList)
+        TrackedPages = GetTrackedPages(Address);
+        
+    // if region has already been tracked, we update
+    if (TrackedPages)
+    {
+        DoOutputDebugString("ProtectionHandler: Address already in tracked page list: 0x%x.\n", Address);
+        
+        TrackedPages->RegionSize = RegionSize;
+        
+        TrackedPages->Protect = Protect;
+    }
+    else 
+        TrackedPages = AddTrackedPages(Address, RegionSize, Protect);
+
+    TrackedPages->ProtectAddress = Address;
+    
+    if (!TrackedPages)
+    {
+        DoOutputDebugString("ProtectionHandler: Error, unable to add new region at 0x%x to tracked page list.\n", Address);
+        return;
+    }
+    
+    ScanForNonZero(Address, RegionSize);
+    
+    if (!VirtualQuery(Address, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
         DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%x", Address);
         return;
     }
-    
-    CurrentGuardPages = GuardPageList;
-    
-    while (CurrentGuardPages)
-    {
-        if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-            CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
 
-        if (CurrentGuardPages->PagesDumped)
-        {
-            DoOutputDebugString("ProtectionHandler: PE image(s) within CAPE guarded pages detected and dumped.\n");
-            ExtractionClearAll();
-        } 
-        
-        CurrentGuardPages = CurrentGuardPages->NextGuardPages;
+    if (Protect != TrackedPages->Protect)
+    {
+        DoOutputDebugString("ProtectionHandler: updating protection of tracked pages around 0x%x.\n", Address);
+        TrackedPages->Protect = Protect;
     }
     
-    if (AllocationBase == 0)    
-    {
-        if (Address == meminfo.BaseAddress)
-        {
-            // we check if the buffer has already been written to 
-            //if (ScanForNonZero(Address, RegionSize))
-            if (ScanForNonZero(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))
-            {
-                if (DumpPEsInRange(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))
-                {
-                    DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");
-                    ExtractionClearAll();
-                }     
-                else if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)Address, BP_EXEC, MidPageExecCallback))
-                {
-                    AllocationBaseExecBpSet = TRUE;
-                    AllocationBase = Address;
-                    AllocationSize = RegionSize;
-                    DoOutputDebugString("ProtectionHandler: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, Address, AllocationBaseExecBpSet);
-                }
-                else
-                {
-                    DoOutputDebugString("ProtectionHandler: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                    return;
-                }
-            }
-            else    // looks like it's still an empty buffer
-            {
-                DoOutputDebugString("ProtectionHandler: Setting initial write breakpoint on protection address: 0x%x\n", Address);
-                SetInitialWriteBreakpoint(Address, RegionSize);
-            }
-        }
-        else
-        {
-            DoOutputDebugString("ProtectionHandler: Setting mid-page exec breakpoint on protection address: 0x%x\n", Address);
-            SetMidPageBreakpoint(Address, RegionSize);             
-        }
-    }
-    else if (AllocationWriteDetected && AllocationBase && AllocationSize && !AllocationDumped)
-    {
-        DoOutputDebugString("ProtectionHandler: attempting CAPE dump on region: 0x%x.\n", AllocationBase);
-        
-        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-        
-        if (AllocationDumped)
-        {
-            DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");
-            ExtractionClearAll();
-        }
-        else
-        {
-            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-            
-            AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-            
-            if (AllocationDumped)
-            {
-                DoOutputDebugString("ProtectionHandler: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                ExtractionClearAll();
-            }
-        }
-        
-        if (!AllocationDumped)
-        {
-            DoOutputDebugString("ProtectionHandler: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-            ExtractionClearAll();
-        }
-        
-        if ((DWORD_PTR)Address < (DWORD_PTR)AllocationBase || (DWORD_PTR)Address >= ((DWORD_PTR)AllocationBase + AllocationSize))
-        {
-            // we check if the buffer has already been written to 
-            if (ScanForNonZero(Address, RegionSize))
-            {                
-                // We want to switch our 'Allocation' pointers to this region,
-                // so let's dump anything in the previous region
-                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                if (AllocationDumped)
-                {
-                    DoOutputDebugString("ProtectionHandler: Found and dumped PE image(s).\n");
-                    ExtractionClearAll();
-                }
-                
-                // Now we set up our new breakpoint
-                if (SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)Address, BP_EXEC, MidPageExecCallback))
-                {
-                    AllocationBaseExecBpSet = TRUE;
-                    AllocationBase = Address;
-                    AllocationSize = RegionSize;
-                    DoOutputDebugString("ProtectionHandler: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d\n", Register, Address, AllocationBaseExecBpSet);
-                }
-                else
-                {
-                    DoOutputDebugString("ProtectionHandler: SetNextAvailableBreakpoint failed to set exec bp on allocation base.\n");
-                    return;
-                }
-            }
-            else    // looks like it's still an empty buffer
-            {
-                DoOutputDebugString("ProtectionHandler: Setting initial write breakpoint on protection address: 0x%x\n", Address);
+    // deal with newly tracked region
+    if (GuardPagesDisabled)
+        TrackedPages->BreakpointsSet = ActivateBreakpoints(TrackedPages, NULL);
+    else
+        TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
+    //TrackedPages->Guarded = ActivateGuardPagesOnProtectedRange(TrackedPages);
 
-                SetInitialWriteBreakpoint(Address, RegionSize);
-            }            
+    if (!TrackedPages->Guarded)
+        DoOutputDebugString("ProtectionHandler: Error - unable to activate guard pages around address 0x%x.\n", Address);
+        
+    return;
+}
+
+//**************************************************************************************
+void FreeHandler(PVOID BaseAddress)
+//**************************************************************************************
+{
+    PTRACKEDPAGES TrackedPages = GetTrackedPages(BaseAddress);
+
+    if (TrackedPages == NULL)
+        return;
+
+    if (!BaseAddress)
+    {
+        DoOutputDebugString("FreeHandler: Error, BaseAddress zero.\n");
+        return;    
+    }
+
+    DoOutputDebugString("FreeHandler: Address: 0x%x.\n", BaseAddress);
+
+    if (ScanForNonZero(TrackedPages->BaseAddress, TrackedPages->RegionSize) && !TrackedPages->PagesDumped)
+    {
+        TrackedPages->PagesDumped = DumpPEsInTrackedPages(TrackedPages);
+    
+        if (TrackedPages->PagesDumped)
+        {
+            DoOutputDebugString("FreeHandler: Found and dumped PE image(s) in range 0x%x - 0x%x.\n", TrackedPages->BaseAddress, (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        }
+        else if (TrackedPages->Protect & EXECUTABLE_FLAGS)
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedPages->BaseAddress);
+            
+            TrackedPages->PagesDumped = DumpMemory(TrackedPages->BaseAddress, TrackedPages->RegionSize);
+            
+            if (TrackedPages->PagesDumped)
+                DoOutputDebugString("FreeHandler: dumped executable memory range at 0x%x prior to its freeing.\n", TrackedPages->BaseAddress);
+            else
+                DoOutputDebugString("FreeHandler: failed to dump executable memory range at 0x%x prior to its freeing.\n", TrackedPages->BaseAddress);        
         }
     }
+    
+    ExtractionClearAll(TrackedPages);
+    
+    return;
 }
 
 //**************************************************************************************
 BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
 //**************************************************************************************
 {
-    PGUARDPAGES CurrentGuardPages = GuardedPagesToStep;
-
+    PTRACKEDPAGES TrackedPages = GuardedPagesToStep;
+    DWORD_PTR LastAccessPage, ProtectAddressPage;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("StepOverGuardPageFault: Failed to obtain system page size.\n");
+        return FALSE;
+    }
+    
     if (LastEIP)
     {
 #ifdef _WIN64
@@ -341,22 +402,110 @@ BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
         }
         else
         {   
-            if (CurrentGuardPages == NULL)
+            if (TrackedPages == NULL)
             {
                 DoOutputDebugString("StepOverGuardPageFault error: GuardedPagesToStep not set.\n");
                 return FALSE;
             }
 
-            if (ReinstateGuardPages(CurrentGuardPages))
+            LastAccessPage = ((DWORD_PTR)TrackedPages->LastAccessAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
+            ProtectAddressPage = ((DWORD_PTR)TrackedPages->ProtectAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
+
+            DoOutputDebugString("StepOverGuardPageFault: DEBUG Base 0x%x LastAccess 0x%x by 0x%x (LW 0x%x LR 0x%x).\n", TrackedPages->BaseAddress, TrackedPages->LastAccessAddress, TrackedPages->LastAccessBy, TrackedPages->LastWriteAddress, TrackedPages->LastReadAddress);
+            
+            if ((DWORD_PTR)TrackedPages->LastAccessAddress >= (DWORD_PTR)TrackedPages->BaseAddress 
+                && ((DWORD_PTR)TrackedPages->LastAccessAddress < ((DWORD_PTR)TrackedPages->BaseAddress + SystemInfo.dwPageSize)))
+            //  - this page is the first & contains any possible pe header
             {
-                //DoOutputDebugString("StepOverGuardPageFault: Reinstated page guard.\n");
-                GuardedPagesToStep = NULL;
-                LastEIP = (DWORD_PTR)NULL;
-                CurrentEIP = (DWORD_PTR)NULL;
-                return TRUE;
+            
+                if (TrackedPages->ProtectAddress && TrackedPages->ProtectAddress > TrackedPages->BaseAddress)
+                {
+                    if (TrackedPages->LastAccessAddress == TrackedPages->LastWriteAddress && TrackedPages->LastAccessAddress > TrackedPages->ProtectAddress)
+                        TrackedPages->WriteCounter++;
+                }
+                else if (TrackedPages->LastAccessAddress == TrackedPages->LastWriteAddress && TrackedPages->LastAccessAddress > TrackedPages->BaseAddress)
+                    TrackedPages->WriteCounter++;
+
+                if (TrackedPages->WriteCounter > SystemInfo.dwPageSize)
+                {
+                    if (TrackedPages->BreakpointsSet)
+                    {
+                        DoOutputDebugString("StepOverGuardPageFault: Anomaly detected - switched to breakpoints for initial page, but guard pages still being hit.\n");
+                        
+                        //DoOutputDebugString("StepOverGuardPageFault: Debug: Last write at 0x%x by 0x%x, last read at 0x%x by 0x%x.\n", TrackedPages->LastWriteAddress, TrackedPages->LastWrittenBy, TrackedPages->LastReadAddress, TrackedPages->LastReadBy);
+                        
+                        return FALSE;
+                    }
+                    
+                    DoOutputDebugString("StepOverGuardPageFault: Write counter hit limit, switching to breakpoints.\n");
+                    
+                    if (ActivateBreakpoints(TrackedPages, ExceptionInfo))
+                    {
+                        //DoOutputDebugString("StepOverGuardPageFault: Switched to breakpoints on first tracked page.\n");
+                        
+                        //DoOutputDebugString("StepOverGuardPageFault: Debug: Last write at 0x%x by 0x%x, last read at 0x%x by 0x%x.\n", TrackedPages->LastWriteAddress, TrackedPages->LastWrittenBy, TrackedPages->LastReadAddress, TrackedPages->LastReadBy);
+                        
+                        TrackedPages->BreakpointsSet = TRUE;
+                        GuardedPagesToStep = NULL;
+                        LastEIP = (DWORD_PTR)NULL;
+                        CurrentEIP = (DWORD_PTR)NULL;
+                        return TRUE;  
+                    }
+                    else
+                    {
+                        DoOutputDebugString("StepOverGuardPageFault: Failed to set breakpoints on first tracked page.\n");
+                        return FALSE;  
+                    }
+                }
+                else if (ActivateGuardPages(TrackedPages))
+                {
+                    //DoOutputDebugString("StepOverGuardPageFault: 0x%x - Reactivated page guard on first tracked page.\n", TrackedPages->LastAccessAddress);
+                    
+                    GuardedPagesToStep = NULL;
+                    LastEIP = (DWORD_PTR)NULL;
+                    CurrentEIP = (DWORD_PTR)NULL;
+                    return TRUE;  
+                }
+                else
+                {
+                    DoOutputDebugString("StepOverGuardPageFault: Failed to activate page guard on first tracked page.\n");
+                    return FALSE;  
+                }
+            } 
+            else if (LastAccessPage == ProtectAddressPage)
+            {
+                if (ActivateGuardPages(TrackedPages))
+                {
+                    //DoOutputDebugString("StepOverGuardPageFault: 0x%x - Reactivated page guard on page containing protect address.\n", TrackedPages->LastAccessAddress);
+                    GuardedPagesToStep = NULL;
+                    LastEIP = (DWORD_PTR)NULL;
+                    CurrentEIP = (DWORD_PTR)NULL;
+                    return TRUE;  
+                }
+                else
+                {
+                    DoOutputDebugString("StepOverGuardPageFault: Failed to activate page guard on page containing protect address.\n");
+                    return FALSE;  
+                }
+            }
+            else
+            {
+                if (ActivateSurroundingGuardPages(TrackedPages))
+                {
+                    //DoOutputDebugString("StepOverGuardPageFault: 0x%x - Reactivated page guard on surrounding pages.\n", TrackedPages->LastAccessAddress);
+                    GuardedPagesToStep = NULL;
+                    LastEIP = (DWORD_PTR)NULL;
+                    CurrentEIP = (DWORD_PTR)NULL;
+                    return TRUE;  
+                }
+                else
+                {
+                    DoOutputDebugString("StepOverGuardPageFault: Failed to activate page guard on surrounding pages.\n");
+                    return FALSE;  
+                }
             }
 
-            DoOutputDebugString("StepOverGuardPageFault: Failed to reinstate page guard.\n");
+            DoOutputDebugString("StepOverGuardPageFault: Failed to activate page guards.\n");
             return FALSE;        
         }
     }
@@ -367,25 +516,13 @@ BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
 #else
         LastEIP = ExceptionInfo->ContextRecord->Eip;
 #endif
-        
-        if (CurrentGuardPages->LastWriteAddress)
+
+        if (TrackedPages == NULL)
         {
-            if (!SystemInfo.dwPageSize)
-                GetSystemInfo(&SystemInfo);
-            
-            // we want to flag writes that occur beyond the first page
-            if (ScanPageForNonZero(CurrentGuardPages->LastWriteAddress) && (DWORD_PTR)CurrentGuardPages->LastWriteAddress >= (DWORD_PTR)CurrentGuardPages->BaseAddress + SystemInfo.dwPageSize)
-            {
-                if (!CurrentGuardPages->WriteDetected)
-                {
-                    DoOutputDebugString("StepOverGuardPageFault: DEBUG trigger write to 0x%x, base 0x%x, pagesize 0x%x.\n", CurrentGuardPages->LastWriteAddress, CurrentGuardPages->BaseAddress, SystemInfo.dwPageSize);
-                    CurrentGuardPages->WriteDetected = TRUE;
-                    
-                    // we only care about reads that come after writes
-                    CurrentGuardPages->ReadDetected = FALSE;
-                }
-            }
+            DoOutputDebugString("StepOverGuardPageFault error: GuardedPagesToStep not set.\n");
+            return FALSE;
         }
+            
         
         SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
         return TRUE;
@@ -400,13 +537,16 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
     PVOID AccessAddress     = (PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1];
     PVOID FaultingAddress   = (PVOID)ExceptionInfo->ExceptionRecord->ExceptionAddress;
     
-    PGUARDPAGES CurrentGuardPages = GetGuardPages(AccessAddress);
+    PTRACKEDPAGES TrackedPages = GetTrackedPages(AccessAddress);
     
-    if (CurrentGuardPages == NULL)
+    if (TrackedPages == NULL)
     {
-        DoOutputDebugString("ExtractionGuardPageHandler error: address 0x%x not in guarded pages.\n", AccessAddress);
+        DoOutputDebugString("ExtractionGuardPageHandler error: address 0x%x not in tracked pages.\n", AccessAddress);
         return FALSE;
     }
+
+    // add check of whether pages *should* be guarded
+    // i.e. internal consistency
     
     switch (AccessType)
     {
@@ -414,9 +554,17 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
         
             //DoOutputDebugString("ExtractionGuardPageHandler: Write detected at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
 
-            CurrentGuardPages->LastWriteAddress = AccessAddress;
+            TrackedPages->LastAccessAddress = AccessAddress;
             
-            GuardedPagesToStep = CurrentGuardPages;
+            TrackedPages->LastAccessBy = FaultingAddress;
+            
+            TrackedPages->WriteDetected = TRUE;
+
+            TrackedPages->LastWriteAddress = AccessAddress;
+            
+            TrackedPages->LastWrittenBy = FaultingAddress;
+
+            GuardedPagesToStep = TrackedPages;
             
             SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
             
@@ -424,71 +572,65 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
             
         case EXCEPTION_READ_FAULT:
         
-            if (CurrentGuardPages->WriteDetected)
-            {
-                if (!(CurrentGuardPages->Protect & (PAGE_EXECUTE_READWRITE || PAGE_EXECUTE_READ || PAGE_EXECUTE)) && !CurrentGuardPages->PagesDumped && !CurrentGuardPages->ReadDetected)
-                {
-                    DoOutputDebugString("ExtractionGuardPageHandler: Read detected after previous write at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
-                    
-                    if (DisableGuardPages(CurrentGuardPages))
-                    {
-                        CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-                        if (CurrentGuardPages->PagesDumped)    
-                            DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
-                    }
-                    else
-                    {
-                        DoOutputDebugString("ExtractionGuardPageHandler: Failed to disable guard pages for dump.\n");
-                    }
-                    
-                    // if dumping failed (for example, because of an incomplete image) 
-                    // we want to re-enable guard pages so we can try again
-                    //if (!CurrentGuardPages->PagesDumped)
-                    //{
-                    //    ReinstateGuardPages(CurrentGuardPages);
-                    //}
-                }
-            }
+            TrackedPages->LastAccessAddress = AccessAddress;            
             
-            CurrentGuardPages->ReadDetected = TRUE;
-            CurrentGuardPages->LastReadBy = FaultingAddress;
+            TrackedPages->LastAccessBy = FaultingAddress;
+            
+            TrackedPages->ReadDetected = TRUE;
+
+            TrackedPages->LastReadAddress = AccessAddress;
+
+            TrackedPages->LastReadBy = FaultingAddress;
+            
+            GuardedPagesToStep = TrackedPages;
+            
+            SetSingleStepMode(ExceptionInfo->ContextRecord, StepOverGuardPageFault);
             
             break;
             
         case EXCEPTION_EXECUTE_FAULT:
         
-            DoOutputDebugString("ExtractionGuardPageHandler: Execution detected at 0x%x by 0x%x\n", AccessAddress, FaultingAddress);
+            DoOutputDebugString("ExtractionGuardPageHandler: Execution detected at 0x%x\n", AccessAddress);
             
-            if (!(CurrentGuardPages->Protect & (PAGE_EXECUTE_READWRITE || PAGE_EXECUTE_READ || PAGE_EXECUTE)))
+            if (AccessAddress != FaultingAddress)
             {
-                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - pages not marked with execute flag in guarded pages list.\n");                
+                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - AccessAddress != FaultingAddress (0x%x, 0x%x).\n", AccessAddress, FaultingAddress);
+            }
+
+            TrackedPages->LastAccessAddress = AccessAddress;            
+            
+            if (!(TrackedPages->Protect & EXECUTABLE_FLAGS))
+            {
+                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - pages not marked with execute flag in tracked pages list.\n");                
             }
             
-            if (!CurrentGuardPages->PagesDumped)
+            if (!TrackedPages->PagesDumped)
             {
                 DoOutputDebugString("ExtractionGuardPageHandler: Execution within guarded page detected, dumping.\n");
                 
-                    if (DisableGuardPages(CurrentGuardPages))
-                    {
-                        CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-                        if (CurrentGuardPages->PagesDumped)    
-                            DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
-                        else
-                        {
-                            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, CurrentGuardPages->BaseAddress);
-                            
-                            CurrentGuardPages->PagesDumped = DumpMemory(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-                            
-                            if (CurrentGuardPages->PagesDumped)
-                                DoOutputDebugString("ExtractionGuardPageHandler: shellcode detected and dumped.\n");
-                            else
-                                DoOutputDebugString("ExtractionGuardPageHandler: failed to dump detected shellcode.\n");
-                        }
-                    }
-                else
+                if (DeactivateGuardPages(TrackedPages))
                 {
-                    DoOutputDebugString("ExtractionGuardPageHandler: Failed to disable guard pages for dump.\n");
+                    //if (DumpPEsInTrackedPages(TrackedPages))
+                    //    TrackedPages->PagesDumped = TRUE;
+                    
+                    if (TrackedPages->PagesDumped)
+                        DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
+                    else
+                    {
+                        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedPages->BaseAddress);
+                        
+                        TrackedPages->PagesDumped = DumpMemory(TrackedPages->BaseAddress, TrackedPages->RegionSize);
+                        
+                        if (TrackedPages->PagesDumped)
+                            DoOutputDebugString("ExtractionGuardPageHandler: shellcode detected and dumped from range 0x%x - 0x%x.\n", TrackedPages->BaseAddress, (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+                        else
+                            DoOutputDebugString("ExtractionGuardPageHandler: failed to dump detected shellcode from range 0x%x - 0x%x.\n", TrackedPages->BaseAddress, (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+                    }
+                    
+                    ExtractionClearAll(TrackedPages);
                 }
+                else
+                    DoOutputDebugString("ExtractionGuardPageHandler: Failed to disable guard pages for dump.\n");
             }
             
             break;
@@ -501,205 +643,10 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
     return TRUE;
 }
 
-BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-	MEMORY_BASIC_INFORMATION meminfo;
-
-	if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("EntryPointExecCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("EntryPointExecCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("EntryPointExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
-
-    memset(&meminfo, 0, sizeof(meminfo));
-
-    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
-    {
-        DoOutputErrorString("EntryPointExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
-        return FALSE;
-    }
-
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
-
-    if (AllocationDumped == TRUE)
-    {
-        DoOutputDebugString("EntryPointExecCallback: allocation already dumped, clearing breakpoint.\n");
-        ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-    }
-    else
-    {
-        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-        
-        if (AllocationDumped)
-        {
-            DoOutputDebugString("EntryPointExecCallback hook: PE image(s) detected and dumped.\n");
-            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);            
-        }
-        else
-        {
-            DoOutputDebugString("EntryPointExecCallback: failed to dump PE module.\n");
-            return FALSE;
-        }
-    }
-	
-    DoOutputDebugString("EntryPointExecCallback executed successfully.\n");
-	
-	return TRUE;
-}
-
-BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-    if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("EntryPointWriteCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("EntryPointWriteCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("EntryPointWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
-
-    if ((DWORD_PTR)pBreakpointInfo->Address < (DWORD_PTR)AllocationBase || (DWORD_PTR)pBreakpointInfo->Address > (DWORD_PTR)AllocationBase + AllocationSize)
-    {
-        DoOutputDebugString("EntryPointWriteCallback: current AddressOfEntryPoint is not within allocated region. We assume it's only partially written and await further writes.\n");
-        return TRUE;        
-    }
-    
-    if (EntryPointExecBpSet == FALSE)
-    {
-        if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &EPBPRegister, 0, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
-        {
-            EntryPointExecBpSet = TRUE;
-#ifdef _WIN64
-            DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x (RIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Rip);
-#else
-            DoOutputDebugString("EntryPointWriteCallback: Execution bp %d set on EntryPoint 0x%x (EIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Eip);
-#endif
-        }
-        else
-        {
-            DoOutputDebugString("EntryPointWriteCallback: ContextSetNextAvailableBreakpoint on EntryPoint 0x%x failed\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
-            return FALSE;
-        }
-    }
-    else
-    {
-        if (ContextSetBreakpoint(ExceptionInfo->ContextRecord, EPBPRegister, 0, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
-        {
-            EntryPointExecBpSet = TRUE;
-#ifdef _WIN64
-            DoOutputDebugString("EntryPointWriteCallback: Updated EntryPoint execution bp %d to 0x%x (RIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Rip);
-#else
-            DoOutputDebugString("EntryPointWriteCallback: Updated EntryPoint execution bp %d to 0x%x (EIP = 0x%x).\n", EPBPRegister, (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address), ExceptionInfo->ContextRecord->Eip);
-#endif
-            
-            // since it looks like the writing is happening at most a word at a time, let's try and catch the end of the write for another dump attempt
-            //SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-        }
-        else
-        {
-            DoOutputDebugString("EntryPointWriteCallback: ContextSetBreakpoint on updated EntryPoint 0x%x failed\n", (BYTE*)AllocationBase+*(DWORD*)(pBreakpointInfo->Address));
-            return FALSE;
-        }    
-    }
-	
-    DoOutputDebugString("EntryPointWriteCallback executed successfully.\n");
-	
-	return TRUE;
-}
-
-BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-#ifdef _WIN64
-	PIMAGE_NT_HEADERS64 pNtHeader;
-#else
-	PIMAGE_NT_HEADERS32 pNtHeader;
-#endif    
-    if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("PEHeaderWriteCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("PEHeaderWriteCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("PEHeaderWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
-
-    pNtHeader = (PIMAGE_NT_HEADERS)pBreakpointInfo->Address;
-    
-    if (*(DWORD*)pNtHeader == IMAGE_NT_SIGNATURE)
-    {
-        PeImageDetected = TRUE;
-        
-        if (pNtHeader->OptionalHeader.AddressOfEntryPoint && pNtHeader->OptionalHeader.AddressOfEntryPoint < AllocationSize)
-        {
-            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, (BYTE*)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
-            {
-#ifdef _WIN64
-                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (RIP = 0x%x).\n", (DWORD_PTR)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Rip);
-#else
-                DoOutputDebugString("PEHeaderWriteCallback: Execution bp set on EntryPoint 0x%x (EIP = 0x%x).\n", (DWORD_PTR)AllocationBase+pNtHeader->OptionalHeader.AddressOfEntryPoint, ExceptionInfo->ContextRecord->Eip);
-#endif
-            }
-            else
-            {
-                DoOutputDebugString("PEHeaderWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
-                ContextClearBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
-                return FALSE;
-            }            
-        }
-        else
-        {
-            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)&(pNtHeader->OptionalHeader.AddressOfEntryPoint), BP_WRITE, EntryPointWriteCallback))
-            {
-#ifdef _WIN64
-                DoOutputDebugString("PEHeaderWriteCallback: set write bp on AddressOfEntryPoint location (RIP = 0x%x).\n", ExceptionInfo->ContextRecord->Rip);
-#else
-                DoOutputDebugString("PEHeaderWriteCallback: set write bp on AddressOfEntryPoint location (EIP = 0x%x).\n", ExceptionInfo->ContextRecord->Eip);
-#endif
-            }   
-            else
-            {
-                DoOutputDebugString("PEHeaderWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
-                ContextClearBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
-                return FALSE;
-            }
-        }
-    }
-    else if (*(BYTE*)pBreakpointInfo->Address == 'P') 
-    {
-        // Cover the case where PE file is being written a byte at a time
-        DoOutputDebugString("PEHeaderWriteCallback: P written to first byte, awaiting next byte.\n");
-    }
-    else
-    {
-        DoOutputDebugString("PEHeaderWriteCallback: PE header has: 0x%x.\n", *(DWORD*)pNtHeader);
-    }
-    
-    DoOutputDebugString("PEHeaderWriteCallback executed successfully.\n");
-	
-	return TRUE;
-}
-
 BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	long e_lfanew;
+	PTRACKEDPAGES TrackedPages;
+    long e_lfanew;
     
     DoOutputDebugString("PEPointerWriteCallback entry.\n");
     
@@ -717,6 +664,14 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
 	DoOutputDebugString("PEPointerWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
+    TrackedPages = GetTrackedPages(pBreakpointInfo->Address);
+    
+	if (TrackedPages == NULL)
+	{
+		DoOutputDebugString("PEPointerWriteCallback: unable to locate address 0x%x in tracked pages at 0x%x.\n", pBreakpointInfo->Address, TrackedPages->BaseAddress);
+		return FALSE;
+	} 
+
     e_lfanew = *(long*)((pBreakpointInfo->Address));
 
     if ((unsigned int)e_lfanew > PE_HEADER_LIMIT)
@@ -725,13 +680,13 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         return FALSE;
     }
 
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, TrackedPages->BaseAddress);
 
-    if (e_lfanew && (*(DWORD*)((unsigned char*)AllocationBase+e_lfanew) == IMAGE_NT_SIGNATURE))
+    if (e_lfanew && (*(DWORD*)((unsigned char*)TrackedPages->BaseAddress+e_lfanew) == IMAGE_NT_SIGNATURE))
     {
-        if (DumpPEsInRange(AllocationBase, AllocationSize))
+        if (DumpPEsInTrackedPages(TrackedPages))
         {
-            AllocationDumped = TRUE;
+            TrackedPages->PagesDumped = TRUE;
             ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);        
             DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
             return TRUE;
@@ -742,125 +697,28 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         }
     }
     
-    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)AllocationBase+e_lfanew, BP_WRITE, PEHeaderWriteCallback))
-    {
-#ifdef _WIN64
-        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (RIP = 0x%x)\n", (BYTE*)AllocationBase + e_lfanew, ExceptionInfo->ContextRecord->Rip);
-#else
-        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (EIP = 0x%x)\n", (BYTE*)AllocationBase + e_lfanew, ExceptionInfo->ContextRecord->Eip);
-#endif
-    }
-    else
-    {
-        DoOutputDebugString("PEPointerWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
-        return FALSE;
-    }     
-        
+//    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)TrackedPages->BaseAddress+e_lfanew, BP_WRITE, PEHeaderWriteCallback))
+//    {
+//#ifdef _WIN64
+//        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (RIP = 0x%x)\n", (BYTE*)TrackedPages->BaseAddress + e_lfanew, ExceptionInfo->ContextRecord->Rip);
+//#else
+//        DoOutputDebugString("PEPointerWriteCallback: set write bp on e_lfanew write location 0x%x (EIP = 0x%x)\n", (BYTE*)TrackedPages->BaseAddress + e_lfanew, ExceptionInfo->ContextRecord->Eip);
+//#endif
+//    }
+//    else
+//    {
+//        DoOutputDebugString("PEPointerWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+//        return FALSE;
+//    }
+
 	DoOutputDebugString("PEPointerWriteCallback executed successfully.\n");
 	
 	return TRUE;
 }
 
-BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-	MEMORY_BASIC_INFORMATION meminfo;
-    SIZE_T Size;
-    
-    if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("MidPageExecCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("MidPageExecCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("MidPageExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
-
-    memset(&meminfo, 0, sizeof(meminfo));
-
-    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
-    {
-        DoOutputErrorString("MidPageExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
-        return FALSE;
-    }
-
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
-
-    if ((BYTE*)AllocationBase + AllocationSize > (BYTE*)meminfo.AllocationBase && meminfo.RegionSize)
-    {
-        Size = (BYTE*)AllocationBase + AllocationSize - (BYTE*)meminfo.AllocationBase;
-    }
-    else
-    {
-        Size = AllocationSize;
-    }
-    
-    if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
-    {
-        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, Size);
-        AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, Size);
-    }
-    else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
-    {
-        DoOutputDebugString("MidPageExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.BaseAddress, meminfo.RegionSize);
-        AllocationDumped = DumpPEsInRange(meminfo.BaseAddress, meminfo.RegionSize);
-    }
-        
-    if (AllocationDumped)
-    {
-        DoOutputDebugString("MidPageExecCallback: PE image(s) detected and dumped.\n");
-        ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-    }
-    else
-    {
-        if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)meminfo.BaseAddress > (DWORD_PTR)meminfo.AllocationBase)
-        {
-            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-            
-            AllocationDumped = DumpMemory(meminfo.AllocationBase, Size);
-            
-            if (AllocationDumped)
-            {
-                DoOutputDebugString("MidPageExecCallback: successfully dumped memory range at 0x%x.\n", meminfo.AllocationBase);
-                ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-            }
-        }
-        else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)meminfo.BaseAddress == (DWORD_PTR)meminfo.AllocationBase)
-        {
-            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.BaseAddress);
-            
-            if (ScanForNonZero(meminfo.BaseAddress, Size))
-                AllocationDumped = DumpMemory(meminfo.BaseAddress, meminfo.RegionSize);
-            else 
-                DoOutputDebugString("MidPageExecCallback: memory range at 0x%x is empty.\n", meminfo.BaseAddress);
-                
-            if (AllocationDumped)
-            {
-                DoOutputDebugString("MidPageExecCallback: successfully dumped memory range at 0x%x.\n", meminfo.BaseAddress);
-                ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-            }
-        }
-    }
-    
-    if (!AllocationDumped)
-    {
-        DoOutputDebugString("MidPageExecCallback: failed to dump memory range at 0x%x.\n", AllocationBase);
-        ExtractionClearAll();
-    }
-	
-    DoOutputDebugString("MidPageExecCallback executed successfully.\n");
-	
-	return TRUE;
-}
-
 BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-    MEMORY_BASIC_INFORMATION meminfo;
-    //LPVOID PEPointer;
+{    
+    PTRACKEDPAGES TrackedPages;
     
     if (pBreakpointInfo == NULL)
 	{
@@ -876,250 +734,169 @@ BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
 
 	DoOutputDebugString("ShellcodeExecCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
-    memset(&meminfo, 0, sizeof(meminfo));
-
-    if (!VirtualQuery(pBreakpointInfo->Address, &meminfo, sizeof(meminfo)))
+    TrackedPages = GetTrackedPages(pBreakpointInfo->Address);
+    
+	if (TrackedPages == NULL)
+	{
+		DoOutputDebugString("ShellcodeExecCallback: unable to locate address 0x%x in tracked pages at 0x%x.\n", pBreakpointInfo->Address, TrackedPages->BaseAddress);
+		return FALSE;
+	}    
+    
+    if (!VirtualQuery(pBreakpointInfo->Address, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
         DoOutputErrorString("ShellcodeExecCallback: unable to query memory region 0x%x", pBreakpointInfo->Address);
         return FALSE;
     }
-    
-    DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", meminfo.AllocationBase, meminfo.RegionSize);
 
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, meminfo.AllocationBase);
-
-    AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-    
-    if (AllocationDumped)
+    if (DeactivateGuardPages(TrackedPages))
     {
-        DoOutputDebugString("ShellcodeExecCallback: PE image(s) detected and dumped.\n");
-        ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-    }
-    else
-    {
-        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+        SetCapeMetaData(EXTRACTION_PE, 0, NULL, TrackedPages->MemInfo.AllocationBase);
         
-        AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-        
-        if (AllocationDumped)
+        if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)TrackedPages->MemInfo.BaseAddress > (DWORD_PTR)TrackedPages->MemInfo.AllocationBase)
         {
-            DoOutputDebugString("ShellcodeExecCallback: successfully dumped memory range at 0x%x.\n", AllocationBase);
+            DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", TrackedPages->MemInfo.AllocationBase, (DWORD_PTR)TrackedPages->MemInfo.BaseAddress + TrackedPages->MemInfo.RegionSize - (DWORD_PTR)TrackedPages->MemInfo.AllocationBase);
+            TrackedPages->PagesDumped = DumpPEsInRange(TrackedPages->MemInfo.AllocationBase, (DWORD_PTR)TrackedPages->MemInfo.BaseAddress + TrackedPages->MemInfo.RegionSize - (DWORD_PTR)TrackedPages->MemInfo.AllocationBase);
+        }
+        else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)TrackedPages->MemInfo.BaseAddress == (DWORD_PTR)TrackedPages->MemInfo.AllocationBase)
+        {
+            DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", TrackedPages->MemInfo.BaseAddress, TrackedPages->MemInfo.RegionSize);
+            TrackedPages->PagesDumped = DumpPEsInRange(TrackedPages->MemInfo.BaseAddress, TrackedPages->MemInfo.RegionSize);
+        }
+            
+        if (TrackedPages->PagesDumped)
+        {
+            DoOutputDebugString("ShellcodeExecCallback: PE image(s) detected and dumped.\n");
             ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
         }
-    }
-    
-    if (!AllocationDumped)
-    {
-        DoOutputDebugString("ShellcodeExecCallback: failed to dump memory range at 0x%x.\n", AllocationBase);
-        ExtractionClearAll();
-    }
-	
-    DoOutputDebugString("ShellcodeExecCallback executed successfully.\n");
-	
-	return TRUE;
-}
-
-BOOL BaseAddressWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-    PIMAGE_DOS_HEADER pDosHeader;
-    unsigned int Register;
-    
-	if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("BaseAddressWriteCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("BaseAddressWriteCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("BaseAddressWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
-    
-    AllocationWriteDetected = TRUE;
-    
-    if (*(WORD*)pBreakpointInfo->Address == IMAGE_DOS_SIGNATURE)
-    {
-        DoOutputDebugString("BaseAddressWriteCallback: MZ header found.\n");
-    
-        pDosHeader = (PIMAGE_DOS_HEADER)pBreakpointInfo->Address;
-
-        if (pDosHeader->e_lfanew && (unsigned int)pDosHeader->e_lfanew < PE_HEADER_LIMIT)
+        else
         {
-            if (*(DWORD*)((unsigned char*)pDosHeader + pDosHeader->e_lfanew) == IMAGE_NT_SIGNATURE)
+            if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)TrackedPages->MemInfo.BaseAddress > (DWORD_PTR)TrackedPages->MemInfo.AllocationBase)
             {
-                PeImageDetected = TRUE;
-
-                SetCapeMetaData(EXTRACTION_PE, 0, NULL, AllocationBase);
+                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedPages->MemInfo.AllocationBase);
                 
-                if (DumpPEsInRange(AllocationBase, AllocationSize))
+                TrackedPages->PagesDumped = DumpMemory(TrackedPages->MemInfo.AllocationBase, (DWORD_PTR)TrackedPages->MemInfo.BaseAddress + TrackedPages->MemInfo.RegionSize - (DWORD_PTR)TrackedPages->MemInfo.AllocationBase);
+                
+                if (TrackedPages->PagesDumped)
                 {
-                    AllocationDumped = TRUE;
-                    DoOutputDebugString("BaseAddressWriteCallback: successfully dumped module.\n");
+                    DoOutputDebugString("ShellcodeExecCallback: successfully dumped memory range at 0x%x.\n", TrackedPages->MemInfo.AllocationBase);
                     ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
-                    return TRUE;
-                }
-                else
-                {
-                    DoOutputDebugString("BaseAddressWriteCallback: failed to dump PE module.\n");
                 }
             }
-            else
+            else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)TrackedPages->MemInfo.BaseAddress == (DWORD_PTR)TrackedPages->MemInfo.AllocationBase)
             {
-                // Deal with the situation where the breakpoint triggers after e_lfanew has already been written
-                if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)pDosHeader + pDosHeader->e_lfanew, BP_WRITE, PEHeaderWriteCallback))
+                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedPages->MemInfo.BaseAddress);
+                
+                if (ScanForNonZero(TrackedPages->MemInfo.BaseAddress, TrackedPages->MemInfo.RegionSize))
+                    TrackedPages->PagesDumped = DumpMemory(TrackedPages->MemInfo.BaseAddress, TrackedPages->MemInfo.RegionSize);
+                else 
+                    DoOutputDebugString("ShellcodeExecCallback: memory range at 0x%x is empty.\n", TrackedPages->MemInfo.BaseAddress);
+                    
+                if (TrackedPages->PagesDumped)
                 {
-#ifdef _WIN64
-                    DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location 0x%x (RIP = 0x%x)\n", (BYTE*)pDosHeader + pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Rip);
-#else
-                    DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location 0x%x (EIP = 0x%x)\n", (BYTE*)pDosHeader + pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Eip);
-#endif
-                }
-                else
-                {
-                    DoOutputDebugString("BaseAddressWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
-                    return FALSE;
+                    DoOutputDebugString("ShellcodeExecCallback: successfully dumped memory range at 0x%x.\n", TrackedPages->MemInfo.BaseAddress);
+                    ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);
                 }
             }
         }
-        //e_lfanew is a long, therefore dword in size
-        else if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(DWORD), (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
+        
+        if (!TrackedPages->PagesDumped)
         {
-#ifdef _WIN64
-            DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location: 0x%x (RIP = 0x%x)\n", (BYTE*)&pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Rip);
-#else
-            DoOutputDebugString("BaseAddressWriteCallback: set write bp on e_lfanew write location: 0x%x (EIP = 0x%x)\n", (BYTE*)&pDosHeader->e_lfanew, ExceptionInfo->ContextRecord->Eip);
-#endif
-        }
-        else
-        {
-            DoOutputDebugString("BaseAddressWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
+            DoOutputDebugString("ShellcodeExecCallback: Failed to dump memory range at 0x%x.\n", TrackedPages->MemInfo.BaseAddress);
+            
             return FALSE;
-        }        
-    }
-    else if (*(BYTE*)pBreakpointInfo->Address == 'M') 
-    {
-        // Cover the case where a PE file is being written a byte at a time
-        DoOutputDebugString("BaseAddressWriteCallback: M written to first byte, awaiting next byte.\n");
-        
-        // We do nothing and hope that the 4D byte isn't code!
-    }
-    else 
-    {
-        DoOutputDebugString("BaseAddressWriteCallback: byte written to 0x%x: 0x%x.\n", pBreakpointInfo->Address, *(BYTE*)pBreakpointInfo->Address);
-        
-        if (AllocationBaseExecBpSet == TRUE)
-        {
-            DoOutputDebugString("BaseAddressWriteCallback: allocation exec bp already set, doing nothing.\n");
-            return TRUE;
         }
+        else
+            DoOutputDebugString("ShellcodeExecCallback executed successfully.\n");
         
-        // we add an exec breakpoint on address 0 in case it's shellcode, but leave the write bp in case it's an encrypted PE
-        if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, 0, (BYTE*)AllocationBase, BP_EXEC, MidPageExecCallback))
+        ExtractionClearAll(TrackedPages);
+        
+        return TRUE;
+    }
+    else
+    {
+        DoOutputDebugString("ShellcodeExecCallback: Failed to disable guard pages for dump.\n");
+        
+        return FALSE;
+    }
+}
+
+BOOL ActivateBreakpoints(PTRACKEDPAGES TrackedPages, struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+    DWORD ThreadId;
+    unsigned int Register;
+    PIMAGE_DOS_HEADER pDosHeader;
+    DWORD_PTR LastAccessPage, AddressOfPage;
+    
+    if (!TrackedPages)
+    {
+        DoOutputDebugString("ActivateBreakpoints: Error, tracked pages argument NULL.\n");
+        return FALSE;
+    }
+
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("ActivateBreakpoints: Failed to obtain system page size.\n");
+        return FALSE;
+    }
+    
+    ThreadId = GetCurrentThreadId();
+    
+    DoOutputDebugString("ActivateBreakpoints: TrackedPages->BaseAddress: 0x%x, TrackedPages->RegionSize: 0x%x, ThreadId: 0x%x\n", TrackedPages->BaseAddress, TrackedPages->RegionSize, ThreadId);
+    
+    if (TrackedPages->RegionSize == 0 || TrackedPages->BaseAddress == NULL || ThreadId == 0)
+    {
+        DoOutputDebugString("ActivateBreakpoints: Error, one of the following is NULL: 0x%x, TrackedPages->RegionSize: 0x%x, ThreadId: 0x%x\n", TrackedPages->BaseAddress, TrackedPages->RegionSize, ThreadId);
+        return FALSE;
+    }
+    
+    //AddressOfBasePage = ((DWORD_PTR)TrackedPages->BaseAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
+    //ProtectAddressPage = ((DWORD_PTR)TrackedPages->ProtectAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
+ 
+    if (TrackedPages->ProtectAddress && TrackedPages->ProtectAddress != TrackedPages->BaseAddress)
+        CapeMetaData->Address = TrackedPages->ProtectAddress;
+    else
+        CapeMetaData->Address = TrackedPages->BaseAddress;
+
+    if (ExceptionInfo == NULL)
+    {
+        if (!SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, (BYTE*)CapeMetaData->Address, BP_EXEC, ShellcodeExecCallback))
         {
-            AllocationBaseExecBpSet = TRUE;
-#ifdef _WIN64
-            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d (RIP = 0x%x)\n", Register, AllocationBase, AllocationBaseExecBpSet, ExceptionInfo->ContextRecord->Rip);
-#else
-            DoOutputDebugString("BaseAddressWriteCallback: Execution breakpoint %d set base address: 0x%x, AllocationBaseExecBpSet = %d (EIP = 0x%x)\n", Register, AllocationBase, AllocationBaseExecBpSet, ExceptionInfo->ContextRecord->Eip);
-#endif			
+            DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked pages base address 0x%x.\n", CapeMetaData->Address);
+            return FALSE;
         }
         else
         {
-            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, (BYTE*)AllocationBase, BP_EXEC, MidPageExecCallback))
-            {
-                AllocationBaseExecBpSet = TRUE;
-                DoOutputDebugString("BaseAddressWriteCallback: Unable to add additional breakpoint, replacing existing write bp with execution bp.\n");
-            }
-            else
-            {
-                DoOutputDebugString("BaseAddressWriteCallback: Error: Failed to replace existing write bp with execution bp.\n");
-                return FALSE;
-            }
+            DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", CapeMetaData->Address);
+        } 
+    }
+    else
+    {    
+        if (!ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, 0, (BYTE*)CapeMetaData->Address, BP_EXEC, ShellcodeExecCallback))
+        {
+            DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked pages base address 0x%x.\n", CapeMetaData->Address);
+            return FALSE;
         }
+        else
+        {
+            DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", CapeMetaData->Address);
+        } 
     }
 
-	DoOutputDebugString("BaseAddressWriteCallback executed successfully.\n");
+    pDosHeader = (PIMAGE_DOS_HEADER)CapeMetaData->Address;
+    
+    //if (!ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, &Register, sizeof(LONG), (BYTE*)&pDosHeader->e_lfanew, BP_WRITE, PEPointerWriteCallback))
+    //{
+    //    DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked pages base address 0x%x.\n", CapeMetaData->Address);
+    //    return FALSE;
+    //}
+    //else
+    //{
+    //    DoOutputDebugString("ActivateBreakpoints: Set write breakpoint on e_lfanew address: 0x%x\n", &pDosHeader->e_lfanew);
+    //}        
 
-	return TRUE;
-}
-
-BOOL SetMidPageBreakpoint(PVOID *Address, SIZE_T Size)
-{
-    DWORD ThreadId;
-    unsigned int Register;
-    
-    ThreadId = GetCurrentThreadId();
- 
-    AllocationSize = Size;
-    AllocationBase = Address;
-    CapeMetaData->Address = Address;
-    
-    AllocationWriteDetected = FALSE;
-    PeImageDetected = FALSE;
-    AllocationDumped = FALSE;    
-    AllocationBaseExecBpSet = FALSE;
-    EntryPointExecBpSet = FALSE;
-
-    DoOutputDebugString("SetMidPageBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
-    
-    if (AllocationSize == 0 || AllocationBase == NULL || ThreadId == 0)
-    {
-        DoOutputDebugString("SetMidPageBreakpoint: Error, one of the following is NULL: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
-        return FALSE;
-    }
-    
-    if (!SetNextAvailableBreakpoint(ThreadId, &Register, 0, (BYTE*)Address, BP_EXEC, MidPageExecCallback))
-    {
-        DoOutputDebugString("SetMidPageBreakpoint: SetNextAvailableBreakpoint failed to set exec bp on executable address 0x%x.\n", Address);
-        return FALSE;
-    }
-    else
-    {
-        DoOutputDebugString("SetMidPageBreakpoint: Set exec breakpoint on protected address: 0x%x\n", Address);
-    } 
-    
-    return TRUE;
-}
-
-BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize)
-{
-    DWORD ThreadId;
-    unsigned int Register;
-    
-    ThreadId = GetCurrentThreadId();
- 
-    AllocationSize = RegionSize;
-    AllocationBase = Address;
-    CapeMetaData->Address = Address;
-    
-    AllocationWriteDetected = FALSE;
-    PeImageDetected = FALSE;
-    AllocationDumped = FALSE;    
-    AllocationBaseWriteBpSet = FALSE;
-    AllocationBaseExecBpSet = FALSE;
-    EntryPointExecBpSet = FALSE;
-    
-    DoOutputDebugString("SetInitialWriteBreakpoint: AllocationBase: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
-    
-    if (AllocationSize == 0 || AllocationBase == NULL || ThreadId == 0)
-    {
-        DoOutputDebugString("SetInitialWriteBreakpoint: Error, one of the following is NULL: 0x%x, AllocationSize: 0x%x, ThreadId: 0x%x\n", AllocationBase, AllocationSize, ThreadId);
-        return FALSE;
-    }
-    
-    if (SetNextAvailableBreakpoint(ThreadId, &Register, sizeof(WORD), (BYTE*)AllocationBase, BP_WRITE, BaseAddressWriteCallback))
-    {
-        DoOutputDebugString("SetInitialWriteBreakpoint: Breakpoint %d set write on word at base address: 0x%x\n", Register, AllocationBase);
-        AllocationBaseWriteBpSet = TRUE;
-    }
-    else
-	{
-        DoOutputDebugString("SetInitialWriteBreakpoint: SetNextAvailableBreakpoint failed\n");
-        return FALSE;
-	}
     
     return TRUE;
 }

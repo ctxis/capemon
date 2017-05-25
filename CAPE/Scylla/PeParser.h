@@ -93,6 +93,8 @@ public:
     PIMAGE_NT_HEADERS getCurrentNtHeader();
 	std::vector<PeFileSection> listPeSection;
     
+	DWORD dumpSize;
+
 protected:
 	PeParser();
 
@@ -126,7 +128,7 @@ protected:
 	HANDLE hFile;
 	HANDLE hInfoFile;
 	DWORD fileSize;
-
+    
 	bool readPeHeaderFromFile(bool readSectionHeaders);
 	bool readPeHeaderFromProcess(bool readSectionHeaders);
 

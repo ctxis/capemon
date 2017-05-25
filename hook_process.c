@@ -27,27 +27,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
-#include "CAPE\CAPE.h"
 #include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern BOOL SetInitialWriteBreakpoint(PVOID *Address, SIZE_T RegionSize);
-extern BOOL ShellCodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
-extern BOOL MidPageExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
-extern BOOL SetMidPageBreakpoint(PVOID *Address, SIZE_T Size);
 
-extern struct GuardPages *GuardPageList;
-extern BOOL AllocationWriteDetected;
-extern BOOL AllocationBaseWriteBpSet;
-extern BOOL AllocationBaseExecBpSet;
-extern BOOL PeImageDetected;
-extern BOOL AllocationDumped;
-extern PVOID AllocationBase;
-extern SIZE_T AllocationSize;
-
+extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
 extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
-extern void ExtractionClearAll(void);
+extern void FreeHandler(PVOID BaseAddress);
+extern void ProcessTrackedPages();
+
+extern struct TrackedPages *TrackedPageList;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -387,7 +377,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 ) {
 	// Process will terminate. Default logging will not work. Be aware: return value not valid
 	lasterror_t lasterror;
-	MEMORY_BASIC_INFORMATION meminfo;
     NTSTATUS ret = 0;
 
 	get_lasterrors(&lasterror);
@@ -395,86 +384,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-        if (AllocationBase && AllocationSize && !AllocationDumped)
-        {            
-            memset(&meminfo, 0, sizeof(meminfo));
-            
-            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-            {
-                DoOutputErrorString("NtTerminateProcess hook: unable to query memory region 0x%x", AllocationBase);
-            }
-            else
-            {
-                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                
-                if (AllocationDumped)
-                {
-                    DoOutputDebugString("NtTerminateProcess hook: PE image(s) detected and dumped.\n");
-                    ExtractionClearAll();
-                }
-                else
-                {
-                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                    
-                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                    {
-                        DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ExtractionClearAll();
-                    }                    
-                }
-                
-                if (!AllocationDumped)
-                {
-                    DoOutputDebugString("NtTerminateProcess hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                    ExtractionClearAll();
-                }
-            }
-        }
 
+        ProcessTrackedPages();
         process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-        if (AllocationBase && AllocationSize && !AllocationDumped)
-        {            
-            memset(&meminfo, 0, sizeof(meminfo));
-            
-            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-            {
-                DoOutputErrorString("NtTerminateProcess hook: unable to query memory region 0x%x", AllocationBase);
-            }
-            else
-            {
-                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                
-                if (AllocationDumped)
-                {
-                    DoOutputDebugString("NtTerminateProcess hook: PE image(s) detected and dumped.\n");
-                    ExtractionClearAll();
-                }                
-                else
-                {
-                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                    
-                    AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                    {
-                        DoOutputDebugString("NtTerminateProcess hook: successfully dumped memory range at 0x%x.\n", AllocationBase);
-                        ExtractionClearAll();
-                    }
-                }
-                
-                if (!AllocationDumped)
-                {
-                    DoOutputDebugString("NtTerminateProcess hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                    ExtractionClearAll();
-                }
-            }
-        }
 
+        ProcessTrackedPages();
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
@@ -610,118 +527,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     ULONG AllocationType,
     __in     ULONG Protect
 ) {
-    MEMORY_BASIC_INFORMATION meminfo;
-    PGUARDPAGES CurrentGuardPages;
-    BOOL GuardedPages = FALSE;
-
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && (Protect & (PAGE_READWRITE)) && !(Protect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE)) 
-    {
-        Protect |= PAGE_GUARD;
-        GuardedPages = TRUE;
-    }
-    
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-    if (NT_SUCCESS(ret) && GuardedPages && !called_by_hook())
+	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) 
     {
-        DoOutputDebugString("NtAllocateVirtualMemory hook: Guarding page with BaseAddress: 0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);
-        Protect &= ~PAGE_GUARD;
-        AddGuardPages(*BaseAddress, *RegionSize, Protect);
-    }
-    
-	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE || *BaseAddress == AllocationBase)) 
-    {
-        DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);
-        
-        CurrentGuardPages = GuardPageList;
-        
-        while (CurrentGuardPages)
-        {
-            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+        AllocationHandler(*BaseAddress, *RegionSize, AllocationType, Protect);
+    }    
 
-            if (CurrentGuardPages->PagesDumped)
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) within CAPE guarded pages detected and dumped.\n");
-                ExtractionClearAll();
-            } 
-            
-            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-        }
-        
-        if (AllocationBase && AllocationSize && !AllocationDumped)
-        {
-            if (AllocationBaseWriteBpSet == FALSE && AllocationType & MEM_COMMIT && (*BaseAddress == AllocationBase))
-            {   // if memory was previously reserved but not committed
-                SetInitialWriteBreakpoint(AllocationBase, AllocationSize);
-            }
-            else
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: attempting CAPE dump on previous region: 0x%x.\n", AllocationBase);
-
-                memset(&meminfo, 0, sizeof(meminfo));
-
-                if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-                {
-                    DoOutputErrorString("NtAllocateVirtualMemory hook: unable to query memory region 0x%x", AllocationBase);
-                }
-                else
-                {
-                    AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                    {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) detected and dumped.\n");
-                        ExtractionClearAll();
-                    }
-                    else
-                    {
-                        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                        
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: dumping memory range at 0x%x.\n", AllocationBase);
-                        
-                        if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
-                            AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                            
-                        if (AllocationDumped)
-                            ExtractionClearAll();
-                        else
-                            DoOutputDebugString("NtAllocateVirtualMemory hook: Failed to dump memory range at 0x%x.\n", AllocationBase);
-                    }
-                    
-                    if (!AllocationDumped)
-                    {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                        ExtractionClearAll();
-                    }
-                    
-                    // set breakpoints on new region
-                    if (AllocationType & MEM_COMMIT)
-                        // Allocation committed, we set an initial write bp
-                        SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
-                    else if (AllocationType & MEM_RESERVE)
-                    {   // Allocation not committed, so we can't set a bp yet
-                        AllocationBaseWriteBpSet = FALSE;
-                        AllocationBase = *BaseAddress;
-                        AllocationSize = *RegionSize;
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
-                    }
-                }
-            }
-        }
-        else if (AllocationType & MEM_COMMIT)
-            // Allocation committed, we set an initial write bp
-            SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
-        else if (AllocationType & MEM_RESERVE)
-        {   // Allocation not committed, so we can't set a bp yet
-            AllocationBaseWriteBpSet = FALSE;
-            AllocationBase = *BaseAddress;
-            AllocationSize = *RegionSize;
-            DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
-        }
-    }
-	
     if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
@@ -889,27 +702,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 ) {
 	NTSTATUS ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    BOOL GuardedPages = FALSE;
+    PTRACKEDPAGES TrackedPages;
 
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
 	
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((NewAccessProtection & (PAGE_READWRITE)) && !(NewAccessProtection & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE)))
-    {
-        NewAccessProtection |= PAGE_GUARD;
-        GuardedPages = TRUE;
-    }
-
 	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress, NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
-    
-    if (NT_SUCCESS(ret) && GuardedPages && !called_by_hook())
-    {
-        DoOutputDebugString("NtProtectVirtualMemory hook: Guarding page with BaseAddress: 0x%x, RegionSize: 0x%x.\n", *BaseAddress, *NumberOfBytesToProtect);
-        NewAccessProtection &= ~PAGE_GUARD;
-        AddGuardPages(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
-    }
-    
+        
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (NT_SUCCESS(ret)) {
 		lasterror_t lasterrors;
@@ -918,9 +718,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (NewAccessProtection & (PAGE_EXECUTE |PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE)
+	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) 
+    {
         ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
-
+        
+        if ((TrackedPages = GetTrackedPages(*BaseAddress)) && TrackedPages->Guarded)
+            *OldAccessProtection &= (~PAGE_GUARD);
+    }
+    
 	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
@@ -948,26 +753,13 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 ) {
 	BOOL ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    BOOL GuardedPages = FALSE;
-
+    PTRACKEDPAGES TrackedPages;
+    
 	if (flNewProtect == PAGE_EXECUTE_READ && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		is_in_dll_range((ULONG_PTR)lpAddress))
 		restore_hooks_on_range((ULONG_PTR)lpAddress, (ULONG_PTR)lpAddress + dwSize);
 
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((flNewProtect & (PAGE_READWRITE)) && !(flNewProtect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(hProcess) && (dwSize >= EXTRACTION_MIN_SIZE))) 
-    {
-        flNewProtect |= PAGE_GUARD;
-        GuardedPages = TRUE;
-    }
-
 	ret = Old_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
-
-    if (NT_SUCCESS(ret) && GuardedPages && !called_by_hook())
-    {
-        DoOutputDebugString("VirtualProtectEx hook: Guarding page with BaseAddress: 0x%x, RegionSize: 0x%x.\n", lpAddress, dwSize);
-        flNewProtect &= ~PAGE_GUARD;
-        AddGuardPages(lpAddress, dwSize, flNewProtect);
-    }
 
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
@@ -977,9 +769,14 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && (flNewProtect & (PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize >= EXTRACTION_MIN_SIZE)
+	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(hProcess)) 
+    {
         ProtectionHandler(lpAddress, dwSize, flNewProtect);
         
+        if ((TrackedPages = GetTrackedPages(lpAddress)) && TrackedPages->Guarded)
+            *lpflOldProtect &= (~PAGE_GUARD);
+    }
+
 	if (flNewProtect == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_bool("process", "ppphhHss", "ProcessHandle", hProcess, "Address", lpAddress,
@@ -999,59 +796,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     IN OUT  PSIZE_T RegionSize,
     IN      ULONG FreeType
 ) {
-    PGUARDPAGES CurrentGuardPages;
+    if (!called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *RegionSize == 0 && (FreeType & MEM_RELEASE))
+        FreeHandler(*BaseAddress);
     
-    if (*BaseAddress == AllocationBase)
-    {
-        // we check if the buffer has been written to 
-        if (*RegionSize && ScanForNonZero(*BaseAddress, *RegionSize))
-        {                
-            // We want to switch our 'Allocation' pointers to this region,
-            // so let's dump anything in the previous region
-            AllocationDumped = DumpPEsInRange(*BaseAddress, *RegionSize);
-            
-            if (AllocationDumped)
-            {
-                DoOutputDebugString("NtFreeVirtualMemory hook: Found and dumped PE image(s).\n");
-                ExtractionClearAll();
-            }
-            else
-            {
-                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, *BaseAddress);
-                
-                AllocationDumped = DumpMemory(*BaseAddress, *RegionSize);
-                
-                if (AllocationDumped)
-                    DoOutputDebugString("NtFreeVirtualMemory hook: dumped executable memory range at 0x%x prior to its freeing.\n", *BaseAddress);
-                else
-                    DoOutputDebugString("NtFreeVirtualMemory hook: failed to dump executable memory range at 0x%x prior to its freeing.\n", *BaseAddress);
-            }
-        }
-        
-        DoOutputDebugString("NtFreeVirtualMemory hook: Clearing breakpoints in range 0x%x - 0x%x.\n", *BaseAddress, (char*)*BaseAddress + *RegionSize);
-        ExtractionClearAll();
-    }
-
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
-
-	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)){
-
-        //DoOutputDebugString("NtFreeVirtualMemory hook, *BaseAddress:0x%x, RegionSize: 0x%x\n", *BaseAddress, RegionSize);
-        CurrentGuardPages = GuardPageList;
-        
-        while (CurrentGuardPages)
-        {
-            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-
-            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-        }
-
-        // TODO: to fix this we need to filter out calls that are made
-        // from within NtAllocateVirtualMemory
-        //DropGuardPages(GetGuardPages(*BaseAddress));
-    }
         
     LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", RegionSize, "FreeType", FreeType);
@@ -1065,9 +814,14 @@ HOOKDEF(BOOL, WINAPI, VirtualFreeEx,
     __in  SIZE_T dwSize,
     __in  DWORD dwFreeType
 ) {
+    if (!called_by_hook() && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize == 0 && (dwFreeType & MEM_RELEASE))
+        FreeHandler(lpAddress);
+    
     BOOL ret = Old_VirtualFreeEx(hProcess, lpAddress, dwSize, dwFreeType);
+
     LOQ_bool("process", "ppph", "ProcessHandle", hProcess, "Address", lpAddress,
         "Size", dwSize, "FreeType", dwFreeType);
+
     return ret;
 }
 
@@ -1136,13 +890,24 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 {
 #ifndef _WIN64
 	if (ExceptionRecord && (ULONG_PTR)ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size)) {
-		char buf[160];
+		
+        if (ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP || ExceptionRecord->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION)
+        {
+            struct _EXCEPTION_POINTERS ExceptionInfo;
+            DoOutputDebugString("RtlDispatchException: Possible CAPE debugger exception (0x%x) in cuckoomon (RVA 0x%x) accessing 0x%x, passing to CAPEExceptionFilter.\n", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1]);
+            ExceptionInfo.ExceptionRecord = ExceptionRecord;
+            ExceptionInfo.ContextRecord = Context;
+            
+            return CAPEExceptionFilter(&ExceptionInfo);
+        }
+        
+        char buf[160];
 		ULONG_PTR seh = 0;
 		DWORD *tebtmp = (DWORD *)NtCurrentTeb();
 		if (tebtmp[0] != 0xffffffff)
 			seh = ((DWORD *)tebtmp[0])[1];
 		if (seh < g_our_dll_base || seh >= (g_our_dll_base + g_our_dll_size)) {
-			_snprintf(buf, sizeof(buf), "Exception reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
+			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
 			log_anomaly("cuckoocrash", buf);
 		}
 	}
@@ -1175,6 +940,19 @@ HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
 ) {
 	HANDLE ret = Old_GetProcessHeap();
 
+    if (NT_SUCCESS(ret))
+    {
+        *((DWORD *)ret + 17) &= HEAP_NO_SERIALIZE;
+    
+        //GuardPagesDisabled = TRUE;
+        
+        //if (HeapLock(ret))
+        //{}
+        //    //DoOutputDebugString("GetProcessHeap hook: Locked heap with handle 0x%x", ret);
+        //else
+        //    DoOutputDebugString("GetProcessHeap hook: Failed to lock heap with handle 0x%x", ret);
+    }
+    
 	LOQ_handle("process", "");//, "Handle", ret);
 
 	return ret;
@@ -1189,5 +967,17 @@ HOOKDEF(LPVOID, WINAPI, HeapAlloc,
     
     //LOQ_nonnull("process", "phh", "HeapHandle", hHeap, "Flags", dwFlags, "Size", dwBytes);
     
+    return ret;
+}
+
+HOOKDEF(PVOID, WINAPI, RtlAllocateHeap,
+    __in        PVOID  HeapHandle,
+    __in_opt    ULONG  Flags,
+    __in        SIZE_T Size
+) {
+    LPVOID ret = Old_RtlAllocateHeap(HeapHandle, Flags, Size);
+    
+    //LOQ_nonnull("process", "Phh", "HeapHandle", HeapHandle, "Flags", Flags, "Size", Size);
+
     return ret;
 }

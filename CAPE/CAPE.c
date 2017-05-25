@@ -28,6 +28,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 
 #include "CAPE.h"
 #include "Debugger.h"
+#include "..\alloc.h"
 #include "..\pipe.h"
 #include "..\config.h"
 
@@ -52,7 +53,6 @@ extern int ScyllaDumpCurrentProcess(DWORD NewOEP);
 extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
 extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP);
 extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
-extern void ExtractionClearAll(void);
 
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
@@ -982,12 +982,18 @@ int ScanPageForNonZero(LPVOID Address)
     unsigned int p;
 	DWORD_PTR AddressOfPage;
     
+    if (!Address)
+    {  
+        DoOutputDebugString("ScanPageForNonZero: Error - Supplied address zero.\n");
+        return 0;
+    }
+    
     if (!SystemInfo.dwPageSize)
         GetSystemInfo(&SystemInfo);
     
     if (!SystemInfo.dwPageSize)
     {
-        DoOutputErrorString("Failed to obtain system page size.\n");
+        DoOutputErrorString("ScanPageForNonZero: Failed to obtain system page size.\n");
         return 0;
     }
     
@@ -1014,6 +1020,12 @@ int ScanForNonZero(LPVOID Buffer, unsigned int Size)
 {
     unsigned int p;
     
+    if (!Buffer)
+    {  
+        DoOutputDebugString("ScanForNonZero: Error - Supplied address zero.\n");
+        return 0;
+    }
+    
     __try  
     {  
         for (p=0; p<Size-1; p++)
@@ -1030,16 +1042,38 @@ int ScanForNonZero(LPVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
+PVOID GetPageAddress(PVOID Address)
+//**************************************************************************************
+{    
+    if (!Address)
+    {  
+        DoOutputDebugString("GetPageAddress: Error - Supplied address zero.\n");
+        return NULL;
+    }
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetPageAddress: Failed to obtain system page size.\n");
+        return NULL;
+    }
+    
+    return (PVOID)(((DWORD_PTR)Address/SystemInfo.dwPageSize)*SystemInfo.dwPageSize);
+ 
+}
+//**************************************************************************************
 int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
 //**************************************************************************************
-{
+{   // deprecated in favour of ScanForDisguisedPE
     unsigned int p;
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
-    if (Size == 0)
+    if (!Buffer || !Size)
     {
-        DoOutputDebugString("ScanForPE: Error, zero size given\n");
+        DoOutputDebugString("ScanForPE: Error, Buffer or Size zero: 0x%x, 0x%x\n", Buffer, Size);
         return 0;
     }
     
@@ -1100,12 +1134,90 @@ int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
 }
 
 //**************************************************************************************
+int IsDisguisedPEHeader(LPVOID Buffer)
+//**************************************************************************************
+{
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+    
+    __try  
+    {  
+        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
+
+        if (!pDosHeader->e_lfanew || (ULONG)pDosHeader->e_lfanew > PE_HEADER_LIMIT || ((ULONG)pDosHeader->e_lfanew & 3) != 0)
+        {
+            //DoOutputDebugString("IsDisguisedPEHeader: e_lfanew bad. (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+        //else
+        //    DoOutputDebugString("IsDisguisedPEHeader: e_lfanew ok!: 0x%x (0x%x)", (ULONG)pDosHeader->e_lfanew, (DWORD_PTR)Buffer);
+        
+        pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+
+        if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
+        {
+            //DoOutputDebugString("IsDisguisedPEHeader: OptionalHeader.Magic bad. (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+        //else
+        //    DoOutputDebugString("IsDisguisedPEHeader: OptionalHeader.Magic ok!: 0x%x (0x%x)", pNtHeader->OptionalHeader.Magic, (DWORD_PTR)Buffer);
+        
+        // Basic requirements
+        if 
+        (
+            pNtHeader->FileHeader.Machine == 0 || 
+            pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || 
+            pNtHeader->OptionalHeader.SizeOfHeaders == 0 ||
+            pNtHeader->OptionalHeader.FileAlignment == 0
+        ) 
+        {
+            DoOutputDebugString("IsDisguisedPEHeader: Basic requirements failure.\n (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+
+        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
+        {
+            DoOutputDebugString("IsDisguisedPEHeader: Characteristics bad. (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+
+        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
+        {
+            DoOutputDebugString("IsDisguisedPEHeader: SizeOfOptionalHeader bad. (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+        
+        if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
+        {
+            DoOutputDebugString("IsDisguisedPEHeader: FileAlignment invalid. (0x%x)", (DWORD_PTR)Buffer);
+            return 0;
+        }
+        
+        if (pNtHeader->OptionalHeader.SectionAlignment < pNtHeader->OptionalHeader.FileAlignment) 
+        {																
+            DoOutputDebugString("IsDisguisedPEHeader: FileAlignment greater than SectionAlignment.\n (0x%x)", (DWORD_PTR)Buffer);
+            return 0;                  
+        }  
+
+        // To pass the above tests it should now be safe to assume it's a PE image
+        return (ULONG)pDosHeader->e_lfanew;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("IsDisguisedPEHeader: Exception occured reading region at 0x%x\n", (DWORD_PTR)(Buffer));
+        return -1;
+    }
+    
+    //DoOutputDebugString("IsDisguisedPEHeader: No PE image located\n (0x%x)", (DWORD_PTR)Buffer);
+    //return 0;
+}
+
+//**************************************************************************************
 int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
 //**************************************************************************************
 {
     unsigned int p;
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
+    int RetVal;
     
     if (Size == 0)
     {
@@ -1115,146 +1227,27 @@ int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
     
     for (p=0; p < Size - 0x41; p++) // we want to stop short of the look-ahead to e_lfanew
     {
-        __try  
-        {  
-            pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer+p);
-            
-            if (!pDosHeader->e_lfanew || (ULONG)pDosHeader->e_lfanew > Size-p || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
-            {
-                continue;
-            }
-            
-            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
-            
-            if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
-            {
-                continue;
-            }
-            
-            // Basic requirements
-            if 
-            (
-                pNtHeader->FileHeader.Machine == 0 || 
-                pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || 
-                pNtHeader->OptionalHeader.SizeOfHeaders == 0 ||
-                pNtHeader->OptionalHeader.FileAlignment == 0
-            ) 
-            {
-                DoOutputDebugString("ScanForDisguisedPE: Basic requirements failure.\n");
-                continue;
-            }
-
-            if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
-            {
-                DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
-                continue;
-            }
-
-            if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
-            {
-                DoOutputDebugString("ScanForDisguisedPE: SizeOfOptionalHeader bad.");
-                continue;
-            }
-            
-            if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
-            {
-                DoOutputDebugString("ScanForDisguisedPE: FileAlignment invalid.");
-                continue;
-            }
-            
-            if (Offset)
-            {
-                *Offset = (LPVOID)((char*)Buffer+p);
-            }
-            
-            DoOutputDebugString("ScanForDisguisedPE: PE image located at: 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
-            
-            return 1;
-        }  
-        __except(EXCEPTION_EXECUTE_HANDLER)  
-        {  
-            DoOutputDebugString("ScanForDisguisedPE: Exception occured reading memory address 0x%x\n", (DWORD_PTR)((char*)Buffer+p));
+        RetVal = IsDisguisedPEHeader((BYTE*)Buffer+p);
+        
+        if (!RetVal)
+            continue;
+        else if (RetVal == -1)
+        {
+            DoOutputDebugString("ScanForDisguisedPE: Exception occured scanning buffer at 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
             return 0;
         }
+            
+        if (Offset)
+        {
+            *Offset = (LPVOID)((BYTE*)Buffer+p);
+        }
+        
+        DoOutputDebugString("ScanForDisguisedPE: PE image located at: 0x%x\n", (DWORD_PTR)((BYTE*)Buffer+p));
+        
+        return 1;
     }
     
     DoOutputDebugString("ScanForDisguisedPE: No PE image located in range 0x%x-0x%x.\n", Buffer, (DWORD_PTR)Buffer + Size);
-    return 0;
-}
-
-//**************************************************************************************
-int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
-//**************************************************************************************
-{
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
-    
-    if (Size == 0)
-    {
-        DoOutputDebugString("IsDisguisedPE: Error, zero size given.\n");
-        return 0;
-    }
-    
-    __try  
-    {  
-        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
-
-        if (!pDosHeader->e_lfanew || pDosHeader->e_lfanew > PE_HEADER_LIMIT)
-        {
-            //DoOutputDebugString("IsDisguisedPE: e_lfanew bad.");
-            return 0;
-        }
-            
-        // more tests to establish it's PE
-        pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
-
-        if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
-        {
-            DoOutputDebugString("IsDisguisedPE: OptionalHeader.Magic bad.");
-            return 0;
-        }
-        
-        if ((pNtHeader->FileHeader.Machine == 0) || (pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || pNtHeader->OptionalHeader.SizeOfHeaders == 0)) 
-        {
-            // Basic requirements
-            DoOutputDebugString("IsDisguisedPE: Basic requirements bad.\n");
-            return 0;
-        }
-
-        if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
-        {
-            DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
-            return 0;
-        }
-
-        if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
-        {
-            DoOutputDebugString("ScanForDisguisedPE: SizeOfOptionalHeader bad.\n");
-            return 0;
-        }
-        
-        if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
-        {
-            DoOutputDebugString("ScanForDisguisedPE: FileAlignment invalid.\n");
-            return 0;
-        }
-        
-        if (pNtHeader->OptionalHeader.SectionAlignment < pNtHeader->OptionalHeader.FileAlignment) 
-        {																
-            DoOutputDebugString("ScanForDisguisedPE: FileAlignment greater than SectionAlignment.\n");
-            return 0;                  
-        }  
-
-        // To pass the above tests it should now be safe to assume it's a PE image
-        return 1;
-    }  
-    __except(EXCEPTION_EXECUTE_HANDLER)  
-    {  
-        DoOutputDebugString("IsDisguisedPE: Exception occured reading region at 0x%x\n", (DWORD_PTR)(Buffer));
-        return 0;
-    }
-    
-    DoOutputDebugString("IsDisguisedPE: No PE image located\n");
     return 0;
 }
 
@@ -1270,7 +1263,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
     
     DoOutputDebugString("DumpPEsInRange: Scanning range 0x%x - 0x%x.\n", Buffer, (BYTE*)Buffer + Size);
 
-    while (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
+    if (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
@@ -1308,7 +1301,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
                 DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
         }
         
-        ((BYTE*)PEPointer)++;
+        //((BYTE*)PEPointer)++;
     }
     
     return RetVal;
@@ -1382,8 +1375,6 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
     free(FullPathName); 
     free(BufferCopy);
 	
-    ExtractionClearAll();
-	
     return 1;
 }
 
@@ -1434,7 +1425,6 @@ int DumpModuleInCurrentProcess(DWORD_PTR ModuleBase)
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0))
 	{
-        ExtractionClearAll();
         DumpCount++;
 		return 1;
 	}
@@ -1535,7 +1525,6 @@ int DumpPE(LPVOID Buffer)
     
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{
-        ExtractionClearAll();
         DumpCount++;
         return 1;
 	}

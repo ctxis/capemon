@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ignore.h"
 #include "lookup.h"
 #include "config.h"
+#include "CAPE\Debugger.h"
 
 #define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_GENERIC_WRITE | \
     FILE_WRITE_DATA | FILE_APPEND_DATA | STANDARD_RIGHTS_WRITE | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
@@ -44,6 +45,8 @@ typedef struct _file_log_t {
 	unsigned int read_count;
 	unsigned int write_count;
 } file_log_t;
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 static lookup_t g_files;
 static lookup_t g_file_logs;
@@ -350,15 +353,29 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 	__in      ULONG Length,
 	__in_opt  PLARGE_INTEGER ByteOffset,
 	__in_opt  PULONG Key
-	) {
-	NTSTATUS ret = Old_NtReadFile(FileHandle, Event, ApcRoutine, ApcContext,
-		IoStatusBlock, Buffer, Length, ByteOffset, Key);
+) {
 	wchar_t *fname;
 	BOOLEAN deletelast;
-	unsigned int read_count = 0;
 	ULONG_PTR length;
-	lasterror_t lasterrors;
+	lasterror_t lasterrors;    
+    PTRACKEDPAGES TrackedPages;
+	unsigned int read_count = 0;
+    
+    if ((TrackedPages = GetTrackedPages(Buffer)) && TrackedPages->Guarded)
+    {
+        DeactivateGuardPages(TrackedPages);
+        DoOutputDebugString("NtReadFile hook: Disabling guard pages at target buffer 0x%x.\n", Buffer);
+    }
+    
+	NTSTATUS ret = Old_NtReadFile(FileHandle, Event, ApcRoutine, ApcContext,
+		IoStatusBlock, Buffer, Length, ByteOffset, Key);
 
+    if (TrackedPages && TrackedPages->Guarded)
+    {
+        ActivateGuardPages(TrackedPages);
+        DoOutputDebugString("NtReadFile hook: Reactivating guard pages at target buffer 0x%x.\n", Buffer);
+    }
+        
 	get_lasterrors(&lasterrors);
 
 	if (NT_SUCCESS(ret))

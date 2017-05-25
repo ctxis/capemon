@@ -86,7 +86,10 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
 
-    //HOOK_SPECIAL(kernel32, HeapAlloc),
+    //HOOK(ntdll, RtlAllocateHeap),
+    //HOOK_SPECIAL(ntdll, RtlAllocateHeap),
+    //HOOK_NOTAIL(ntdll, RtlAllocateHeap, 3),
+    //HOOK_SAFEST(ntdll, RtlAllocateHeap, 3),
 
 	// has special handling
 
@@ -101,7 +104,7 @@ static hook_t g_hooks[] = {
 	HOOK_SPECIAL(ole32, CoCreateInstanceEx),
 	HOOK_SPECIAL(ole32, CoGetClassObject),
 
-	HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
+	//HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
 	HOOK_NOTAIL(ntdll, NtRaiseException, 3),
 
 	// lowest variant of MoveFile()
