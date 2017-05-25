@@ -97,7 +97,6 @@ void PeParser::initClass()
 
 	filename = 0;
 	fileSize = 0;
-	dumpSize = 0;
 	moduleBaseAddress = 0;
 	hFile = INVALID_HANDLE_VALUE;
 }
@@ -299,15 +298,62 @@ bool PeParser::readPeSectionsFromProcess()
 {
 	bool retValue = true;
 	DWORD_PTR readOffset = 0;
+ 	DWORD fileAlignment = 0, sectionAlignment = 0;
+    unsigned int NumberOfSections = getNumberOfSections();
+    
+	if (isPE32())
+	{
+		fileAlignment = pNTHeader32->OptionalHeader.FileAlignment;
+		sectionAlignment = pNTHeader32->OptionalHeader.SectionAlignment;
+	}
+	else
+	{
+		fileAlignment = pNTHeader64->OptionalHeader.FileAlignment;
+		sectionAlignment = pNTHeader64->OptionalHeader.SectionAlignment;
+	}
 
-	listPeSection.reserve(getNumberOfSections());
-
-	for (WORD i = 0; i < getNumberOfSections(); i++)
+	listPeSection.reserve(NumberOfSections);
+    
+	for (WORD i = 0; i < NumberOfSections; i++)
 	{
 		readOffset = listPeSection[i].sectionHeader.VirtualAddress + moduleBaseAddress;
 
-		listPeSection[i].normalSize = listPeSection[i].sectionHeader.Misc.VirtualSize;
+		if (i < NumberOfSections - 1)
+        {
+            if ((listPeSection[i].sectionHeader.Misc.VirtualSize) > (listPeSection[i+1].sectionHeader.VirtualAddress - listPeSection[i].sectionHeader.VirtualAddress))
+            {
+                listPeSection[i].normalSize = alignValue(listPeSection[i+1].sectionHeader.VirtualAddress - listPeSection[i].sectionHeader.VirtualAddress, sectionAlignment); 
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::readPeSectionsFromProcess: Correcting VirtualSize for section %d from 0x%x to 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize, listPeSection[i].normalSize);
+#endif            
 
+            }
+            else
+            {
+                listPeSection[i].normalSize = alignValue(listPeSection[i].sectionHeader.Misc.VirtualSize, sectionAlignment);
+#ifdef DEBUG_COMMENTS
+            DoOutputDebugString("PeParser::readPeSectionsFromProcess: VirtualSize for section %d ok: 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif           
+            }
+        }
+        else 
+        {
+            if ((listPeSection[i].sectionHeader.Misc.VirtualSize) > alignValue(listPeSection[i].sectionHeader.SizeOfRawData, sectionAlignment))
+            {
+                listPeSection[i].normalSize = alignValue(listPeSection[i].sectionHeader.SizeOfRawData, sectionAlignment);
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::readPeSectionsFromProcess: Correcting VirtualSize for last section (%d) from 0x%x to 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize, listPeSection[i].normalSize);
+#endif                            
+            }
+            else
+            {
+                listPeSection[i].normalSize = alignValue(listPeSection[i].sectionHeader.Misc.VirtualSize, sectionAlignment);            
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::readPeSectionsFromProcess: VirtualSize for last section (%d) ok: 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif                            
+            }
+        }        
+        
 		if (!readSectionFromProcess(readOffset, listPeSection[i]))
 		{
 #ifdef DEBUG_COMMENTS
@@ -566,6 +612,9 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 
 	if (!readOffset || !readSize)
 	{
+#ifdef DEBUG_COMMENTS
+        DoOutputDebugString("PeParser:: readSectionFrom: readOffset or readSize zero: 0x%x, 0x%x\n", readOffset, readSize);
+#endif
 		return true; //section without data is valid
 	}
 
@@ -574,6 +623,10 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 		peFileSection.dataSize = readSize;
 		peFileSection.normalSize = readSize;
 
+#ifdef DEBUG_COMMENTS
+        DoOutputDebugString("PeParser:: readSectionFrom: readSize <= maxReadSize: 0x%x.\n", readSize);
+#endif
+        
 		if (isProcess)
 		{
 			return readPeSectionFromProcess(readOffset, peFileSection);
@@ -592,11 +645,14 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 	}
 	currentOffset = readOffset + readSize - currentReadSize;
 
+#ifdef DEBUG_COMMENTS
+        DoOutputDebugString("PeParser:: About to attempt to read section from 0x%x size 0x%x.\n", readOffset, readSize);
+#endif
 
 	while(currentOffset >= readOffset) //start from the end
 	{
 		ZeroMemory(data, currentReadSize);
-
+        
 		if (isProcess)
 		{
 			retValue = ProcessAccessHelp::readMemoryPartlyFromProcess(currentOffset, currentReadSize, data);
@@ -608,6 +664,9 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 
 		if (!retValue)
 		{
+#ifdef DEBUG_COMMENTS
+            DoOutputDebugString("PeParser:: readMemory failure reading 0x%x bytes from 0x%x.\n", currentOffset , currentReadSize);
+#endif
 			break;
 		}
 
@@ -616,6 +675,9 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 		{
 			//found some real code
 
+#ifdef DEBUG_COMMENTS
+            //DoOutputDebugString("PeParser:: readMemory found data at 0x%x.\n", currentOffset);
+#endif
 			currentOffset += valuesFound;
 
 			if (readOffset < currentOffset)
@@ -635,15 +697,25 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 
 			break;
 		}
+#ifdef DEBUG_COMMENTS
+        //else
+        //    DoOutputDebugString("PeParser:: readMemory found nothing at 0x%x.\n", currentOffset);
+#endif
 
 		currentReadSize = maxReadSize;
 		currentOffset -= currentReadSize;
 	}
 
+#ifdef DEBUG_COMMENTS
+        DoOutputDebugString("PeParser:: calls to readSectionFrom succeeded.\n");
+#endif
 
 	if (peFileSection.dataSize)
 	{
-		if (isProcess)
+#ifdef DEBUG_COMMENTS
+        DoOutputDebugString("PeParser:: readSectionFrom: About to read PE section from 0x%x.\n", readOffset);
+#endif
+        if (isProcess)
 		{
 			retValue = readPeSectionFromProcess(readOffset, peFileSection);
 		}
@@ -655,7 +727,6 @@ bool PeParser::readSectionFrom(const DWORD_PTR readOffset, PeFileSection & peFil
 
 	return retValue;
 }
-
 
 DWORD PeParser::isMemoryNotNull( BYTE * data, int dataSize )
 {
@@ -797,7 +868,6 @@ bool PeParser::savePeFileToDisk(const CHAR *newFile)
 		}
 
 		SetEndOfFile(hFile);
-        dumpSize = dwFileOffset;
 
 		if (newFile)
             closeFileHandle();
@@ -906,7 +976,6 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
 		}
 
 		SetEndOfFile(hFile);
-        dumpSize = dwWriteSize;
 
 		if (newFile)
             closeFileHandle();
@@ -1230,6 +1299,7 @@ bool PeFileSectionSortByVirtualAddress(const PeFileSection& d1, const PeFileSect
 
 void PeParser::alignAllSectionHeaders()
 {
+    unsigned int NumberOfSections;
 	DWORD sectionAlignment = 0;
 	DWORD fileAlignment = 0;
 	DWORD newFileSize = 0;
@@ -1245,20 +1315,58 @@ void PeParser::alignAllSectionHeaders()
 		fileAlignment = pNTHeader64->OptionalHeader.FileAlignment;
 	}
 
+    NumberOfSections = getNumberOfSections();
+    
 	std::sort(listPeSection.begin(), listPeSection.end(), PeFileSectionSortByPointerToRawData); //sort by PointerToRawData ascending
 
-	newFileSize = pDosHeader->e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + pNTHeader32->FileHeader.SizeOfOptionalHeader + (getNumberOfSections() * sizeof(IMAGE_SECTION_HEADER));
+	newFileSize = pDosHeader->e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + pNTHeader32->FileHeader.SizeOfOptionalHeader + (NumberOfSections * sizeof(IMAGE_SECTION_HEADER));
 
-
-	for (WORD i = 0; i < getNumberOfSections(); i++)
-	{
+	for (WORD i = 0; i < NumberOfSections; i++)
+	{    
 		listPeSection[i].sectionHeader.VirtualAddress = alignValue(listPeSection[i].sectionHeader.VirtualAddress, sectionAlignment);
-		listPeSection[i].sectionHeader.Misc.VirtualSize = alignValue(listPeSection[i].sectionHeader.Misc.VirtualSize, sectionAlignment);
 
 		listPeSection[i].sectionHeader.PointerToRawData = alignValue(newFileSize, fileAlignment);
 		listPeSection[i].sectionHeader.SizeOfRawData = alignValue(listPeSection[i].dataSize, fileAlignment);
-
-		newFileSize = listPeSection[i].sectionHeader.PointerToRawData + listPeSection[i].sectionHeader.SizeOfRawData;
+        
+        newFileSize = listPeSection[i].sectionHeader.PointerToRawData + listPeSection[i].sectionHeader.SizeOfRawData;
+    }
+    
+	for (WORD i = 0; i < NumberOfSections; i++)
+	{
+		if (i < NumberOfSections - 1)
+        {
+            if ((listPeSection[i].sectionHeader.Misc.VirtualSize) > (listPeSection[i+1].sectionHeader.VirtualAddress - listPeSection[i].sectionHeader.VirtualAddress))
+            {
+                listPeSection[i].sectionHeader.Misc.VirtualSize = alignValue(listPeSection[i+1].sectionHeader.VirtualAddress - listPeSection[i].sectionHeader.VirtualAddress, sectionAlignment);
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::alignAllSectionHeaders: Correcting VirtualSize for section %d from 0x%x to 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif
+            }
+            else
+            {
+                listPeSection[i].sectionHeader.Misc.VirtualSize = alignValue(listPeSection[i].sectionHeader.Misc.VirtualSize, sectionAlignment);
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::alignAllSectionHeaders: VirtualSize for section %d ok: 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif            
+            }
+        }
+        else 
+        {
+            if ((listPeSection[i].sectionHeader.Misc.VirtualSize) > alignValue(listPeSection[i].sectionHeader.SizeOfRawData, sectionAlignment))
+            {
+                listPeSection[i].sectionHeader.Misc.VirtualSize = alignValue(listPeSection[i].sectionHeader.SizeOfRawData, sectionAlignment);
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::alignAllSectionHeaders: Correcting VirtualSize for last section (%d) from 0x%x to 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif                            
+            }
+            else
+            {
+                listPeSection[i].sectionHeader.Misc.VirtualSize = alignValue(listPeSection[i].sectionHeader.Misc.VirtualSize, sectionAlignment);            
+#ifdef DEBUG_COMMENTS
+                DoOutputDebugString("PeParser::alignAllSectionHeaders: VirtualSize for last section (%d) ok: 0x%x.\n", i+1, listPeSection[i].sectionHeader.Misc.VirtualSize);
+#endif                            
+            }
+        }        
 	}
 
 	std::sort(listPeSection.begin(), listPeSection.end(), PeFileSectionSortByVirtualAddress); //sort by VirtualAddress ascending
@@ -1268,9 +1376,17 @@ bool PeParser::dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR *
 {
 	moduleBaseAddress = modBase;
 
+#ifdef DEBUG_COMMENTS
+		DoOutputDebugString("dumpProcess DEBUG: entry: modBase = 0x%x.\n", modBase);
+#endif
+    
 	if (readPeSectionsFromProcess())
 	{
-		setDefaultFileAlignment();
+#ifdef DEBUG_COMMENTS
+		DoOutputDebugString("dumpProcess DEBUG: readPeSectionsFromProcess success.\n");
+#endif
+        
+        setDefaultFileAlignment();
 
 		setEntryPointVa(entryPoint);
 
@@ -1278,6 +1394,9 @@ bool PeParser::dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR *
 		fixPeHeader();
 
 		getFileOverlay();
+#ifdef DEBUG_COMMENTS
+		DoOutputDebugString("dumpProcess DEBUG: Fixups complete, about to save to disk.\n");
+#endif
 
 		return savePeFileToDisk(dumpFilePath);
 	}
