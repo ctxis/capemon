@@ -69,6 +69,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>$(ProjectName)_dbg</TargetName>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -78,7 +79,7 @@
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>CAPE</TargetName>
+    <TargetName>CAPE_HeavensGate</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -91,7 +92,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>CUCKOODBG;WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS_DEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>CUCKOODBG;WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS_DEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;STANDALONE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -138,7 +139,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;STANDALONE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -169,7 +170,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_WIN64;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_WIN64;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;STANDALONE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -215,6 +216,7 @@
     <ClCompile Include="CAPE\Scylla\SystemInformation.cpp" />
     <ClCompile Include="CAPE\w64wow64\w64wow64.c" />
     <ClCompile Include="CAPE\wow64_fix.c" />
+    <ClCompile Include="CAPE\wow64_loaddll.c" />
     <ClCompile Include="config.c" />
     <ClCompile Include="cuckoomon.c" />
     <ClCompile Include="distorm3.2-package\src\decoder.c" />
@@ -421,10 +423,10 @@
     <ClInclude Include="CAPE\Scylla\StringConversion.h" />
     <ClInclude Include="CAPE\Scylla\SystemInformation.h" />
     <ClInclude Include="CAPE\Scylla\Thunks.h" />
-    <ClInclude Include="CAPE\w64wow64\internal.h" />
-    <ClInclude Include="CAPE\w64wow64\w64wow64.h" />
-    <ClInclude Include="CAPE\w64wow64\w64wow64defs.h" />
-    <ClInclude Include="CAPE\w64wow64\windef.h" />
+    <ClInclude Include="CAPE\wow64ext\internal.h" />
+    <ClInclude Include="CAPE\wow64ext\w64wow64.h" />
+    <ClInclude Include="CAPE\wow64ext\w64wow64defs.h" />
+    <ClInclude Include="CAPE\wow64ext\windef.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="distorm3.2-package\include\distorm.h" />
     <ClInclude Include="distorm3.2-package\include\mnemonics.h" />

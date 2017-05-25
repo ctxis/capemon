@@ -17,7 +17,7 @@ New Scylla section contains:
 extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern "C" void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
-bool ImportRebuilder::rebuildImportTable(const CHAR * newFilePath, std::map<DWORD_PTR, ImportModuleThunk> & moduleList)
+bool ImportRebuilder::rebuildImportTable(const CHAR * newFilePath, std::map<DWORD_PTR, ImportModuleThunk> & moduleList, BOOL CapeFile)
 {
 	bool retValue = false;
 
@@ -95,6 +95,11 @@ bool ImportRebuilder::rebuildImportTable(const CHAR * newFilePath, std::map<DWOR
     else DoOutputDebugString("Invalid PE file: import table rebuild failed.\n");
     
     return retValue;
+}
+
+bool ImportRebuilder::rebuildImportTable(const CHAR * newFilePath, std::map<DWORD_PTR, ImportModuleThunk> & moduleList)
+{
+    return rebuildImportTable(newFilePath, moduleList, TRUE);
 }
 
 bool ImportRebuilder::buildNewImportTable(std::map<DWORD_PTR, ImportModuleThunk> & moduleList)

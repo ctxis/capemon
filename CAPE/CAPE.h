@@ -2,26 +2,20 @@ extern HMODULE s_hInst;
 extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
-int DumpMemory(LPVOID Buffer, unsigned int Size);
-BOOL DumpPEsInRange(LPVOID Buffer, unsigned int Size);
-int DumpCurrentProcessNewEP(DWORD NewEP);
-int DumpCurrentProcess();
-int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);
-int DumpPE(LPVOID Buffer);
-int ScyllaDumpPE(DWORD_PTR Buffer);
-int ScanForNonZero(LPVOID Buffer, unsigned int Size);
-int ScanPageForNonZero(LPVOID Address);
-int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
-int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
-int IsDisguisedPE(LPVOID Buffer, unsigned int Size);
+int DumpMemory(LPCVOID Buffer, unsigned int Size);
+extern int DumpCurrentProcessNewEP(DWORD NewEP);
+extern int DumpCurrentProcess();
+extern int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);
+extern int DumpPE(LPCVOID Buffer);
+extern int ScyllaDumpPE(DWORD_PTR Buffer);
+int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
+int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 int DumpImageInCurrentProcess(DWORD ImageBase);
 void DumpSectionViewsForPid(DWORD Pid);
 unsigned int DumpSize;
-SYSTEM_INFO SystemInfo;
 
 //Global switch for debugger
-#define DEBUGGER_ENABLED        0
-#define GUARD_PAGES_ENABLED     0
+#define DEBUGGER_ENABLED    1
 
 typedef struct InjectionSectionView
 {
@@ -44,7 +38,7 @@ typedef struct InjectionInfo
     DWORD_PTR                   EntryPoint;
     BOOL                        WriteDetected;
     BOOL                        ImageDumped;
-    LPVOID                     BufferBase;
+    LPCVOID                     BufferBase;
     unsigned int                BufferSizeOfImage;
     HANDLE                      SectionHandle;
 //    struct InjectionSectionView *SectionViewList;
@@ -97,7 +91,7 @@ typedef struct CapeMetadata
     DWORD   DumpType;
     char*	TargetProcess;  // For injection
     DWORD	TargetPid;      // "
-    PVOID   Address;        // For shellcode/modules
+    PVOID   Address;        // For shellcode
 	SIZE_T  Size;           // "
 } CAPEMETADATA, *PCAPEMETADATA;
 
