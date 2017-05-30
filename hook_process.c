@@ -27,17 +27,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
-#include "CAPE\Debugger.h"
 
-extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-
-extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
-extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
-extern void FreeHandler(PVOID BaseAddress);
-extern void ProcessTrackedPages();
-
-extern struct TrackedPages *TrackedPageList;
+extern int RoutineProcessDump();
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -315,53 +306,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	__in  HANDLE ProcessHandle
 ) {
-	CONTEXT Context;
-    DWORD_PTR ChildNewEP;
-    HANDLE ThreadHandle;
-    NTSTATUS ret;
+	NTSTATUS ret;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
-
-    if (pid == ChildProcessId)
-    {
-        ThreadHandle = OpenThread(THREAD_ALL_ACCESS, TRUE, ChildThreadId);
-        
-        if (ThreadHandle == NULL) 
-        {
-            DoOutputErrorString("NtResumeProcess hook: OpenThread failed");
-        }
-        else
-        {
-            Context.ContextFlags = CONTEXT_ALL;
-            
-            if (GetThreadContext(ThreadHandle, &Context))
-            {
-#ifdef _WIN64
-                if (Context.Rcx != DebuggerEP)
-                {
-                    ChildNewEP = Context.Rcx;
-                    Context.Rcx = DebuggerEP;
-#else
-                if (Context.Eax != DebuggerEP)
-                {
-                    ChildNewEP = Context.Eax;
-                    Context.Eax = DebuggerEP;
-#endif
-                    if (SetThreadContext(ThreadHandle, &Context))
-                    {
-                        SendDebuggerMessage((DWORD_PTR)ChildNewEP);
-                        DoOutputDebugString("NtResumeProcess: Reset Debugger entry (0x%x) in child process, updated EP to 0x%x.\n", DebuggerEP, ChildNewEP);
-                    }
-                    else
-                        DoOutputDebugString("NtResumeProcess: Error - failed to ensure Debugger entry in child process.\n");
-                }
-            }
-            else
-            {
-                DoOutputDebugString("NtResumeProcess: GetThreadContext failed.\n");
-            }        
-        }
-    }
 
 	ret = Old_NtResumeProcess(ProcessHandle);
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
@@ -376,22 +323,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
     __in      NTSTATUS ExitStatus
 ) {
 	// Process will terminate. Default logging will not work. Be aware: return value not valid
-	lasterror_t lasterror;
     NTSTATUS ret = 0;
+	lasterror_t lasterror;
 
 	get_lasterrors(&lasterror);
 	if (ProcessHandle == NULL) {
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-
-        ProcessTrackedPages();
-        process_shutting_down = 1;
+        if (g_config.procmemdump)
+            RoutineProcessDump();
+		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-
-        ProcessTrackedPages();
+        if (g_config.procmemdump)
+            RoutineProcessDump();
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
@@ -504,7 +451,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-      
+
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
@@ -530,12 +477,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) 
-    {
-        AllocationHandler(*BaseAddress, *RegionSize, AllocationType, Protect);
-    }    
-
-    if (ret != STATUS_CONFLICTING_ADDRESSES) {
+	if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	}
@@ -569,7 +511,7 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     _In_    SIZE_T nSize,
     _Out_   PSIZE_T lpNumberOfBytesRead
 ) {
-    BOOL ret;
+	BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
     ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
@@ -702,14 +644,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 ) {
 	NTSTATUS ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PTRACKEDPAGES TrackedPages;
 
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
 	
-	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress, NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
-        
+	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress,
+        NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
+
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (NT_SUCCESS(ret)) {
 		lasterror_t lasterrors;
@@ -718,15 +660,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) 
-    {
-        ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
-        
-        if ((TrackedPages = GetTrackedPages(*BaseAddress)) && TrackedPages->Guarded)
-            *OldAccessProtection &= (~PAGE_GUARD);
-    }
-    
-	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
+	if (NewAccessProtection == PAGE_EXECUTE_READWRITE &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"NumberOfBytesProtected", NumberOfBytesToProtect,
@@ -753,13 +687,13 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 ) {
 	BOOL ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PTRACKEDPAGES TrackedPages;
-    
+
 	if (flNewProtect == PAGE_EXECUTE_READ && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		is_in_dll_range((ULONG_PTR)lpAddress))
 		restore_hooks_on_range((ULONG_PTR)lpAddress, (ULONG_PTR)lpAddress + dwSize);
 
-	ret = Old_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
+	ret = Old_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect,
+        lpflOldProtect);
 
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
@@ -768,14 +702,6 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 		VirtualQueryEx(hProcess, lpAddress, &meminfo, sizeof(meminfo));
 		set_lasterrors(&lasterrors);
 	}
-
-	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(hProcess)) 
-    {
-        ProtectionHandler(lpAddress, dwSize, flNewProtect);
-        
-        if ((TrackedPages = GetTrackedPages(lpAddress)) && TrackedPages->Guarded)
-            *lpflOldProtect &= (~PAGE_GUARD);
-    }
 
 	if (flNewProtect == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
@@ -796,12 +722,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     IN OUT  PSIZE_T RegionSize,
     IN      ULONG FreeType
 ) {
-    if (!called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *RegionSize == 0 && (FreeType & MEM_RELEASE))
-        FreeHandler(*BaseAddress);
-    
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
-        
+
     LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", RegionSize, "FreeType", FreeType);
 
@@ -814,14 +737,9 @@ HOOKDEF(BOOL, WINAPI, VirtualFreeEx,
     __in  SIZE_T dwSize,
     __in  DWORD dwFreeType
 ) {
-    if (!called_by_hook() && GetCurrentProcessId() == our_getprocessid(hProcess) && dwSize == 0 && (dwFreeType & MEM_RELEASE))
-        FreeHandler(lpAddress);
-    
     BOOL ret = Old_VirtualFreeEx(hProcess, lpAddress, dwSize, dwFreeType);
-
     LOQ_bool("process", "ppph", "ProcessHandle", hProcess, "Address", lpAddress,
         "Size", dwSize, "FreeType", dwFreeType);
-
     return ret;
 }
 
@@ -890,24 +808,13 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 {
 #ifndef _WIN64
 	if (ExceptionRecord && (ULONG_PTR)ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size)) {
-		
-        if (ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP || ExceptionRecord->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION)
-        {
-            struct _EXCEPTION_POINTERS ExceptionInfo;
-            DoOutputDebugString("RtlDispatchException: Possible CAPE debugger exception (0x%x) in cuckoomon (RVA 0x%x) accessing 0x%x, passing to CAPEExceptionFilter.\n", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1]);
-            ExceptionInfo.ExceptionRecord = ExceptionRecord;
-            ExceptionInfo.ContextRecord = Context;
-            
-            return CAPEExceptionFilter(&ExceptionInfo);
-        }
-        
-        char buf[160];
+		char buf[160];
 		ULONG_PTR seh = 0;
 		DWORD *tebtmp = (DWORD *)NtCurrentTeb();
 		if (tebtmp[0] != 0xffffffff)
 			seh = ((DWORD *)tebtmp[0])[1];
 		if (seh < g_our_dll_base || seh >= (g_our_dll_base + g_our_dll_size)) {
-			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
+			_snprintf(buf, sizeof(buf), "Exception reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
 			log_anomaly("cuckoocrash", buf);
 		}
 	}
@@ -933,51 +840,4 @@ HOOKDEF_NOTAIL(WINAPI, NtRaiseException,
 		cuckoomon_exception_handler(&exc);
 
 	return 0;
-}
-
-HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
-	void
-) {
-	HANDLE ret = Old_GetProcessHeap();
-
-    if (NT_SUCCESS(ret))
-    {
-        *((DWORD *)ret + 17) &= HEAP_NO_SERIALIZE;
-    
-        //GuardPagesDisabled = TRUE;
-        
-        //if (HeapLock(ret))
-        //{}
-        //    //DoOutputDebugString("GetProcessHeap hook: Locked heap with handle 0x%x", ret);
-        //else
-        //    DoOutputDebugString("GetProcessHeap hook: Failed to lock heap with handle 0x%x", ret);
-    }
-    
-	LOQ_handle("process", "");//, "Handle", ret);
-
-	return ret;
-}
-
-HOOKDEF(LPVOID, WINAPI, HeapAlloc,
-  HANDLE hHeap,
-  DWORD  dwFlags,
-  SIZE_T dwBytes
-) {
-    LPVOID ret = Old_HeapAlloc(hHeap, dwFlags, dwBytes);
-    
-    //LOQ_nonnull("process", "phh", "HeapHandle", hHeap, "Flags", dwFlags, "Size", dwBytes);
-    
-    return ret;
-}
-
-HOOKDEF(PVOID, WINAPI, RtlAllocateHeap,
-    __in        PVOID  HeapHandle,
-    __in_opt    ULONG  Flags,
-    __in        SIZE_T Size
-) {
-    LPVOID ret = Old_RtlAllocateHeap(HeapHandle, Flags, Size);
-    
-    //LOQ_nonnull("process", "Phh", "HeapHandle", HeapHandle, "Flags", Flags, "Size", Size);
-
-    return ret;
 }

@@ -97,6 +97,7 @@ void PeParser::initClass()
 
 	filename = 0;
 	fileSize = 0;
+	dumpSize = 0;    
 	moduleBaseAddress = 0;
 	hFile = INVALID_HANDLE_VALUE;
 }
@@ -868,6 +869,7 @@ bool PeParser::savePeFileToDisk(const CHAR *newFile)
 		}
 
 		SetEndOfFile(hFile);
+        dumpSize = dwFileOffset;
 
 		if (newFile)
             closeFileHandle();
@@ -976,6 +978,7 @@ bool PeParser::saveCompletePeToDisk( const CHAR * newFile )
 		}
 
 		SetEndOfFile(hFile);
+        dumpSize = dwWriteSize;
 
 		if (newFile)
             closeFileHandle();

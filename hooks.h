@@ -1272,7 +1272,7 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     __in  HANDLE ThreadHandle,
-    __in  CONTEXT *Context
+    __in  const CONTEXT *Context
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSuspendThread,
@@ -1593,22 +1593,6 @@ extern HOOKDEF(void, WINAPIV, memcpy,
    const void *src,
    size_t count
 );   
-
-extern HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
-	void
-);
-
-extern HOOKDEF(LPVOID, WINAPI, HeapAlloc,
-  _In_ HANDLE hHeap,
-  _In_ DWORD  dwFlags,
-  _In_ SIZE_T dwBytes
-);
-
-extern HOOKDEF(PVOID, WINAPI, RtlAllocateHeap,
-    __in        PVOID  HeapHandle,
-    __in_opt    ULONG  Flags,
-    __in        SIZE_T Size
-);
 
 extern HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsA,
 	_In_opt_ const GUID   *ClassGuid,

@@ -54,6 +54,38 @@ void ScyllaInitCurrentProcess()
 }
 
 //**************************************************************************************
+extern "C" DWORD_PTR GetEntryPointVA(DWORD_PTR modBase)
+//**************************************************************************************
+{
+    PeParser * peFile = 0;
+
+	ScyllaInitCurrentProcess();
+    
+    peFile = new PeParser((DWORD_PTR)modBase, true);
+
+	return peFile->getEntryPoint() + (DWORD_PTR)modBase;
+}
+
+//**************************************************************************************
+extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
+//**************************************************************************************
+{
+    DWORD_PTR Test;
+    PeParser * peFile = 0;
+
+	ScyllaInitCurrentProcess();
+    
+    peFile = new PeParser(modBase, true);
+
+	//return peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+	Test = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+        
+    DoOutputDebugString("FileOffsetToVA: Debug - VA = 0x%p.\n", Test);
+    
+    return Test;
+}
+
+//**************************************************************************************
 extern "C" int ScyllaDumpCurrentProcess(DWORD NewOEP)
 //**************************************************************************************
 {

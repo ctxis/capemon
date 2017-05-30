@@ -1090,6 +1090,30 @@ HOOKDEF(BOOL, WINAPI, CopyFileExW,
 	return ret;
 }
 
+HOOKDEF_ALT(BOOL, WINAPI, CopyFileExW,
+    _In_      LPWSTR lpExistingFileName,
+    _In_      LPWSTR lpNewFileName,
+    _In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
+    _In_opt_  LPVOID lpData,
+    _In_opt_  LPBOOL pbCancel,
+    _In_      DWORD dwCopyFlags
+) {
+	BOOL ret;
+	BOOL file_existed = FALSE;
+	if (GetFileAttributesW(lpNewFileName) != INVALID_FILE_ATTRIBUTES)
+		file_existed = TRUE;
+
+	ret = Old_CopyFileExW(lpExistingFileName, lpNewFileName,
+        lpProgressRoutine, lpData, pbCancel, dwCopyFlags);
+	LOQ_bool("filesystem", "FFis", "ExistingFileName", lpExistingFileName,
+        "NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, "ExistedBefore", file_existed ? "yes" : "no");
+
+	if (ret)
+		new_file_path_unicode(lpNewFileName);
+
+	return ret;
+}
+
 HOOKDEF(BOOL, WINAPI, DeleteFileA,
     __in  LPCSTR lpFileName
 ) {

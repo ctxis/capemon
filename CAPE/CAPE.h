@@ -140,7 +140,9 @@ enum {
     PLUGX_CONFIG            = 0x11,
     
     EVILGRAB_PAYLOAD        = 0x14,
-    EVILGRAB_DATA           = 0x15    
+    EVILGRAB_DATA           = 0x15,
+    
+    SEDRECO_DATA            = 0x20
 };
 
 HANDLE EvilGrabRegHandle;

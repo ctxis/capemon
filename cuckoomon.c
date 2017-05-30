@@ -86,11 +86,6 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
 
-    //HOOK(ntdll, RtlAllocateHeap),
-    //HOOK_SPECIAL(ntdll, RtlAllocateHeap),
-    //HOOK_NOTAIL(ntdll, RtlAllocateHeap, 3),
-    //HOOK_SAFEST(ntdll, RtlAllocateHeap, 3),
-
 	// has special handling
 
 	HOOK_SPECIAL(jscript, COleScript_ParseScriptText),
@@ -104,7 +99,7 @@ static hook_t g_hooks[] = {
 	HOOK_SPECIAL(ole32, CoCreateInstanceEx),
 	HOOK_SPECIAL(ole32, CoGetClassObject),
 
-	//HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
+	HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
 	HOOK_NOTAIL(ntdll, NtRaiseException, 3),
 
 	// lowest variant of MoveFile()
@@ -146,7 +141,7 @@ static hook_t g_hooks[] = {
     // Covered by NtCreateFile() but still grab this information
     HOOK(kernel32, CopyFileA),
     HOOK(kernel32, CopyFileW),
-    HOOK(kernel32, CopyFileExW),
+    HOOK_NOTAIL_ALT(kernel32, CopyFileExW, 6),
 
     // Covered by NtSetInformationFile() but still grab this information
     HOOK(kernel32, DeleteFileA),
@@ -275,6 +270,8 @@ static hook_t g_hooks[] = {
 	// won't end up logging. We need another hook type which logs the hook and then every function
 	// called by that hook (modulo perhaps some blacklisted functions for this specific hook type)
     //HOOK(user32, EnumWindows),
+	HOOK(user32, PostMessageA),
+	HOOK(user32, PostMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -291,7 +288,10 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtCreateEvent),
 	HOOK(ntdll, NtOpenEvent),
 	HOOK(ntdll, NtCreateNamedPipeFile),
-
+	HOOK(ntdll, NtAddAtom),
+	HOOK(ntdll, NtAddAtomEx),
+	HOOK(ntdll, NtFindAtom),
+	HOOK(ntdll, NtDeleteAtom),
 	
 	//
     // Process Hooks
@@ -354,10 +354,11 @@ static hook_t g_hooks[] = {
 	//
     // Misc Hooks
     //
-
-	//HOOK(msvcrt, memcpy),
-	//HOOK(ntdll, memcpy),  
-	HOOK(kernel32, GetProcessHeap),
+#ifndef _WIN64
+	HOOK(ntdll, memcpy),
+#endif
+	HOOK(msvcrt, memcpy),
+    HOOK(msvcrt, srand),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -426,6 +427,7 @@ static hook_t g_hooks[] = {
 	HOOK(netapi32, NetGetJoinInformation),
 	HOOK(netapi32, NetUserGetLocalGroups),
 	HOOK(urlmon, URLDownloadToFileW),
+    HOOK(urlmon, URLDownloadToCacheFileW),
 	HOOK(urlmon, ObtainUserAgentString),
 	HOOK(wininet, InternetGetConnectedState),
     HOOK(wininet, InternetOpenA),
@@ -639,16 +641,15 @@ VOID CALLBACK DllLoadNotification(
 	_In_opt_ PVOID                       Context)
 {
 	PWCHAR dllname;
-	COPY_UNICODE_STRING(library, NotificationData->Loaded.BaseDllName);
+	COPY_UNICODE_STRING(library, NotificationData->Loaded.FullDllName);
 
 	if (g_config.debug) {
 		int ret = 0;
 		/* Just for debug purposes, gives a stripped fake function name */
 		LOQ_void("system", "sup", "NotificationReason", NotificationReason == 1 ? "load" : "unload", "DllName", library.Buffer, "DllBase", NotificationReason == 1 ? NotificationData->Loaded.DllBase : NotificationData->Unloaded.DllBase);
 	}
-
+        
 	if (NotificationReason == 1) {
-
 		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest))
 			set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
 
@@ -780,6 +781,7 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
@@ -940,6 +942,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
+        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif
@@ -1017,9 +1020,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
         // initialize the log file
         log_init(CUCKOODBG);
 
-        // initialise CAPE
-        init_CAPE();
-
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
 
@@ -1048,6 +1048,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		// initialize context watchdog
 		//init_watchdog();
+
+        // initialise CAPE
+        init_CAPE();
 
 #ifndef _WIN64
 		if (!g_config.no_stealth) {
