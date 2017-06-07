@@ -735,9 +735,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
-                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped PE image from buffer.\n");
                             CurrentInjectionInfo->BufferBase = (LPVOID)Buffer;
                             CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
+                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped PE image from buffer at 0x%x, SizeOfImage 0x%x.\n", Buffer, CurrentInjectionInfo->BufferSizeOfImage);
                         }
                         else
                             DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump PE image from buffer.\n");
@@ -768,7 +768,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                     }
                     else
                     {
-                        DoOutputDebugString("NtWriteVirtualMemory hook: Shellcode injected into process %d.\n", pid);
+                        DoOutputDebugString("NtWriteVirtualMemory hook: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", Buffer, *NumberOfBytesWritten, pid);
                     
                         // dump injected code to .bin file
                         CapeMetaData->DumpType = INJECTION_SHELLCODE;
@@ -844,9 +844,9 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
-                            DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer.\n");
                             CurrentInjectionInfo->BufferBase = (LPVOID)lpBuffer;
                             CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
+                            DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer at 0x%x, SizeOfImage 0x%x.\n", lpBuffer, CurrentInjectionInfo->BufferSizeOfImage);
                         }
                         else
                             DoOutputDebugString("WriteProcessMemory hook: Failed to dump PE image from buffer.\n");
@@ -877,7 +877,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                     }
                     else
                     {
-                        DoOutputDebugString("WriteProcessMemory hook: Shellcode injected into process %d.\n", pid);
+                        DoOutputDebugString("WriteProcessMemory hook: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", lpBuffer, *lpNumberOfBytesWritten, pid);
                     
                         // dump injected code to .bin file
                         CapeMetaData->DumpType = INJECTION_SHELLCODE;

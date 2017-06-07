@@ -152,50 +152,49 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 		if (!dont_monitor)
 			pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
 			    lpProcessInformation->dwThreadId);
+        
+        // CAPE: Create 'injection info' struct for the newly created process
+        CurrentInjectionInfo = CreateInjectionInfo(lpProcessInformation->dwProcessId);
+        
+        if (CurrentInjectionInfo == NULL)
+        {
+            DoOutputDebugString("CreateProcessInternal hook: Failed to create injection info for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
+        }
+        else
+        {
+            CurrentInjectionInfo->ProcessHandle = lpProcessInformation->hProcess;
+            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
+            CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
+            CurrentInjectionInfo->ImageDumped = FALSE;
+
+            CapeMetaData->TargetProcess = (char*)malloc(MAX_PATH);
+            memset(TargetProcess, 0, MAX_PATH*sizeof(WCHAR));
+
+            if (lpApplicationName)
+                _snwprintf(TargetProcess, MAX_PATH, L"%s", lpApplicationName);
+            else if (lpCommandLine)
+            {
+                DoOutputDebugString("CreateProcessInternal hook: using lpCommandLine: %ws.\n", lpCommandLine);
+                if (*lpCommandLine == L'\"')
+                    wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine+1, (rsize_t)((wcschr(lpCommandLine+1, '\"') - lpCommandLine)-1));
+                else 
+                {
+                    if (wcschr(lpCommandLine, ' '))
+                        wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, (rsize_t)((wcschr(lpCommandLine, ' ') - lpCommandLine)+1));
+                    else 
+                        wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, wcslen(lpCommandLine)+1);
+                }
+            }
+
+            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
+            
+            DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
+        }
 
         // if the CREATE_SUSPENDED flag was not set, then we have to resume
         // the main thread ourself
         if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
             ResumeThread(lpProcessInformation->hThread);
-        }
-        else if (!called_by_hook()){
-        
-            CurrentInjectionInfo = CreateInjectionInfo(lpProcessInformation->dwProcessId);
-            
-            if (CurrentInjectionInfo == NULL)
-            {
-                DoOutputDebugString("CreateProcessInternal hook: Failed to create injection info for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
-            }
-            else
-            {
-                CurrentInjectionInfo->ProcessHandle = lpProcessInformation->hProcess;
-                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
-                CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
-                CurrentInjectionInfo->ImageDumped = FALSE;
-
-                CapeMetaData->TargetProcess = (char*)malloc(MAX_PATH);
-                memset(TargetProcess, 0, MAX_PATH*sizeof(WCHAR));
-
-                if (lpApplicationName)
-                    _snwprintf(TargetProcess, MAX_PATH, L"%s", lpApplicationName);
-                else if (lpCommandLine)
-                {
-                    DoOutputDebugString("CreateProcessInternal hook: using lpCommandLine: %ws.\n", lpCommandLine);
-                    if (*lpCommandLine == L'\"')
-                        wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine+1, (rsize_t)((wcschr(lpCommandLine+1, '\"') - lpCommandLine)-1));
-                    else 
-                    {
-                        if (wcschr(lpCommandLine, ' '))
-                            wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, (rsize_t)((wcschr(lpCommandLine, ' ') - lpCommandLine)+1));
-                        else 
-                            wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, wcslen(lpCommandLine)+1);
-                    }
-                }
-
-                WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
-                
-                DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
-            }
         }
         
         disable_sleep_skip();
