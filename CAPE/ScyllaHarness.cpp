@@ -86,12 +86,12 @@ extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpCurrentProcess(DWORD NewOEP)
+extern "C" int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP)
 //**************************************************************************************
 {
 	DWORD_PTR entrypoint = 0;
 	PeParser * peFile = 0;
-    DWORD ModuleBase;
+    DWORD_PTR ModuleBase;
     
     ModuleBase = (DWORD)(ULONG_PTR)GetModuleHandle(NULL);
 	ScyllaInitCurrentProcess();
@@ -146,7 +146,7 @@ void ScyllaInit(HANDLE hProcess)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD NewOEP)
+extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PTR NewOEP)
 //**************************************************************************************
 {
 	DWORD_PTR entrypoint = 0;
@@ -420,13 +420,13 @@ bool isIATOutsidePeImage (DWORD_PTR addressIAT)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
+extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
 //**************************************************************************************
 {
     DWORD addressIAT, sizeIAT;
     BOOL IAT_Found, AdvancedIATSearch = FALSE;
     bool isAfter;
-    DWORD ModuleBase;
+    DWORD_PTR ModuleBase;
     
     IATSearch iatSearch;
 	ApiReader apiReader;
@@ -589,7 +589,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD NewOEP)
+extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PTR NewOEP)
 //**************************************************************************************
 {
     bool isAfter;
