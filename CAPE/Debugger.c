@@ -21,6 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <assert.h>
 #include <Aclapi.h>
 #include "Debugger.h"
+#include "..\alloc.h"
 #include "..\config.h"
 #include "..\pipe.h"
 

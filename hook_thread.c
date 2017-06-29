@@ -230,17 +230,40 @@ HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
     __in     HANDLE ThreadHandle,
     __inout  LPCONTEXT Context
 ) {
+	DWORD pid = pid_from_thread_handle(ThreadHandle);
+
     NTSTATUS ret = Old_NtGetContextThread(ThreadHandle, Context);
 	
     if (called_by_hook())
         return ret;
         
     if (Context->ContextFlags & CONTEXT_CONTROL)
+    {
+        if 
+        (
+            DEBUGGER_ENABLED && 
+            pid == ChildProcessId && 
+            OEP && 
 #ifdef _WIN64
-		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
+            DebuggerEP == Context->Rcx
 #else
-		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eax);
+            DebuggerEP == Context->Eax
 #endif
+        )
+        {
+#ifdef _WIN64
+            Context->Rcx = (DWORD_PTR)OEP;
+#else
+            Context->Eax = (DWORD)OEP;
+#endif
+        }
+
+#ifdef _WIN64
+        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
+#else
+        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eax);
+#endif
+    }
 	else
 		LOQ_ntstatus("threading", "p", "ThreadHandle", ThreadHandle);
     return ret;

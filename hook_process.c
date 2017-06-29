@@ -721,12 +721,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
             DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
         }
     }
+    else
+        DoOutputDebugString("NtAllocateVirtualMemory hook: Ignoring allocation at BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);    
 	
-    if (ret != STATUS_CONFLICTING_ADDRESSES) {
+    //if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-	}
-
+	//}
 	return ret;
 }
 
