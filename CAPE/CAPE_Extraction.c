@@ -18,6 +18,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <windows.h>
 #include "Debugger.h"
 #include "CAPE.h"
+#include "..\alloc.h"
 
 #define PE_HEADER_LIMIT 0x200
 

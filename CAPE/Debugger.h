@@ -1,6 +1,6 @@
 #pragma once
 
-void* CAPE_var;
+void *CAPE_var1, *CAPE_var2, *CAPE_var3, *CAPE_var4;
 
 #define BP_EXEC        0x00
 #define BP_WRITE       0x01
@@ -105,8 +105,11 @@ BOOL SetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register, int Size
 BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL ContextClearBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL ClearBreakpointsInRange(DWORD ThreadId, PVOID BaseAddress, SIZE_T Size);
+BOOL SetResumeFlag(PCONTEXT Context);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
+BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
+BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL ContextClearAllBreakpoints(PCONTEXT Context);
 BOOL ClearAllBreakpoints(DWORD ThreadId);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
@@ -116,6 +119,9 @@ BOOL InitialiseDebugger(void);
 BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD CreationFlags);
 BOOL SendDebuggerMessage(DWORD Input);
 int launch_debugger(void);
+
+void ShowStack(DWORD_PTR StackPointer, unsigned int NumberOfRecords);
+
 BOOL IsInTrackedPages(PVOID Address);
 PTRACKEDPAGES CreateTrackedPagess();
 PTRACKEDPAGES GetTrackedPages(PVOID Address);

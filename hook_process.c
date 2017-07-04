@@ -535,10 +535,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
         AllocationHandler(*BaseAddress, *RegionSize, AllocationType, Protect);
     }    
 
-    if (ret != STATUS_CONFLICTING_ADDRESSES) {
+    //if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-	}
+	//}
 
 	return ret;
 }

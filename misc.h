@@ -155,8 +155,6 @@ void specialname_map_init(void);
 char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset);
 int is_wow64_fs_redirection_disabled(void);
 
-//int wow64_disable_stack_copy(void);
-
 void set_dll_of_interest(ULONG_PTR BaseAddress);
 
 PWCHAR get_dll_basename(PUNICODE_STRING library);
@@ -179,6 +177,8 @@ ULONG_PTR get_cdocument_write_addr(HMODULE mod);
 ULONG_PTR get_olescript_compile_addr(HMODULE mod);
 ULONG_PTR get_olescript_parsescripttext_addr(HMODULE mod);
 
+PCHAR memmem(PCHAR haystack, ULONG hlen, PCHAR needle, ULONG nlen);
+BOOL is_bytes_in_buf(PCHAR buf, ULONG len, PCHAR memstr, ULONG memlen, ULONG maxsearchbytes);
 void replace_string_in_buf(PCHAR buf, ULONG len, PCHAR findstr, PCHAR repstr);
 void replace_wstring_in_buf(PWCHAR buf, ULONG len, PWCHAR findstr, PWCHAR repstr);
 void replace_ci_string_in_buf(PCHAR buf, ULONG len, PCHAR findstr, PCHAR repstr);
@@ -200,5 +200,3 @@ wchar_t *ascii_to_unicode_dup(char *str);
 int is_stack_pivoted(void);
 
 LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
-
-PVOID get_process_image_base(HANDLE process_handle);

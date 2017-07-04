@@ -27,7 +27,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ignore.h"
 #include "lookup.h"
 #include "config.h"
-#include "CAPE\Debugger.h"
 
 #define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_GENERIC_WRITE | \
     FILE_WRITE_DATA | FILE_APPEND_DATA | STANDARD_RIGHTS_WRITE | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
@@ -45,8 +44,6 @@ typedef struct _file_log_t {
 	unsigned int read_count;
 	unsigned int write_count;
 } file_log_t;
-
-extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 static lookup_t g_files;
 static lookup_t g_file_logs;
@@ -353,29 +350,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 	__in      ULONG Length,
 	__in_opt  PLARGE_INTEGER ByteOffset,
 	__in_opt  PULONG Key
-) {
-	wchar_t *fname;
-	BOOLEAN deletelast;
-	ULONG_PTR length;
-	lasterror_t lasterrors;    
-    PTRACKEDPAGES TrackedPages;
-	unsigned int read_count = 0;
-    
-    if ((TrackedPages = GetTrackedPages(Buffer)) && TrackedPages->Guarded)
-    {
-        DeactivateGuardPages(TrackedPages);
-        DoOutputDebugString("NtReadFile hook: Disabling guard pages at target buffer 0x%x.\n", Buffer);
-    }
-    
+	) {
 	NTSTATUS ret = Old_NtReadFile(FileHandle, Event, ApcRoutine, ApcContext,
 		IoStatusBlock, Buffer, Length, ByteOffset, Key);
+	wchar_t *fname;
+	BOOLEAN deletelast;
+	unsigned int read_count = 0;
+	ULONG_PTR length;
+	lasterror_t lasterrors;
 
-    if (TrackedPages && TrackedPages->Guarded)
-    {
-        ActivateGuardPages(TrackedPages);
-        DoOutputDebugString("NtReadFile hook: Reactivating guard pages at target buffer 0x%x.\n", Buffer);
-    }
-        
 	get_lasterrors(&lasterrors);
 
 	if (NT_SUCCESS(ret))
@@ -1066,7 +1049,31 @@ HOOKDEF(BOOL, WINAPI, CopyFileW,
 	return ret;
 }
 
-HOOKDEF(BOOL, WINAPI, CopyFileExW,
+HOOKDEF_NOTAIL(WINAPI, CopyFileExW,
+	_In_      LPWSTR lpExistingFileName,
+	_In_      LPWSTR lpNewFileName,
+	_In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
+	_In_opt_  LPVOID lpData,
+	_In_opt_  LPBOOL pbCancel,
+	_In_      DWORD dwCopyFlags
+) {
+	BOOL ret = TRUE;
+	BOOL file_existed = FALSE;
+
+	if (GetFileAttributesW(lpNewFileName) != INVALID_FILE_ATTRIBUTES)
+		file_existed = TRUE;
+
+	if (lpProgressRoutine) {
+		LOQ_bool("filesystem", "FFis", "ExistingFileName", lpExistingFileName,
+			"NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, "ExistedBefore", file_existed ? "yes" : "no");
+		return 0;
+	}
+
+	return 1;
+}
+
+
+HOOKDEF_ALT(BOOL, WINAPI, CopyFileExW,
     _In_      LPWSTR lpExistingFileName,
     _In_      LPWSTR lpNewFileName,
     _In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
@@ -1082,14 +1089,13 @@ HOOKDEF(BOOL, WINAPI, CopyFileExW,
 	ret = Old_CopyFileExW(lpExistingFileName, lpNewFileName,
         lpProgressRoutine, lpData, pbCancel, dwCopyFlags);
 	LOQ_bool("filesystem", "FFis", "ExistingFileName", lpExistingFileName,
-        "NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, file_existed ? "yes" : "no");
+        "NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, "ExistedBefore", file_existed ? "yes" : "no");
 
 	if (ret)
 		new_file_path_unicode(lpNewFileName);
 
 	return ret;
 }
-
 HOOKDEF(BOOL, WINAPI, DeleteFileA,
     __in  LPCSTR lpFileName
 ) {
@@ -1239,6 +1245,9 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationA,
 			*lpVolumeSerialNumber = 0x46e70ca9;
 			debug_message("Changed Volume Serial Number.");
 		}
+
+
+
 	}	
 #endif	
     return ret;
@@ -1309,7 +1318,7 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationByHandleW,
 	if (ret && lpVolumeSerialNumber && g_config.serial_number)
 		*lpVolumeSerialNumber = g_config.serial_number;
 
-	LOQ_bool("filesystem", "uH", "VolumeName", lpVolumeNameBuffer, "VolumeSerial", lpVolumeSerialNumber);
+	LOQ_bool("filesystem", "puH", "Handle", hFile, "VolumeName", lpVolumeNameBuffer, "VolumeSerial", lpVolumeSerialNumber);
 
 	return ret;
 }

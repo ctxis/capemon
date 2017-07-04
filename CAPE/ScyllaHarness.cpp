@@ -54,12 +54,44 @@ void ScyllaInitCurrentProcess()
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpCurrentProcess(DWORD NewOEP)
+extern "C" DWORD_PTR GetEntryPointVA(DWORD_PTR modBase)
+//**************************************************************************************
+{
+    PeParser * peFile = 0;
+
+	ScyllaInitCurrentProcess();
+    
+    peFile = new PeParser((DWORD_PTR)modBase, true);
+
+	return peFile->getEntryPoint() + (DWORD_PTR)modBase;
+}
+
+//**************************************************************************************
+extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
+//**************************************************************************************
+{
+    DWORD_PTR Test;
+    PeParser * peFile = 0;
+
+	ScyllaInitCurrentProcess();
+    
+    peFile = new PeParser(modBase, true);
+
+	//return peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+	Test = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+        
+    DoOutputDebugString("FileOffsetToVA: Debug - VA = 0x%p.\n", Test);
+    
+    return Test;
+}
+
+//**************************************************************************************
+extern "C" int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP)
 //**************************************************************************************
 {
 	DWORD_PTR entrypoint = 0;
 	PeParser * peFile = 0;
-    DWORD ModuleBase;
+    DWORD_PTR ModuleBase;
     
     ModuleBase = (DWORD)(ULONG_PTR)GetModuleHandle(NULL);
 	ScyllaInitCurrentProcess();
@@ -114,7 +146,7 @@ void ScyllaInit(HANDLE hProcess)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD NewOEP)
+extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PTR NewOEP)
 //**************************************************************************************
 {
 	DWORD_PTR entrypoint = 0;
@@ -388,13 +420,13 @@ bool isIATOutsidePeImage (DWORD_PTR addressIAT)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
+extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
 //**************************************************************************************
 {
     DWORD addressIAT, sizeIAT;
     BOOL IAT_Found, AdvancedIATSearch = FALSE;
     bool isAfter;
-    DWORD ModuleBase;
+    DWORD_PTR ModuleBase;
     
     IATSearch iatSearch;
 	ApiReader apiReader;
@@ -557,7 +589,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP)
 }
 
 //**************************************************************************************
-extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD NewOEP)
+extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PTR NewOEP)
 //**************************************************************************************
 {
     bool isAfter;

@@ -275,6 +275,8 @@ static hook_t g_hooks[] = {
 	// won't end up logging. We need another hook type which logs the hook and then every function
 	// called by that hook (modulo perhaps some blacklisted functions for this specific hook type)
     //HOOK(user32, EnumWindows),
+	HOOK(user32, PostMessageA),
+	HOOK(user32, PostMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -291,6 +293,10 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtCreateEvent),
 	HOOK(ntdll, NtOpenEvent),
 	HOOK(ntdll, NtCreateNamedPipeFile),
+	HOOK(ntdll, NtAddAtom),
+	HOOK(ntdll, NtAddAtomEx),
+	HOOK(ntdll, NtFindAtom),
+	HOOK(ntdll, NtDeleteAtom),
 
 	
 	//
@@ -426,6 +432,7 @@ static hook_t g_hooks[] = {
 	HOOK(netapi32, NetGetJoinInformation),
 	HOOK(netapi32, NetUserGetLocalGroups),
 	HOOK(urlmon, URLDownloadToFileW),
+    HOOK(urlmon, URLDownloadToCacheFileW),
 	HOOK(urlmon, ObtainUserAgentString),
 	HOOK(wininet, InternetGetConnectedState),
     HOOK(wininet, InternetOpenA),
@@ -639,7 +646,7 @@ VOID CALLBACK DllLoadNotification(
 	_In_opt_ PVOID                       Context)
 {
 	PWCHAR dllname;
-	COPY_UNICODE_STRING(library, NotificationData->Loaded.BaseDllName);
+	COPY_UNICODE_STRING(library, NotificationData->Loaded.FullDllName);
 
 	if (g_config.debug) {
 		int ret = 0;

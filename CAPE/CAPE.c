@@ -15,6 +15,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
+#define _CRT_RAND_S  
+#include <stdlib.h> 
 #include <stdio.h>
 #include <tchar.h>
 #include <windows.h>
@@ -48,11 +50,12 @@ extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buf
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void CapeOutputFile(LPCTSTR lpOutputFile);
-extern int IsPeImageVirtual(DWORD_PTR Buffer);
-extern int ScyllaDumpCurrentProcess(DWORD NewOEP);
-extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
-extern int ScyllaDumpCurrentProcessFixImports(DWORD NewOEP);
-extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD NewOEP);
+extern int IsPeImageVirtual(LPVOID Buffer);
+extern int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP);
+extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOEP);
+extern int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP);
+extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOEP);
+extern int ScyllaDumpPE(DWORD_PTR Buffer);
 
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
@@ -507,7 +510,7 @@ void DumpSectionViewsForPid(DWORD Pid)
                     CapeMetaData->TargetPid = Pid;
                     CapeMetaData->Address = PEPointer;
 
-                    if (DumpImageInCurrentProcess((DWORD_PTR)PEPointer))
+                    if (DumpImageInCurrentProcess(PEPointer))
                     {
                         DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
                         Dumped = TRUE;
@@ -555,7 +558,8 @@ char* GetName()
 	char *OutputFilename, *FullPathName;
     SYSTEMTIME Time;
     DWORD RetVal;
-	
+    unsigned int random;
+    
     FullPathName = (char*) malloc(MAX_PATH);
 
     if (FullPathName == NULL)
@@ -573,7 +577,14 @@ char* GetName()
     }
     
     GetSystemTime(&Time);
-    sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), Time.wMilliseconds, Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
+    
+    if (rand_s(&random))
+    {
+        DoOutputErrorString("GetName: failed to obtain a random number");
+        return 0;
+    }
+    
+    sprintf_s(OutputFilename, MAX_PATH*sizeof(char), "%d_%d%d%d%d%d%d%d%d", GetCurrentProcessId(), abs(random * Time.wMilliseconds), Time.wSecond, Time.wMinute, Time.wHour, Time.wDay, Time.wDayOfWeek, Time.wMonth, Time.wYear);
     
 	// We want to dump CAPE output to the 'analyzer' directory
     memset(FullPathName, 0, MAX_PATH);
@@ -784,7 +795,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     *(DecryptedBuffer+k) = *(DecryptedBuffer+k)^i;
                 
                 CapeMetaData->Address = DecryptedBuffer;
-                DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
+                DumpImageInCurrentProcess(DecryptedBuffer);
                 
                 free(DecryptedBuffer);
 				return i;
@@ -857,7 +868,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                     *(WORD*)(DecryptedBuffer+k) = *(WORD*)(DecryptedBuffer+k)^TestKey;
                 
                 CapeMetaData->Address = DecryptedBuffer;
-                DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
+                DumpImageInCurrentProcess(DecryptedBuffer);
                 
                 free(DecryptedBuffer);
 				return TRUE;
@@ -902,7 +913,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
                     
                     CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
+                    DumpImageInCurrentProcess(DecryptedBuffer);
                     
                     free(DecryptedBuffer);
                     return TRUE;
@@ -959,7 +970,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
                         *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
                     
                     CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess((DWORD_PTR)DecryptedBuffer);
+                    DumpImageInCurrentProcess(DecryptedBuffer);
                     
                     free(DecryptedBuffer);
                     return TRUE;
@@ -1280,7 +1291,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
 
             SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
             
-            if (DumpImageInCurrentProcess((DWORD)PEImage))
+            if (DumpImageInCurrentProcess((LPVOID)PEImage))
             {
                 DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
                 RetVal = TRUE;
@@ -1292,7 +1303,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
         {
             SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
             
-            if (DumpImageInCurrentProcess((DWORD)PEPointer))
+            if (DumpImageInCurrentProcess((LPVOID)PEPointer))
             {
                 DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
                 RetVal = TRUE;
@@ -1379,10 +1390,10 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
-int DumpCurrentProcessFixImports(DWORD NewEP)
+int DumpCurrentProcessFixImports(LPVOID NewEP)
 //**************************************************************************************
 {
-	if (DumpCount < DUMP_MAX && ScyllaDumpCurrentProcessFixImports(NewEP))
+	if (DumpCount < DUMP_MAX && ScyllaDumpCurrentProcessFixImports((DWORD_PTR)NewEP))
 	{
 		DumpCount++;
 		return 1;
@@ -1392,10 +1403,10 @@ int DumpCurrentProcessFixImports(DWORD NewEP)
 }
 
 //**************************************************************************************
-int DumpCurrentProcessNewEP(DWORD NewEP)
+int DumpCurrentProcessNewEP(LPVOID NewEP)
 //**************************************************************************************
 {
-	if (DumpCount < DUMP_MAX && ScyllaDumpCurrentProcess(NewEP))
+	if (DumpCount < DUMP_MAX && ScyllaDumpCurrentProcess((DWORD_PTR)NewEP))
 	{
 		DumpCount++;
 		return 1;
@@ -1418,12 +1429,12 @@ int DumpCurrentProcess()
 }
 
 //**************************************************************************************
-int DumpModuleInCurrentProcess(DWORD_PTR ModuleBase)
+int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
 
-    if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), ModuleBase, 0))
+    if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
         DumpCount++;
 		return 1;
@@ -1433,7 +1444,7 @@ int DumpModuleInCurrentProcess(DWORD_PTR ModuleBase)
 }
 
 //**************************************************************************************
-int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
+int DumpImageInCurrentProcess(LPVOID ImageBase)
 //**************************************************************************************
 {
     PIMAGE_DOS_HEADER pDosHeader;
@@ -1479,7 +1490,7 @@ int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
     {
         DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump 'raw' PE image.\n");
         
-        if (ScyllaDumpPE(ImageBase))
+        if (ScyllaDumpPE((DWORD_PTR)ImageBase))
         {
             DumpCount++;
             return 1; 
@@ -1494,7 +1505,7 @@ int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
 
     DoOutputDebugString("DumpImageInCurrentProcess: Attempting to dump virtual PE image.\n");
     
-    if (!ScyllaDumpProcess(GetCurrentProcess(), ImageBase, 0))
+    if (!ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ImageBase, 0))
     {
         DoOutputDebugString("DumpImageInCurrentProcess: Failed to dump PE as virtual image.\n");
         return 0; 
@@ -1505,10 +1516,10 @@ int DumpImageInCurrentProcess(DWORD_PTR ImageBase)
 }
 
 //**************************************************************************************
-int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase)
+int DumpProcess(HANDLE hProcess, LPVOID ImageBase)
 //**************************************************************************************
 {
-	if (DumpCount < DUMP_MAX && ScyllaDumpProcess(hProcess, ImageBase, 0))
+	if (DumpCount < DUMP_MAX && ScyllaDumpProcess(hProcess, (DWORD_PTR)ImageBase, 0))
 	{
 		DumpCount++;
 		return 1;
@@ -1536,7 +1547,7 @@ int DumpPE(LPVOID Buffer)
 int RoutineProcessDump()
 //**************************************************************************************
 {
-    if (g_config.procmemdump && ProcessDumped == FALSE)
+    if (g_config.procdump && ProcessDumped == FALSE)
     {
         ProcessDumped = TRUE;   // this prevents a second call before the first is complete
         if (g_config.import_reconstruction)
