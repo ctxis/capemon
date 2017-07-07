@@ -93,6 +93,19 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     return res;
 }
 
+HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
+    __in    ULONG First,
+    __out   PVECTORED_EXCEPTION_HANDLER Handler
+) {
+	PVOID ret = 0;
+    
+    ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+	
+    LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
+    
+    return ret;
+}
+
 HOOKDEF(UINT, WINAPI, SetErrorMode,
 	_In_ UINT uMode
 ) {
@@ -789,14 +802,14 @@ HOOKDEF(BOOL, WINAPI, SetupDiGetDeviceRegistryPropertyA,
 
 	ret = Old_SetupDiGetDeviceRegistryPropertyA(DeviceInfoSet, DeviceInfoData, Property, PropertyRegDataType, PropertyBuffer, PropertyBufferSize, RequiredSize);
 
-	if (PropertyBuffer)
-		LOQ_bool("misc", "ir", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
-
 	if (!g_config.no_stealth && ret && PropertyBuffer) {
 		replace_ci_string_in_buf(PropertyBuffer, *RequiredSize, "VBOX", "DELL_");
 		replace_ci_string_in_buf(PropertyBuffer, *RequiredSize, "QEMU", "DELL");
 		replace_ci_string_in_buf(PropertyBuffer, *RequiredSize, "VMWARE", "DELL__");
 	}
+
+	if (PropertyBuffer)
+		LOQ_bool("misc", "ir", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
 
 	return ret;
 }
@@ -817,14 +830,14 @@ HOOKDEF(BOOL, WINAPI, SetupDiGetDeviceRegistryPropertyW,
 
 	ret = Old_SetupDiGetDeviceRegistryPropertyW(DeviceInfoSet, DeviceInfoData, Property, PropertyRegDataType, PropertyBuffer, PropertyBufferSize, RequiredSize);
 
-	if (PropertyBuffer)
-		LOQ_bool("misc", "iR", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
-
 	if (!g_config.no_stealth && ret && PropertyBuffer) {
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"VBOX", L"DELL_");
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"QEMU", L"DELL");
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"VMWARE", L"DELL__");
 	}
+
+	if (PropertyBuffer)
+		LOQ_bool("misc", "iR", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
 
 	return ret;
 }
@@ -1025,20 +1038,33 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+	int ret = 0;	// seems this is needed for LOQ_void.
 
 	Old_memcpy(dest, src, count);
 	
-	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+    if (count > 0xa00)
+        LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
 	
 	return;
+}
+
+HOOKDEF(unsigned int, WINAPIV, SizeofResource,
+    _In_opt_ HMODULE hModule,
+    _In_     HRSRC   hResInfo
+)
+{
+	unsigned int ret = Old_SizeofResource(hModule, hResInfo);
+
+	LOQ_nonzero("misc", "ppi", "ModuleHandle", hModule, "ResourceInfo", hResInfo, "Size", ret);
+    
+    return ret;
 }
 
 HOOKDEF(void, WINAPIV, srand,
 	unsigned int seed
 )
 {
-	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+	int ret = 0;	// seems this is needed for LOQ_void.
 
 	Old_srand(seed);
 

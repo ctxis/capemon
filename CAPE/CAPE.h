@@ -1,34 +1,80 @@
+/*
+CAPE - Config And Payload Extraction
+Copyright(C) 2015-2017 Context Information Security. (kevin.oreilly@contextis.com)
+
+This program is free software : you can redistribute it and / or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.If not, see <http://www.gnu.org/licenses/>.
+*/
 extern HMODULE s_hInst;
 extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
-extern int DumpCurrentProcessNewEP(DWORD NewEP);
-extern int DumpCurrentProcess();
-extern int DumpProcess(HANDLE hProcess, DWORD_PTR ImageBase);
-extern int DumpPE(LPCVOID Buffer);
-extern int ScyllaDumpPE(DWORD_PTR Buffer);
-unsigned int DumpSize;
-int ScanForNonZero(LPCVOID Buffer, unsigned int Size);
-int ScanForPE(LPCVOID Buffer, unsigned int Size, LPCVOID* Offset);
 
-//Global switch for debugger
-#define DEBUGGER_ENABLED    1
+//Global debugger switch
+#define DEBUGGER_ENABLED 1
+
+PVOID GetPageAddress(PVOID Address);
+BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
+BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
+int DumpMemory(LPVOID Buffer, unsigned int Size);
+int DumpCurrentProcessNewEP(LPVOID NewEP);
+int DumpCurrentProcess();
+int DumpProcess(HANDLE hProcess, LPVOID ImageBase);
+int DumpPE(LPVOID Buffer);
+int ScanForNonZero(LPVOID Buffer, unsigned int Size);
+int ScanPageForNonZero(LPVOID Address);
+int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+int IsDisguisedPEHeader(LPVOID Buffer);
+int DumpImageInCurrentProcess(LPVOID ImageBase);
+void DumpSectionViewsForPid(DWORD Pid);
+
+unsigned int DumpSize;
+SYSTEM_INFO SystemInfo;
+
+typedef struct InjectionSectionView
+{
+    HANDLE                          SectionHandle;
+    PVOID                           LocalView;
+    SIZE_T                          ViewSize;
+	int                             TargetProcessId;
+    struct InjectionSectionView     *NextSectionView;
+} INJECTIONSECTIONVIEW, *PINJECTIONSECTIONVIEW;
+
+PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
+PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
+BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
 
 typedef struct InjectionInfo
 {
-    int                     ProcessId;
-	HANDLE	                ProcessHandle;
-    DWORD_PTR               ImageBase;
-    DWORD_PTR               EntryPoint;
-    BOOL                    ImageDumped;
-    LPCVOID                 BufferBase;
-    unsigned int            BufferSizeOfImage;
-    struct InjectionInfo    *NextInjectionInfo;
+    int                         ProcessId;
+	HANDLE	                    ProcessHandle;
+    DWORD_PTR                   ImageBase;
+    DWORD_PTR                   EntryPoint;
+    BOOL                        WriteDetected;
+    BOOL                        ImageDumped;
+    LPVOID                     BufferBase;
+    unsigned int                BufferSizeOfImage;
+    HANDLE                      SectionHandle;
+//    struct InjectionSectionView *SectionViewList;
+    struct InjectionInfo        *NextInjectionInfo;
 } INJECTIONINFO, *PINJECTIONINFO;
 
 struct InjectionInfo *InjectionInfoList;
 
 PINJECTIONINFO GetInjectionInfo(DWORD ProcessId);
 PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId);
+
+struct InjectionSectionView *SectionViewList;
 
 //
 // MessageId: STATUS_SUCCESS
@@ -63,13 +109,14 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId);
 
 typedef struct CapeMetadata 
 {
-    DWORD   DumpType;
 	char*	ProcessPath;
 	char*	ModulePath;
     DWORD   Pid;
+    DWORD   DumpType;
     char*	TargetProcess;  // For injection
     DWORD	TargetPid;      // "
-    PVOID   Address;        // For shellcode
+    PVOID   Address;        // For shellcode/modules
+	SIZE_T  Size;           // "
 } CAPEMETADATA, *PCAPEMETADATA;
 
 struct CapeMetadata *CapeMetaData;
@@ -89,10 +136,17 @@ enum {
     EXTRACTION_SHELLCODE    = 9,
     
     PLUGX_PAYLOAD           = 0x10,
-    PLUGX_CONFIG            = 0x11,   
+    PLUGX_CONFIG            = 0x11,
     
     EVILGRAB_PAYLOAD        = 0x14,
     EVILGRAB_DATA           = 0x15,
     
-    UPX                     = 0x1000
+    SEDRECO_DATA            = 0x20,
+	
+    CERBER_CONFIG           = 0x30,
+    CERBER_PAYLOAD          = 0x31,
+    
+    UPX                     = 0x1000    
 };
+
+HANDLE EvilGrabRegHandle;

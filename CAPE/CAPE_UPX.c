@@ -110,7 +110,7 @@ BOOL StackReadCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTE
 		return FALSE;
 	}
 
-	DoOutputDebugString("StackReadCallback: Hardware breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
+	DoOutputDebugString("StackReadCallback: Breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
 
     if ((DWORD)modinfo.lpBaseOfDll == 0)
     {
@@ -120,11 +120,11 @@ BOOL StackReadCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTE
     
     if (ExceptionInfo->ContextRecord->Eip < (DWORD)modinfo.lpBaseOfDll || ExceptionInfo->ContextRecord->Eip > (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage)
     {
-		DoOutputDebugString("StackReadCallback: breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
+		DoOutputDebugString("StackReadCallback: Breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
 		return FALSE;    
     }
     
-    ContextClearHardwareBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+    ContextClearBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
     
 	// Turn on single-step mode which will dump on OEP (in handler)
     SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepToOEP);
@@ -150,7 +150,7 @@ BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 		return FALSE;
 	}
 
-	DoOutputDebugString("StackWriteCallback: Hardware breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
+	DoOutputDebugString("StackWriteCallback: Breakpoint %i Size=0x%x, Address=0x%x, EIP=0x%x\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, ExceptionInfo->ContextRecord->Eip);
     
     // Let's find out the size of the module in memory, to enable a sanity check for the eip values
     if (base_of_dll_of_interest == 0)
@@ -170,7 +170,7 @@ BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     
     if (ExceptionInfo->ContextRecord->Eip < (DWORD)modinfo.lpBaseOfDll || ExceptionInfo->ContextRecord->Eip > (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage)
     {
-		DoOutputDebugString("StackWriteCallback: breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
+		DoOutputDebugString("StackWriteCallback: Breakpoint EIP 0x%x is not within the module of interest (0x%x-0x%x).\n", ExceptionInfo->ContextRecord->Eip, (DWORD)modinfo.lpBaseOfDll, (DWORD)modinfo.lpBaseOfDll + modinfo.SizeOfImage);
 		return FALSE;    
     }
     
