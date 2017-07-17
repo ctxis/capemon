@@ -176,8 +176,98 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect)
 //**************************************************************************************
 {
-    // TODO: This package is soon to be deprecated in favour of 'NewExtraction'
-    // so little point in putting more work in here for the moment.
+    MEMORY_BASIC_INFORMATION meminfo;
+    PGUARDPAGES CurrentGuardPages;
+
+    DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x.\n", BaseAddress, RegionSize);
+    
+    CurrentGuardPages = GuardPageList;
+    
+    while (CurrentGuardPages)
+    {
+        if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
+            CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
+
+        if (CurrentGuardPages->PagesDumped)
+        {
+            DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) within CAPE guarded pages detected and dumped.\n");
+            ExtractionClearAll();
+        } 
+        
+        CurrentGuardPages = CurrentGuardPages->NextGuardPages;
+    }
+    
+    if (AllocationBase && AllocationSize && !AllocationDumped)
+    {
+        if (AllocationBaseWriteBpSet == FALSE && AllocationType & MEM_COMMIT && (BaseAddress == AllocationBase))
+        {   // if memory was previously reserved but not committed
+            SetInitialWriteBreakpoint(AllocationBase, AllocationSize);
+        }
+        else
+        {
+            DoOutputDebugString("NtAllocateVirtualMemory hook: attempting CAPE dump on previous region: 0x%x.\n", AllocationBase);
+
+            memset(&meminfo, 0, sizeof(meminfo));
+
+            if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
+            {
+                DoOutputErrorString("NtAllocateVirtualMemory hook: unable to query memory region 0x%x", AllocationBase);
+            }
+            else
+            {
+                AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+                
+                if (AllocationDumped)
+                {
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) detected and dumped.\n");
+                    ExtractionClearAll();
+                }
+                else
+                {
+                    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+                    
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: dumping memory range at 0x%x.\n", AllocationBase);
+                    
+                    if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
+                        AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+                        
+                    if (AllocationDumped)
+                        ExtractionClearAll();
+                    else
+                        DoOutputDebugString("NtAllocateVirtualMemory hook: Failed to dump memory range at 0x%x.\n", AllocationBase);
+                }
+                
+                if (!AllocationDumped)
+                {
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
+                    ExtractionClearAll();
+                }
+                
+                // set breakpoints on new region
+                if (AllocationType & MEM_COMMIT)
+                    // Allocation committed, we set an initial write bp
+                    SetInitialWriteBreakpoint(BaseAddress, RegionSize);
+                else if (AllocationType & MEM_RESERVE)
+                {   // Allocation not committed, so we can't set a bp yet
+                    AllocationBaseWriteBpSet = FALSE;
+                    AllocationBase = BaseAddress;
+                    AllocationSize = RegionSize;
+                    DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
+                }
+            }
+        }
+    }
+    else if (AllocationType & MEM_COMMIT)
+        // Allocation committed, we set an initial write bp
+        SetInitialWriteBreakpoint(BaseAddress, RegionSize);
+    else if (AllocationType & MEM_RESERVE)
+    {   // Allocation not committed, so we can't set a bp yet
+        AllocationBaseWriteBpSet = FALSE;
+        AllocationBase = BaseAddress;
+        AllocationSize = RegionSize;
+        DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
+    }
+    
 }
 
 //**************************************************************************************

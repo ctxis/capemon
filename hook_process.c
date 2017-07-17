@@ -46,6 +46,7 @@ extern BOOL AllocationDumped;
 extern PVOID AllocationBase;
 extern SIZE_T AllocationSize;
 
+extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
 extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
 extern void ExtractionClearAll(void);
 
@@ -610,8 +611,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     ULONG AllocationType,
     __in     ULONG Protect
 ) {
-    MEMORY_BASIC_INFORMATION meminfo;
-    PGUARDPAGES CurrentGuardPages;
     BOOL GuardedPages = FALSE;
 
 	if (GUARD_PAGES_ENABLED && !called_by_hook() && (Protect & (PAGE_READWRITE)) && !(Protect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE)) 
@@ -632,95 +631,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     
 	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE || *BaseAddress == AllocationBase)) 
     {
-        DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);
-        
-        CurrentGuardPages = GuardPageList;
-        
-        while (CurrentGuardPages)
-        {
-            if (!CurrentGuardPages->PagesDumped && CurrentGuardPages->ReadDetected && CurrentGuardPages->WriteDetected)
-                CurrentGuardPages->PagesDumped = DumpPEsInRange(CurrentGuardPages->BaseAddress, CurrentGuardPages->RegionSize);
-
-            if (CurrentGuardPages->PagesDumped)
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) within CAPE guarded pages detected and dumped.\n");
-                ExtractionClearAll();
-            } 
-            
-            CurrentGuardPages = CurrentGuardPages->NextGuardPages;
-        }
-        
-        if (AllocationBase && AllocationSize && !AllocationDumped)
-        {
-            if (AllocationBaseWriteBpSet == FALSE && AllocationType & MEM_COMMIT && (*BaseAddress == AllocationBase))
-            {   // if memory was previously reserved but not committed
-                SetInitialWriteBreakpoint(AllocationBase, AllocationSize);
-            }
-            else
-            {
-                DoOutputDebugString("NtAllocateVirtualMemory hook: attempting CAPE dump on previous region: 0x%x.\n", AllocationBase);
-
-                memset(&meminfo, 0, sizeof(meminfo));
-
-                if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
-                {
-                    DoOutputErrorString("NtAllocateVirtualMemory hook: unable to query memory region 0x%x", AllocationBase);
-                }
-                else
-                {
-                    AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
-                    
-                    if (AllocationDumped)
-                    {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: PE image(s) detected and dumped.\n");
-                        ExtractionClearAll();
-                    }
-                    else
-                    {
-                        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
-                        
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: dumping memory range at 0x%x.\n", AllocationBase);
-                        
-                        if (ScanForNonZero(meminfo.AllocationBase, meminfo.RegionSize))
-                            AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
-                            
-                        if (AllocationDumped)
-                            ExtractionClearAll();
-                        else
-                            DoOutputDebugString("NtAllocateVirtualMemory hook: Failed to dump memory range at 0x%x.\n", AllocationBase);
-                    }
-                    
-                    if (!AllocationDumped)
-                    {
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
-                        ExtractionClearAll();
-                    }
-                    
-                    // set breakpoints on new region
-                    if (AllocationType & MEM_COMMIT)
-                        // Allocation committed, we set an initial write bp
-                        SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
-                    else if (AllocationType & MEM_RESERVE)
-                    {   // Allocation not committed, so we can't set a bp yet
-                        AllocationBaseWriteBpSet = FALSE;
-                        AllocationBase = *BaseAddress;
-                        AllocationSize = *RegionSize;
-                        DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
-                    }
-                }
-            }
-        }
-        else if (AllocationType & MEM_COMMIT)
-            // Allocation committed, we set an initial write bp
-            SetInitialWriteBreakpoint(*BaseAddress, *RegionSize);
-        else if (AllocationType & MEM_RESERVE)
-        {   // Allocation not committed, so we can't set a bp yet
-            AllocationBaseWriteBpSet = FALSE;
-            AllocationBase = *BaseAddress;
-            AllocationSize = *RegionSize;
-            DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
-        }
-    }
+        AllocationHandler(*BaseAddress, *RegionSize, AllocationType, Protect);
+    }    
     else
         DoOutputDebugString("NtAllocateVirtualMemory hook: Ignoring allocation at BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);    
 	
@@ -728,6 +640,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	//}
+
+    // debug test
+    if (*RegionSize = 0x1000)
+        DoOutputDebugString("NtAllocateVirtualMemory hook: DEBUG: about to return, BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);    
+
 	return ret;
 }
 
