@@ -1126,13 +1126,13 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
     // Some other exception occurred. Pass it to next handler.
-    DllRVA = 0;
-    if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
-        DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
-    else
-        DllName = "unknown";
-        
-    DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
+    //DllRVA = 0;
+    //if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
+    //    DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
+    //else
+    //    DllName = "unknown";
+    //    
+    //DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -1401,7 +1401,7 @@ BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext)
     
     if (!hThread && !pContext)
     {
-        DoOutputDebugString("CheckDebugRegisters - reqruied arguments missing.\n");
+        DoOutputDebugString("CheckDebugRegisters - required arguments missing.\n");
         return FALSE;
     }
 
@@ -2627,6 +2627,9 @@ BOOL InitialiseDebugger(void)
         CAPEExceptionFilterHandle = NULL;
     }
     
+    // Global switch for guard pages
+    GuardPagesDisabled = TRUE;
+    
     return TRUE;
 }
 
@@ -2668,7 +2671,7 @@ __declspec (naked dllexport) void DebuggerInit(void)
 // Package specific code
     GuardPageHandler = (GUARD_PAGE_HANDLER)ExtractionGuardPageHandler;
 // End of package specific code
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
+	DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%p\n", OEP);
 
     _asm
     {

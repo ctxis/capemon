@@ -77,21 +77,37 @@ unsigned int DumpPEsInTrackedPages(PTRACKEDPAGES TrackedPages)
         return FALSE;
     }
     
+    //DEBUG
+    DoOutputDebugString("ExtractionGuardPageHandler: Debug: Function entry.\n");
+
     CurrentTrackedPages = TrackedPageList;
 
-	while (CurrentTrackedPages)
-	{
-        if (CurrentTrackedPages->BaseAddress == TrackedPages->BaseAddress)
-            TrackedPagesFound = TRUE;
+    __try
+    {
+        while (CurrentTrackedPages)
+        {
+            //DEBUG
+            DoOutputDebugString("ExtractionGuardPageHandler: Debug: CurrentTrackedPages 0x%p.\n", CurrentTrackedPages);
+            if (CurrentTrackedPages->BaseAddress == TrackedPages->BaseAddress)
+                TrackedPagesFound = TRUE;
 
-        CurrentTrackedPages = TrackedPages->NextTrackedPages;
-	}
+            CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        }
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputErrorString("DumpPEsInTrackedPages: Exception trying to access BaseAddress from tracked pages at 0x%x", TrackedPages);
+        return FALSE;
+    }       
    
     if (TrackedPagesFound == FALSE)
     {
         DoOutputDebugString("DumpPEsInTrackedPages: failed to locate tracked page(s) in tracked page list.\n");
         return FALSE;
     }
+
+    //DEBUG
+    DoOutputDebugString("ExtractionGuardPageHandler: Found tracked pages at 0x%p.\n", CurrentTrackedPages);
 
     __try
     {
@@ -103,6 +119,9 @@ unsigned int DumpPEsInTrackedPages(PTRACKEDPAGES TrackedPages)
         return FALSE;
     }       
     
+    //DEBUG
+    DoOutputDebugString("ExtractionGuardPageHandler: Debug: about to scan for PE image(s).\n");
+
     if (!VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
         DoOutputErrorString("DumpPEsInTrackedPages: unable to query memory region 0x%x", TrackedPages->BaseAddress);
@@ -236,18 +255,32 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         
         if (Protect & EXECUTABLE_FLAGS)
         {
-            TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
-            
-            if (TrackedPages->Guarded)
-                DoOutputDebugString("AllocationHandler: Guarded newly allocated executable region at 0x%x.\n", BaseAddress);
+            if (GuardPagesDisabled)
+            {
+                TrackedPages->BreakpointsSet = ActivateBreakpoints(TrackedPages, NULL);
+                
+                if (TrackedPages->BreakpointsSet)
+                    DoOutputDebugString("AllocationHandler: Breakpoints set on newly-allocated executable region at: 0x%x.\n", BaseAddress);        
+                else
+                    DoOutputDebugString("AllocationHandler: Error - unable to activate breakpoints around address 0x%x.\n", BaseAddress);        
+            }
             else
-                DoOutputDebugString("AllocationHandler: Error - failed to guard newly allocated executable region at: 0x%x.\n", BaseAddress);        
+            {
+                TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
+                //TrackedPages->Guarded = ActivateGuardPagesOnProtectedRange(TrackedPages);
+
+                if (TrackedPages->Guarded)
+                    DoOutputDebugString("AllocationHandler: Guarded newly-allocated executable region at 0x%x.\n", BaseAddress);
+                else
+                    DoOutputDebugString("AllocationHandler: Error - failed to guard newly allocated executable region at: 0x%x.\n", BaseAddress);        
+                    
+            }
         }
         else
             DoOutputDebugString("AllocationHandler: Non-executable region at 0x%x tracked but not guarded.\n", BaseAddress);        
     }
     else
-    {   // Allocation not committed, so we can't guard yet
+    {   // Allocation not committed, so we can't set guard pages or breakpoints yet
         TrackedPages->Committed = FALSE;
         TrackedPages->Guarded = FALSE;
         DoOutputDebugString("AllocationHandler: Memory reserved but not committed at 0x%x.\n", BaseAddress);
@@ -301,7 +334,8 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
         return;
     }
     
-    ScanForNonZero(Address, RegionSize);
+    // I've forgotten why I wrote this...
+    //ScanForNonZero(Address, RegionSize);
     
     if (!VirtualQuery(Address, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
@@ -317,14 +351,26 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
     
     // deal with newly tracked region
     if (GuardPagesDisabled)
+    {
         TrackedPages->BreakpointsSet = ActivateBreakpoints(TrackedPages, NULL);
-    else
-        TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
-    //TrackedPages->Guarded = ActivateGuardPagesOnProtectedRange(TrackedPages);
-
-    if (!TrackedPages->Guarded)
-        DoOutputDebugString("ProtectionHandler: Error - unable to activate guard pages around address 0x%x.\n", Address);
         
+        if (TrackedPages->BreakpointsSet)
+            DoOutputDebugString("ProtectionHandler: Breakpoints set on newly-protected executable region at: 0x%x.\n", Address);        
+        else
+            DoOutputDebugString("ProtectionHandler: Error - unable to activate breakpoints around address 0x%x.\n", Address);        
+    }
+    else
+    {
+        TrackedPages->Guarded = ActivateGuardPages(TrackedPages);
+        //TrackedPages->Guarded = ActivateGuardPagesOnProtectedRange(TrackedPages);
+
+        if (TrackedPages->Guarded)
+            DoOutputDebugString("ProtectionHandler: Guarded newly-protected executable region at: 0x%x.\n", Address);        
+        else
+            DoOutputDebugString("ProtectionHandler: Error - unable to activate guard pages around address 0x%x.\n", Address);
+            
+    }
+
     return;
 }
 
@@ -412,7 +458,7 @@ BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
             LastAccessPage = ((DWORD_PTR)TrackedPages->LastAccessAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
             ProtectAddressPage = ((DWORD_PTR)TrackedPages->ProtectAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;
 
-            DoOutputDebugString("StepOverGuardPageFault: DEBUG Base 0x%x LastAccess 0x%x by 0x%x (LW 0x%x LR 0x%x).\n", TrackedPages->BaseAddress, TrackedPages->LastAccessAddress, TrackedPages->LastAccessBy, TrackedPages->LastWriteAddress, TrackedPages->LastReadAddress);
+            //DoOutputDebugString("StepOverGuardPageFault: DEBUG Base 0x%x LastAccess 0x%x by 0x%x (LW 0x%x LR 0x%x).\n", TrackedPages->BaseAddress, TrackedPages->LastAccessAddress, TrackedPages->LastAccessBy, TrackedPages->LastWriteAddress, TrackedPages->LastReadAddress);
             
             if ((DWORD_PTR)TrackedPages->LastAccessAddress >= (DWORD_PTR)TrackedPages->BaseAddress 
                 && ((DWORD_PTR)TrackedPages->LastAccessAddress < ((DWORD_PTR)TrackedPages->BaseAddress + SystemInfo.dwPageSize)))
@@ -611,8 +657,8 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
                 
                 if (DeactivateGuardPages(TrackedPages))
                 {
-                    //if (DumpPEsInTrackedPages(TrackedPages))
-                    //    TrackedPages->PagesDumped = TRUE;
+                    if (DumpPEsInTrackedPages(TrackedPages))
+                        TrackedPages->PagesDumped = TRUE;
                     
                     if (TrackedPages->PagesDumped)
                         DoOutputDebugString("ExtractionGuardPageHandler: PE image(s) detected and dumped.\n");
@@ -898,6 +944,5 @@ BOOL ActivateBreakpoints(PTRACKEDPAGES TrackedPages, struct _EXCEPTION_POINTERS*
     //    DoOutputDebugString("ActivateBreakpoints: Set write breakpoint on e_lfanew address: 0x%x\n", &pDosHeader->e_lfanew);
     //}        
 
-    
     return TRUE;
 }
