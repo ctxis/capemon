@@ -267,7 +267,6 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         AllocationSize = RegionSize;
         DoOutputDebugString("NtAllocateVirtualMemory hook: Memory reserved but not committed at 0x%x.\n", AllocationBase);
     }
-    
 }
 
 //**************************************************************************************

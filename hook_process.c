@@ -613,12 +613,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
 ) {
     BOOL GuardedPages = FALSE;
 
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && (Protect & (PAGE_READWRITE)) && !(Protect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE)) 
+	if (GUARD_PAGES_ENABLED && !called_by_hook() && (Protect & (Protect & EXECUTABLE_FLAGS)) && !(Protect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE)) 
     {
         Protect |= PAGE_GUARD;
         GuardedPages = TRUE;
     }
-    
+        
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
@@ -629,22 +629,21 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
         AddGuardPages(*BaseAddress, *RegionSize, Protect);
     }
     
-	if (NT_SUCCESS(ret) && !called_by_hook() && (Protect & (PAGE_EXECUTE_READWRITE)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*RegionSize >= EXTRACTION_MIN_SIZE || *BaseAddress == AllocationBase)) 
-    {
+    LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    
+    if (NT_SUCCESS(ret) && !called_by_hook())
+        return ret;
+
+    if (*RegionSize < EXTRACTION_MIN_SIZE && *BaseAddress != AllocationBase)
+        return ret;
+    
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return ret;
+    
+    if (GetCurrentProcessId() == our_getprocessid(ProcessHandle))
         AllocationHandler(*BaseAddress, *RegionSize, AllocationType, Protect);
-    }    
-    else
-        DoOutputDebugString("NtAllocateVirtualMemory hook: Ignoring allocation at BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);    
-	
-    //if (ret != STATUS_CONFLICTING_ADDRESSES) {
-		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-	//}
-
-    // debug test
-    if (*RegionSize = 0x1000)
-        DoOutputDebugString("NtAllocateVirtualMemory hook: DEBUG: about to return, BaseAddress:0x%x, RegionSize: 0x%x.\n", *BaseAddress, *RegionSize);    
-
+        
 	return ret;
 }
 
@@ -813,7 +812,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
 	
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((NewAccessProtection & (PAGE_READWRITE)) && !(NewAccessProtection & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE)))
+	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((NewAccessProtection & EXECUTABLE_FLAGS) && !(NewAccessProtection & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && (*NumberOfBytesToProtect >= EXTRACTION_MIN_SIZE)))
     {
         NewAccessProtection |= PAGE_GUARD;
         GuardedPages = TRUE;
@@ -872,7 +871,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 		is_in_dll_range((ULONG_PTR)lpAddress))
 		restore_hooks_on_range((ULONG_PTR)lpAddress, (ULONG_PTR)lpAddress + dwSize);
 
-	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((flNewProtect & (PAGE_READWRITE)) && !(flNewProtect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(hProcess) && (dwSize >= EXTRACTION_MIN_SIZE))) 
+	if (GUARD_PAGES_ENABLED && !called_by_hook() && ((flNewProtect & EXECUTABLE_FLAGS) && !(flNewProtect & (PAGE_GUARD)) && GetCurrentProcessId() == our_getprocessid(hProcess) && (dwSize >= EXTRACTION_MIN_SIZE))) 
     {
         flNewProtect |= PAGE_GUARD;
         GuardedPages = TRUE;
