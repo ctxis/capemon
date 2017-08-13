@@ -30,7 +30,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 
 #include "CAPE.h"
 #include "Debugger.h"
-#include "..\alloc.h"
+//#include "..\alloc.h"
 #include "..\pipe.h"
 #include "..\config.h"
 

@@ -21,7 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include <assert.h>
 #include <Aclapi.h>
 #include "Debugger.h"
-#include "..\alloc.h"
+//#include "..\alloc.h"
 #include "..\config.h"
 #include "..\pipe.h"
 
@@ -94,6 +94,7 @@ extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int
 extern LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
 
 extern BOOL StackWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
+extern BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern PVOID GetPageAddress(PVOID Address);
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
@@ -1126,13 +1127,13 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
     // Some other exception occurred. Pass it to next handler.
-    DllRVA = 0;
-    if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
-        DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
-    else
-        DllName = "unknown";
-        
-    DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
+    //DllRVA = 0;
+    //if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
+    //    DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
+    //else
+    //    DllName = "unknown";
+    //    
+    //DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -1401,7 +1402,7 @@ BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext)
     
     if (!hThread && !pContext)
     {
-        DoOutputDebugString("CheckDebugRegisters - reqruied arguments missing.\n");
+        DoOutputDebugString("CheckDebugRegisters - required arguments missing.\n");
         return FALSE;
     }
 
@@ -2002,7 +2003,7 @@ BOOL ContextSetBreakpoint
     
     if (ContextSetDebugRegister(Context, Register, Size, Address, Type) == FALSE)
 	{
-		DoOutputDebugString("ContextSetBreakpoint: Call to ContextSetDebugRegister failed.\n");
+			DoOutputDebugString("ContextSetBreakpoint: Call to ContextSetDebugRegister failed.\n");
 	}
 	else
 	{
@@ -2591,7 +2592,7 @@ BOOL InitialiseDebugger(void)
 	}
 
 	MainThreadBreakpointList = CreateThreadBreakpoints(MainThreadId);
-
+    
     if (MainThreadBreakpointList == NULL)
     {
 		DoOutputDebugString("InitialiseDebugger: Failed to create thread breakpoints struct.\n");
@@ -2626,6 +2627,9 @@ BOOL InitialiseDebugger(void)
         OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
         CAPEExceptionFilterHandle = NULL;
     }
+    
+    // Global switch for guard pages
+    GuardPagesDisabled = TRUE;
     
     return TRUE;
 }

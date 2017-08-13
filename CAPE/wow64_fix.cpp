@@ -101,7 +101,7 @@ extern "C" BOOL WoW64UnpatchBreakpoint(unsigned int Register)
 //**************************************************************************************
 const LPVOID CreateHook(const DWORD_PTR pKiUserExceptionDispatcher, const DWORD_PTR pNtSetContextThread64, const DWORD_PTR pWow64PrepareForException)
 //**************************************************************************************
-// credit to Omega Red http://pastebin.ca/raw/475547
+// Derived from http://pastebin.ca/raw/475547 (Omega Red)
 {
     unsigned char HookBytes[] =
     {	
