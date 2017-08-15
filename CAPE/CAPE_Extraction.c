@@ -179,6 +179,13 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     MEMORY_BASIC_INFORMATION meminfo;
     PGUARDPAGES CurrentGuardPages;
 
+    if (RegionSize < EXTRACTION_MIN_SIZE)
+        return;
+
+    // Whether we limit tracking to executable regions
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return;
+
     DoOutputDebugString("NtAllocateVirtualMemory hook, BaseAddress:0x%x, RegionSize: 0x%x.\n", BaseAddress, RegionSize);
     
     CurrentGuardPages = GuardPageList;
@@ -278,6 +285,12 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
     int Register;
     BOOL GuardedPages = FALSE;
 
+    if (RegionSize < EXTRACTION_MIN_SIZE)
+        return;
+    
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return;
+    
     DoOutputDebugString("ProtectionHandler: Address: 0x%x, RegionSize: 0x%x\n", Address, RegionSize);
 
     if (!VirtualQuery(Address, &meminfo, sizeof(MEMORY_BASIC_INFORMATION)))
@@ -404,6 +417,87 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
 
                 SetInitialWriteBreakpoint(Address, RegionSize);
             }            
+        }
+    }
+}
+
+//**************************************************************************************
+void FreeHandler(PVOID BaseAddress, SIZE_T RegionSize)
+//**************************************************************************************
+{
+    if (BaseAddress == AllocationBase)
+    {
+        // we check if the buffer has been written to 
+        if (RegionSize && ScanForNonZero(BaseAddress, RegionSize))
+        {                
+            // We want to switch our 'Allocation' pointers to this region,
+            // so let's dump anything in the previous region
+            AllocationDumped = DumpPEsInRange(BaseAddress, RegionSize);
+            
+            if (AllocationDumped)
+            {
+                DoOutputDebugString("FreeHandler: Found and dumped PE image(s).\n");
+                ExtractionClearAll();
+            }
+            else
+            {
+                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, BaseAddress);
+                
+                AllocationDumped = DumpMemory(BaseAddress, RegionSize);
+                
+                if (AllocationDumped)
+                    DoOutputDebugString("FreeHandler: dumped executable memory range at 0x%x prior to its freeing.\n", BaseAddress);
+                else
+                    DoOutputDebugString("FreeHandler: failed to dump executable memory range at 0x%x prior to its freeing.\n", BaseAddress);
+            }
+        }
+        
+        DoOutputDebugString("FreeHandler: Clearing breakpoints in range 0x%x - 0x%x.\n", BaseAddress, (char*)BaseAddress + RegionSize);
+        ExtractionClearAll();
+    }
+}
+
+//**************************************************************************************
+void TerminateHandler(void)
+//**************************************************************************************
+{
+	MEMORY_BASIC_INFORMATION meminfo;
+
+    if (AllocationBase && AllocationSize && !AllocationDumped)
+    {            
+        memset(&meminfo, 0, sizeof(meminfo));
+        
+        if (!VirtualQuery(AllocationBase, &meminfo, sizeof(meminfo)))
+        {
+            DoOutputErrorString("TerminateHandler: unable to query memory region 0x%x", AllocationBase);
+        }
+        else
+        {
+            AllocationDumped = DumpPEsInRange(meminfo.AllocationBase, meminfo.RegionSize);
+            
+            if (AllocationDumped)
+            {
+                DoOutputDebugString("TerminateHandler: PE image(s) detected and dumped.\n");
+                ExtractionClearAll();
+            }
+            else
+            {
+                SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, meminfo.AllocationBase);
+                
+                AllocationDumped = DumpMemory(meminfo.AllocationBase, meminfo.RegionSize);
+                
+                if (AllocationDumped)
+                {
+                    DoOutputDebugString("TerminateHandler: successfully dumped memory range at 0x%x.\n", AllocationBase);
+                    ExtractionClearAll();
+                }                    
+            }
+            
+            if (!AllocationDumped)
+            {
+                DoOutputDebugString("TerminateHandler: Previously marked memory range at: 0x%x is empty or inaccessible.\n", AllocationBase);
+                ExtractionClearAll();
+            }
         }
     }
 }
