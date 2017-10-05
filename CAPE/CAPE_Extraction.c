@@ -865,11 +865,6 @@ BOOL PEHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
             }
         }
     }
-    else if (*(BYTE*)pBreakpointInfo->Address == 'P') 
-    {
-        // Cover the case where PE file is being written a byte at a time
-        DoOutputDebugString("PEHeaderWriteCallback: P written to first byte, awaiting next byte.\n");
-    }
     else
     {
         DoOutputDebugString("PEHeaderWriteCallback: PE header has: 0x%x.\n", *(DWORD*)pNtHeader);
