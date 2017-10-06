@@ -142,7 +142,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
     if(ret != FALSE) {
-        if (DEBUGGER_ENABLED) {
+        if (DEBUGGER_LAUNCHER) {
             DebugNewProcess(lpProcessInformation->dwProcessId, lpProcessInformation->dwThreadId, dwCreationFlags);
             if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
                 ResumeThread(lpProcessInformation->hThread);

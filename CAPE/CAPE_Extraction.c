@@ -179,6 +179,9 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     MEMORY_BASIC_INFORMATION meminfo;
     PGUARDPAGES CurrentGuardPages;
 
+    if (!DebuggerInitialised)
+        return;
+
     if (RegionSize < EXTRACTION_MIN_SIZE)
         return;
 
@@ -285,6 +288,9 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
     int Register;
     BOOL GuardedPages = FALSE;
 
+    if (!DebuggerInitialised)
+        return;
+
     if (RegionSize < EXTRACTION_MIN_SIZE)
         return;
     
@@ -320,7 +326,6 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
         if (Address == meminfo.BaseAddress)
         {
             // we check if the buffer has already been written to 
-            //if (ScanForNonZero(Address, RegionSize))
             if (ScanForNonZero(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))
             {
                 if (DumpPEsInRange(meminfo.AllocationBase, RegionSize + (BYTE*)Address - (BYTE*)meminfo.AllocationBase))

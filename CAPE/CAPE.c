@@ -1581,7 +1581,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // Specific to Extraction package:
-    CapeMetaData->DumpType = EXTRACTION_SHELLCODE;  // default value for now, may be changed to EXTRACTION_PE
+    CapeMetaData->DumpType = EXTRACTION_PE;
     CapeMetaData->Address = NULL;
     
     DumpCount = 0;

@@ -352,8 +352,8 @@ static hook_t g_hooks[] = {
     // Misc Hooks
     //
 
-	//HOOK(msvcrt, memcpy),
-	//HOOK(ntdll, memcpy),  
+	HOOK(msvcrt, memcpy),
+	HOOK(ntdll, memcpy),  
 	HOOK(kernel32, GetProcessHeap),
     
 	// for debugging only

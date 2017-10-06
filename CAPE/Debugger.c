@@ -2240,17 +2240,16 @@ __declspec (naked dllexport) void DebuggerInit(void)
 		pushad
         }
 	
-	if (InitialiseDebugger() == FALSE)
-        DoOutputDebugString("Debugger initialisation failure!\n");
-	
+	DebuggerInitialised = InitialiseDebugger();
+    
 // Package specific code
     GuardPageHandler = (GUARD_PAGE_HANDLER)ExtractionGuardPageHandler;
-#ifdef STANDALONE
-    SetNtAllocateVirtualMemoryBP();
-#endif
 // End of package specific code
 
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
+    if (!DebuggerInitialised)
+        DoOutputDebugString("Debugger initialisation failure!\n");
+    else
+        DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
 
     _asm
     {
@@ -2270,17 +2269,17 @@ void DebuggerInit(void)
 
     StackPointer = GetNestedStackPointer() - 8; // this offset has been determined experimentally - TODO: tidy
     
-	if (InitialiseDebugger() == FALSE)
-        DoOutputDebugString("Debugger initialisation failure!\n");
-	else
-        DoOutputDebugString("Debugger initialised, ESP = 0x%x\n", StackPointer);
-    
+	DebuggerInitialised = InitialiseDebugger();
+
 // Package specific code
     GuardPageHandler = (GUARD_PAGE_HANDLER)ExtractionGuardPageHandler;
 // End of package specific code
 
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
-
+    if (!DebuggerInitialised)
+        DoOutputDebugString("Debugger initialisation failure!\n");
+    else
+        DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
+    
     OEP();
 }
 #pragma optimize("", on)
@@ -2632,28 +2631,35 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
 int launch_debugger()
 //**************************************************************************************
 {
-	DWORD NewThreadId;
-	HANDLE hDebuggerLaunch;
-
-    hDebuggerLaunch = CreateThread(
-        NULL,		
-        0,             
-        DebuggerLaunch,
-        NULL,		
-        0,             
-        &NewThreadId); 
-
-    if (hDebuggerLaunch == NULL) 
+    if (DEBUGGER_LAUNCHER)
     {
-       DoOutputDebugString("CAPE: Failed to create debugger launch thread.\n");
-       return 0;
+        DWORD NewThreadId;
+        HANDLE hDebuggerLaunch;
+
+        hDebuggerLaunch = CreateThread(
+            NULL,		
+            0,             
+            DebuggerLaunch,
+            NULL,		
+            0,             
+            &NewThreadId); 
+
+        if (hDebuggerLaunch == NULL) 
+        {
+           DoOutputDebugString("CAPE: Failed to create debugger launch thread.\n");
+           return 0;
+        }
+        
+        DoOutputDebugString("CAPE: Launching debugger.\n");
+        
+        CloseHandle(hDebuggerLaunch);
+
+        return 1;
     }
     else
     {
-        DoOutputDebugString("CAPE: Launching debugger.\n");
+        DebuggerInitialised = InitialiseDebugger();
+     
+        return DebuggerInitialised;
     }
-
-	CloseHandle(hDebuggerLaunch);
-    
-    return 1;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-void* CAPE_var;
+#define DEBUGGER_LAUNCHER 0
 
 #define BP_EXEC        0x00
 #define BP_WRITE       0x01
@@ -62,6 +62,10 @@ typedef void (WINAPI *PWIN32ENTRY)();
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+BOOL DebuggerInitialised;
+
+void* CAPE_var;
 
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 PVOID CAPEExceptionFilterHandle;
