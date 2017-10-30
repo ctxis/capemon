@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 static _NtQueryInformationProcess pNtQueryInformationProcess;
 static _NtQueryInformationThread pNtQueryInformationThread;
@@ -1799,34 +1800,29 @@ PVOID get_process_image_base(HANDLE process_handle)
 {
 	PROCESS_BASIC_INFORMATION pbi;
 	ULONG ulSize;
-	HANDLE dup_handle = process_handle;
-	PVOID pPEB = 0, ImageBase = 0;
 	PEB Peb;
     SIZE_T dwBytesRead;
 	lasterror_t lasterror;
+	PVOID pPEB = 0, ImageBase = 0;
 
 	get_lasterrors(&lasterror);
 
-	if (process_handle == GetCurrentProcess())
-    {
-		ImageBase = GetModuleHandle(NULL);
-        goto out;
-	}
-
 	memset(&pbi, 0, sizeof(pbi));
 	
-    if(pNtQueryInformationProcess(process_handle, 0, &pbi, sizeof(pbi), &ulSize) >= 0 && ulSize == sizeof(pbi))
+    if (process_handle == GetCurrentProcess())
+		ImageBase = GetModuleHandle(NULL);
+    else if (pNtQueryInformationProcess(process_handle, 0, &pbi, sizeof(pbi), &ulSize) >= 0 && ulSize == sizeof(pbi))
     {
         pPEB = pbi.PebBaseAddress;
         
-        if (ReadProcessMemory(process_handle, pPEB, &Peb, sizeof(Peb), &dwBytesRead))
-        {
+        if (!pPEB)
+            DoOutputDebugString("get_process_image_base: Failed to obtain address of PEB in target process.\n");
+        else if (ReadProcessMemory(process_handle, pPEB, &Peb, sizeof(Peb), &dwBytesRead))
             ImageBase = Peb.ImageBaseAddress;
-        }
-        else return NULL;
+        else
+            DoOutputErrorString("get_process_image_base: ReadProcessMemory failed to read from 0x%p", pPEB);
     }
-    
-out:
+
 	set_lasterrors(&lasterror);
 
 	return ImageBase;

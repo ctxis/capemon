@@ -322,7 +322,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
     
     if (CurrentInjectionInfo)
     {
-        if (CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
+        if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
         {
             CapeMetaData->DumpType = INJECTION_PE;
             CapeMetaData->TargetPid = pid;

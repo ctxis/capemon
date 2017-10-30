@@ -322,11 +322,17 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
             else
             {
                 CurrentInjectionInfo->ProcessHandle = *ProcessHandle;
-                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
                 CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
                 CurrentInjectionInfo->ImageDumped = FALSE;
                 CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
 
+                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
+                
+                if (!CurrentInjectionInfo->ImageBase)
+                    DoOutputDebugString("NtOpenProcess: Error obtaining target process image base for process %d (handle 0x%x).\n", pid, *ProcessHandle);
+                else
+                    DoOutputDebugString("NtOpenProcess: Image base for process %d (handle 0x%x): 0x%p.\n", pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
+                
                 PathLength = GetProcessImageFileName(*ProcessHandle, DevicePath, BufferSize);
 
                 if (!PathLength)
@@ -338,7 +344,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
                     DoOutputErrorString("NtOpenProcess: Error translating target process path");                
             }
         }
-        // else... Some samples call this multiple times for the same process, we can ignore
+        else if (CurrentInjectionInfo->ImageBase == (DWORD_PTR)NULL)
+        {
+            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
+            
+            if (!CurrentInjectionInfo->ImageBase)
+                DoOutputDebugString("NtOpenProcess: Unable to obtain target process image base for process %d (handle 0x%x).\n", pid, *ProcessHandle);
+            else
+                DoOutputDebugString("NtOpenProcess: Image base for process %d (handle 0x%x): 0x%p.\n", pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
+        }
     }    
         
     LOQ_ntstatus("process", "Phi", "ProcessHandle", ProcessHandle,
@@ -550,7 +564,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     
     CurrentInjectionInfo = GetInjectionInfo(pid);
     
-    if (!CurrentInjectionInfo && pid == GetCurrentProcessId())
+    if (pid == GetCurrentProcessId())
     {
         AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
         DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
