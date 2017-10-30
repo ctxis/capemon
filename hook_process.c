@@ -375,7 +375,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
     
     if (CurrentInjectionInfo)
     {
-        if (CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
+        if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
         {
             SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
             
@@ -398,7 +398,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
 	return ret;
 }
-
 
 int process_shutting_down;
 
