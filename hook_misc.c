@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -572,16 +573,64 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	NTSTATUS ret = Old_RtlDecompressBuffer(CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
 		CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
 
-	LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
-		ret ? 0 : *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", ret ? 0 : *FinalUncompressedSize);
-    
-    if ((ret == STATUS_SUCCESS || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0))
 	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
-	{
+    if ((ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0)) {
+        DoOutputDebugString("RtlDecompressBuffer hook: Checking for PE image(s) despite STATUS_BAD_COMPRESSION_BUFFER.\n", UncompressedBuffer, *FinalUncompressedSize);
+        if (!DumpPEsInRange(UncompressedBuffer, UncompressedBufferSize))
+        {   // If this fails let's try our own buffer
+            NTSTATUS NewRet;
+            PUCHAR CapeBuffer = NULL;
+            ULONG NewUncompressedBufferSize = UncompressedBufferSize;
+            do
+            {
+                ULONG UncompressedSize;
+
+                if (CapeBuffer) {
+                    if (DumpPEsInRange(CapeBuffer, NewUncompressedBufferSize)) {
+                        DoOutputDebugString("RtlDecompressBuffer hook: Dumped PE file(s) from new buffer.\n");
+                        free(CapeBuffer);
+                        break;
+                    }
+                    free(CapeBuffer);
+                }
+                    
+                NewUncompressedBufferSize += UncompressedBufferSize;
+                CapeBuffer = (PUCHAR)malloc(NewUncompressedBufferSize);
+                
+                if (!CapeBuffer) {
+                    DoOutputDebugString("RtlDecompressBuffer hook: Failed to allocate new buffer.\n");
+                    break;
+                }
+                else 
+                {
+                    DoOutputDebugString("RtlDecompressBuffer hook: Allocated new buffer of 0x%x bytes.\n", NewUncompressedBufferSize);
+                    NewRet = Old_RtlDecompressBuffer(CompressionFormat, CapeBuffer, NewUncompressedBufferSize,
+                        CompressedBuffer, CompressedBufferSize, &UncompressedSize);
+                }
+            }
+            // Most decompressions should succeed in under 0x10 times original uncompressed buffer size
+            while (NewRet == STATUS_BAD_COMPRESSION_BUFFER && NewUncompressedBufferSize < (UncompressedBufferSize * 0x10)); 
+
+            if (NT_SUCCESS(NewRet)) {
+                if (DumpPEsInRange(UncompressedBuffer, *FinalUncompressedSize))
+                    DoOutputDebugString("RtlDecompressBuffer hook: Dumped PE file(s) from new buffer.\n");
+            }
+            else
+                DoOutputErrorString("RtlDecompressBuffer hook: Failed to decompress to new buffer");
+        }
+        LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+            *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", *FinalUncompressedSize);
+	}
+    else if (NT_SUCCESS(ret)) {
         DoOutputDebugString("RtlDecompressBuffer hook: scanning region 0x%x size 0x%x for PE image(s).\n", UncompressedBuffer, *FinalUncompressedSize);
 		DumpPEsInRange(UncompressedBuffer, *FinalUncompressedSize);
-	}
-    
+        LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+            *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", *FinalUncompressedSize);
+    }
+    else
+        LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+            0, UncompressedBuffer, "UncompressedBufferLength", 0);
+        
     return ret;
 }
 
