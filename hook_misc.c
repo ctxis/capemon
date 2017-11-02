@@ -588,7 +588,6 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
                 if (CapeBuffer) {
                     if (DumpPEsInRange(CapeBuffer, NewUncompressedBufferSize)) {
                         DoOutputDebugString("RtlDecompressBuffer hook: Dumped PE file(s) from new buffer.\n");
-                        free(CapeBuffer);
                         break;
                     }
                     free(CapeBuffer);
@@ -617,6 +616,9 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
             }
             else
                 DoOutputErrorString("RtlDecompressBuffer hook: Failed to decompress to new buffer");
+            
+            if (CapeBuffer)
+                free(CapeBuffer);
         }
         LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
             *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", *FinalUncompressedSize);
