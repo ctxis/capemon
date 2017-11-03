@@ -86,7 +86,7 @@ int addr_in_our_dll_range(void *unused, ULONG_PTR addr)
 	return 0;
 }
 
-static int __called_by_hook(ULONG_PTR stack_pointer, ULONG_PTR frame_pointer)
+int __called_by_hook(ULONG_PTR stack_pointer, ULONG_PTR frame_pointer)
 {
 	return operate_on_backtrace(stack_pointer, frame_pointer, NULL, addr_in_our_dll_range);
 }

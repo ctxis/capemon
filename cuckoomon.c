@@ -360,10 +360,12 @@ static hook_t g_hooks[] = {
 	//
     // Misc Hooks
     //
-
-	//HOOK(msvcrt, memcpy),
-	//HOOK(ntdll, memcpy),  
-	HOOK(kernel32, GetProcessHeap),
+#ifndef _WIN64
+	HOOK(ntdll, memcpy),
+#endif
+	HOOK(msvcrt, memcpy),
+	//HOOK(kernel32, SizeofResource),
+    HOOK(msvcrt, srand),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -1032,11 +1034,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
         // we skip a random given amount of milliseconds each run
         init_startup_time(g_config.startup_time);
-
-        // disable the retaddr check if the user wants so
-        //if(g_config.retaddr_check == 0) {
-        //    hook_disable_retaddr_check();
-        //}
 
 		// initialize our unhook detection
         unhook_init_detection();

@@ -1079,7 +1079,8 @@ HOOKDEF(void, WINAPIV, memcpy,
 
 	Old_memcpy(dest, src, count);
 	
-	LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+    if (count > 0xa00)
+        LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
 	
 	return;
 }

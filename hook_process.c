@@ -35,9 +35,9 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
 extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
 extern void FreeHandler(PVOID BaseAddress);
-extern void ProcessTrackedPages();
+extern void ProcessTrackedRegion();
 
-extern struct TrackedPages *TrackedPageList;
+extern struct TrackedRegion *TrackedRegionList;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -385,13 +385,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
 
-        ProcessTrackedPages();
+        ProcessTrackedRegion();
         process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
 
-        ProcessTrackedPages();
+        ProcessTrackedRegion();
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
@@ -702,7 +702,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 ) {
 	NTSTATUS ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PTRACKEDPAGES TrackedPages;
+    PTRACKEDREGION TrackedRegion;
 
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
@@ -722,7 +722,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
     {
         ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
         
-        if ((TrackedPages = GetTrackedPages(*BaseAddress)) && TrackedPages->Guarded)
+        if ((TrackedRegion = GetTrackedRegion(*BaseAddress)) && TrackedRegion->Guarded)
             *OldAccessProtection &= (~PAGE_GUARD);
     }
     
@@ -753,7 +753,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 ) {
 	BOOL ret;
 	MEMORY_BASIC_INFORMATION meminfo;
-    PTRACKEDPAGES TrackedPages;
+    PTRACKEDREGION TrackedRegion;
     
 	if (flNewProtect == PAGE_EXECUTE_READ && GetCurrentProcessId() == our_getprocessid(hProcess) &&
 		is_in_dll_range((ULONG_PTR)lpAddress))
@@ -773,7 +773,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
     {
         ProtectionHandler(lpAddress, dwSize, flNewProtect);
         
-        if ((TrackedPages = GetTrackedPages(lpAddress)) && TrackedPages->Guarded)
+        if ((TrackedRegion = GetTrackedRegion(lpAddress)) && TrackedRegion->Guarded)
             *lpflOldProtect &= (~PAGE_GUARD);
     }
 

@@ -141,7 +141,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThread,
 		//if (called_by_hook() && pid == GetCurrentProcessId())
 		//	add_ignored_thread((DWORD)ClientId->UniqueThread);
 		pipe("PROCESS:%d:%d,%d", is_suspended(pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread), pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread);
-		if (CreateSuspended == FALSE) {
+		
+        if (DEBUGGER_ENABLED)
+            InitNewThreadBreakpoints((DWORD)(ULONG_PTR)ClientId->UniqueThread);
+        
+        if (CreateSuspended == FALSE) {
 			lasterror_t lasterror;
 			get_lasterrors(&lasterror);
 			ResumeThread(*ThreadHandle);
@@ -164,7 +168,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
     IN      HANDLE ProcessHandle,
     IN      LPTHREAD_START_ROUTINE lpStartAddress,
     IN      PVOID lpParameter,
-    IN      DWORD CreateFlags,
+    IN      BOOL CreateSuspended,
     IN      LONG StackZeroBits,
     IN      LONG SizeOfStackCommit,
     IN      LONG SizeOfStackReserve,
@@ -174,7 +178,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 	
 	NTSTATUS ret = Old_NtCreateThreadEx(hThread, DesiredAccess,
         ObjectAttributes, ProcessHandle, lpStartAddress, lpParameter,
-        CreateFlags | 1, StackZeroBits, SizeOfStackCommit, SizeOfStackReserve,
+        CreateSuspended | TRUE, StackZeroBits, SizeOfStackCommit, SizeOfStackReserve,
         lpBytesBuffer);
 
 	if (NT_SUCCESS(ret)) {
@@ -182,8 +186,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 		//if (called_by_hook() && pid == GetCurrentProcessId())
 		//	add_ignored_thread(tid);
 
-		pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
-		if (!(CreateFlags & 1)) {
+        if (DEBUGGER_ENABLED)
+            InitNewThreadBreakpoints(tid);
+        
+        pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
+		if (!(CreateSuspended & TRUE)) {
 			lasterror_t lasterror;
 			get_lasterrors(&lasterror);
 			ResumeThread(*hThread);
@@ -191,7 +198,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 		}
 	}
 	LOQ_ntstatus("threading", "Ppph", "ThreadHandle", hThread, "ProcessHandle", ProcessHandle,
-        "StartAddress", lpStartAddress, "CreateFlags", CreateFlags);
+        "StartAddress", lpStartAddress, "CreateSuspended", CreateSuspended);
 
 	if (NT_SUCCESS(ret))
 		disable_sleep_skip();
@@ -442,7 +449,18 @@ HOOKDEF(HANDLE, WINAPI, CreateThread,
 	ENSURE_DWORD(lpThreadId);
 
 	ret = Old_CreateThread(lpThreadAttributes, dwStackSize,
-        lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
+        lpStartAddress, lpParameter, dwCreationFlags | CREATE_SUSPENDED, lpThreadId);
+    
+    if (DEBUGGER_ENABLED)
+        InitNewThreadBreakpoints(*lpThreadId);
+
+    if (dwCreationFlags && CREATE_SUSPENDED) {
+        lasterror_t lasterror;
+        get_lasterrors(&lasterror);
+        ResumeThread(ret);
+        set_lasterrors(&lasterror);
+    }
+        
     LOQ_nonnull("threading", "pphI", "StartRoutine", lpStartAddress, "Parameter", lpParameter,
         "CreationFlags", dwCreationFlags, "ThreadId", lpThreadId);
     if (ret != NULL)
@@ -477,8 +495,14 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
         dwStackSize, lpStartAddress, lpParameter, dwCreationFlags | CREATE_SUSPENDED,
         lpThreadId);
 
-	if (ret != NULL) {
-		pipe("PROCESS:%d:%d,%d", is_suspended(pid, *lpThreadId), pid, *lpThreadId);
+	if (ret != NULL) {    
+        if (pid == GetCurrentProcessId()) {
+            if (DEBUGGER_ENABLED)
+                InitNewThreadBreakpoints(*lpThreadId);
+        }
+        else
+            pipe("PROCESS:%d:%d,%d", is_suspended(pid, *lpThreadId), pid, *lpThreadId);
+        
 		if (!(dwCreationFlags & CREATE_SUSPENDED)) {
 			lasterror_t lasterror;
 			get_lasterrors(&lasterror);
@@ -531,18 +555,23 @@ HOOKDEF(NTSTATUS, WINAPI, RtlCreateUserThread,
         "StartParameter", StartParameter, "ThreadHandle", ThreadHandle,
         "ThreadIdentifier", ClientId->UniqueThread);
 
-	if (NT_SUCCESS(ret)) {
-		pipe("PROCESS:%d:%d,%d", is_suspended(pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread), pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread);
+	if (NT_SUCCESS(ret)) {    
+        if (pid == GetCurrentProcessId()) {
+            if (DEBUGGER_ENABLED)
+                InitNewThreadBreakpoints((DWORD)(ULONG_PTR)ClientId->UniqueThread);
+        }
+        else
+            pipe("PROCESS:%d:%d,%d", is_suspended(pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread), pid, (DWORD)(ULONG_PTR)ClientId->UniqueThread);
+        
 		if (CreateSuspended == FALSE) {
 			lasterror_t lasterror;
 			get_lasterrors(&lasterror);
 			ResumeThread(ThreadHandle);
 			set_lasterrors(&lasterror);
 		}
+        
+        disable_sleep_skip();
 	}
-
-	if (NT_SUCCESS(ret))
-		disable_sleep_skip();
 
 	return ret;
 }
