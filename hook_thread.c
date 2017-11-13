@@ -230,13 +230,28 @@ HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
     __in     HANDLE ThreadHandle,
     __inout  LPCONTEXT Context
 ) {
-    NTSTATUS ret = Old_NtGetContextThread(ThreadHandle, Context);
-	if (Context->ContextFlags & CONTEXT_CONTROL)
+	NTSTATUS ret;
+    struct InjectionInfo *CurrentInjectionInfo;    
+	DWORD pid = pid_from_thread_handle(ThreadHandle);
+
+    ret = Old_NtGetContextThread(ThreadHandle, Context);
+    
+    CurrentInjectionInfo = GetInjectionInfo(pid);
+	
+    if (Context->ContextFlags & CONTEXT_CONTROL)
+    {
 #ifdef _WIN64
+        if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+            CurrentInjectionInfo->StackPointer = (LPVOID)Context->Rsp;
+            
 		LOQ_ntstatus("threading", "ppp", "ThreadHandle", ThreadHandle, "EntryPoint", Context->Rcx, "InstructionPointer", Context->Rip);
 #else
+        if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
+            CurrentInjectionInfo->StackPointer = (LPVOID)Context->Esp;
+            
 		LOQ_ntstatus("threading", "ppp", "ThreadHandle", ThreadHandle, "EntryPoint", Context->Eax, "InstructionPointer", Context->Eip);
 #endif
+    }
 	else
 		LOQ_ntstatus("threading", "p", "ThreadHandle", ThreadHandle);
     return ret;
@@ -263,13 +278,22 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
             CurrentInjectionInfo->EntryPoint = Context->Rcx - CurrentInjectionInfo->ImageBase;  // rcx holds ep on 64-bit
 		
         LOQ_ntstatus("threading", "ppp", "ThreadHandle", ThreadHandle, "EntryPoint", Context->Rcx, "InstructionPointer", Context->Rip);
+            
+        if (Context->Rip == (DWORD_PTR)GetProcAddress(GetModuleHandle("ntdll"), "NtMapViewOfSection"))
+            DoOutputDebugString("NtSetContextThread hook: Hollow process entry point set to NtMapViewOfSection (process %d).\n", pid);
+        else
+            DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
 #else
         if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
             CurrentInjectionInfo->EntryPoint = Context->Eax - CurrentInjectionInfo->ImageBase;  // eax holds ep on 32-bit
-		
+
         LOQ_ntstatus("threading", "ppp", "ThreadHandle", ThreadHandle, "EntryPoint", Context->Eax, "InstructionPointer", Context->Eip);
+            
+        if (Context->Eip == (DWORD)GetProcAddress(GetModuleHandle("ntdll"), "NtMapViewOfSection"))
+            DoOutputDebugString("NtSetContextThread hook: Hollow process entry point set to NtMapViewOfSection (process %d).\n", pid);
+        else
+            DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
 #endif
-        DoOutputDebugString("NtSetContextThread hook: Hollow process entry point reset via NtSetContextThread to 0x%x (process %d).\n", CurrentInjectionInfo->EntryPoint, pid);
     }
 	else
 		LOQ_ntstatus("threading", "p", "ThreadHandle", ThreadHandle);

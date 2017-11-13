@@ -44,7 +44,8 @@ typedef struct InjectionInfo
     DWORD_PTR                   EntryPoint;
     BOOL                        WriteDetected;
     BOOL                        ImageDumped;
-    LPVOID                     BufferBase;
+    LPVOID                      BufferBase;
+    LPVOID                      StackPointer;
     unsigned int                BufferSizeOfImage;
     HANDLE                      SectionHandle;
 //    struct InjectionSectionView *SectionViewList;

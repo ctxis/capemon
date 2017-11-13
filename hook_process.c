@@ -834,6 +834,28 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
     {
         CurrentInjectionInfo->WriteDetected = TRUE;
         
+        if ((unsigned int)((PUCHAR)CurrentInjectionInfo->StackPointer - (PUCHAR)lpBaseAddress) < 0x100)
+        {
+            PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
+            
+            DoOutputDebugString("WriteProcessMemory hook: Target address is stack of target process %d.\n", pid);
+            
+            while (CurrentSectionView)
+            {
+#ifdef _WIN64
+                if (CurrentSectionView->SectionHandle == (HANDLE)(*((DWORD_PTR*)lpBuffer + 1)))
+#else
+                if (CurrentSectionView->SectionHandle == (HANDLE)(*((DWORD*)lpBuffer + 1)))
+#endif
+                {
+                    CurrentSectionView->TargetProcessId = pid;
+                    DoOutputDebugString("WriteProcessMemory hook: Section handle 0x%x written to stack of target process %d.\n", CurrentSectionView->SectionHandle, pid);
+                }
+                
+                CurrentSectionView = CurrentSectionView->NextSectionView;
+            }
+        }
+        
         if (NT_SUCCESS(ret) && *lpNumberOfBytesWritten > 0)
         {
             // Check if we have a valid DOS and PE header at the beginning of Buffer
