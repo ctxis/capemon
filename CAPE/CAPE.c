@@ -1182,7 +1182,7 @@ int IsDisguisedPEHeader(LPVOID Buffer)
             pNtHeader->OptionalHeader.FileAlignment == 0
         ) 
         {
-            DoOutputDebugString("IsDisguisedPEHeader: Basic requirements failure.\n (0x%x)", (DWORD_PTR)Buffer);
+            DoOutputDebugString("IsDisguisedPEHeader: Basic requirements failure (Base 0x%x).\n", (DWORD_PTR)Buffer);
             return 0;
         }
 
@@ -1277,7 +1277,6 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
     if (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
-        
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
         {       
             DoOutputDebugString("DumpPEsInRange: Disguised PE image (bad MZ and/or PE headers) at 0x%x.\n", PEPointer);
@@ -1289,17 +1288,29 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             
             *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
             *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
-        }
 
-        SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
-
-        if (DumpImageInCurrentProcess((LPVOID)PEPointer))
-        {
-            DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
-            RetVal = TRUE;
+            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            
+            if (DumpImageInCurrentProcess((LPVOID)PEImage))
+            {
+                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
+                RetVal = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
         }
         else
-            DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+        {
+            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            
+            if (DumpImageInCurrentProcess((LPVOID)PEPointer))
+            {
+                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
+                RetVal = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+        }
         
         //((BYTE*)PEPointer)++;
     }

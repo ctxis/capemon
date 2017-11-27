@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 
 extern DWORD g_tls_hook_index;
+extern void ExtractionCallback();
 
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
@@ -114,7 +115,7 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 	if (h->fully_emulate)
 		return 1;
 
-	if (g_tls_hook_index >= 0x40 && h->new_func == &New_NtAllocateVirtualMemory) {
+    if (g_tls_hook_index >= 0x40 && h->new_func == &New_NtAllocateVirtualMemory) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
 		if (TlsGetValue(g_tls_hook_index) == NULL && (!tmphookinfo_threadid || tmphookinfo_threadid != GetCurrentThreadId())) {
@@ -144,6 +145,8 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
+        ExtractionCallback();
+        
 		return 1;
 	}
 

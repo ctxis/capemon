@@ -33,6 +33,9 @@ extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
 
 extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
+extern int WINAPI enter_hook(ULONG_PTR *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip);
+extern void hook_disable();
+extern void hook_enable();
 
 extern BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 extern int DumpMemory(LPVOID Buffer, unsigned int Size);
@@ -299,7 +302,7 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     if (!(Protect & EXECUTABLE_FLAGS))
         return;
 
-    DoOutputDebugString("AllocationHandler: BaseAddress:0x%x, RegionSize: 0x%x, Protect: 0x%x.\n", BaseAddress, RegionSize, Protect);
+    DoOutputDebugString("Allocation: 0x%x - 0x%x, (size: 0x%x), protection: 0x%x.\n", BaseAddress, (PUCHAR)BaseAddress + RegionSize, RegionSize, Protect);
     
     if (TrackedRegionList)
         TrackedRegion = GetTrackedRegion(BaseAddress);
@@ -307,7 +310,10 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     // if memory was previously reserved but not committed
     if (TrackedRegion && !TrackedRegion->Committed && (AllocationType & MEM_COMMIT))
     {
-        DoOutputDebugString("AllocationHandler: Previously reserved, newly committed region at: 0x%x.\n", BaseAddress);
+        DoOutputDebugString("AllocationHandler: Previously reserved region 0x%x - 0x%x, committing at: 0x%x.\n", TrackedRegion->BaseAddress, (PUCHAR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize, BaseAddress);
+        
+        if (TrackedRegion->BaseAddress != BaseAddress)
+            TrackedRegion->ProtectAddress = BaseAddress;
     }   
     else if (TrackedRegion && (AllocationType & MEM_RESERVE))
     {
@@ -342,9 +348,9 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
                 TrackedRegion->BreakpointsSet = ActivateBreakpoints(TrackedRegion, NULL);
                 
                 if (TrackedRegion->BreakpointsSet)
-                    DoOutputDebugString("AllocationHandler: Breakpoints set on newly-allocated executable region at: 0x%x.\n", BaseAddress);        
+                    DoOutputDebugString("AllocationHandler: Breakpoints set on newly-allocated executable region at: 0x%x.\n", BaseAddress);
                 else
-                    DoOutputDebugString("AllocationHandler: Error - unable to activate breakpoints around address 0x%x.\n", BaseAddress);        
+                    DoOutputDebugString("AllocationHandler: Error - unable to activate breakpoints around address 0x%x.\n", BaseAddress);
             }
             else
             {
@@ -354,12 +360,12 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
                 if (TrackedRegion->Guarded)
                     DoOutputDebugString("AllocationHandler: Guarded newly-allocated executable region at 0x%x.\n", BaseAddress);
                 else
-                    DoOutputDebugString("AllocationHandler: Error - failed to guard newly allocated executable region at: 0x%x.\n", BaseAddress);        
+                    DoOutputDebugString("AllocationHandler: Error - failed to guard newly allocated executable region at: 0x%x.\n", BaseAddress);
                     
             }
         }
         else
-            DoOutputDebugString("AllocationHandler: Non-executable region at 0x%x tracked but not guarded.\n", BaseAddress);        
+            DoOutputDebugString("AllocationHandler: Non-executable region at 0x%x tracked but not guarded.\n", BaseAddress);
     }
     else
     {   // Allocation not committed, so we can't set guard pages or breakpoints yet
@@ -447,9 +453,9 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
         TrackedRegion->BreakpointsSet = ActivateBreakpoints(TrackedRegion, NULL);
         
         if (TrackedRegion->BreakpointsSet)
-            DoOutputDebugString("ProtectionHandler: Breakpoints set on newly-protected executable region at: 0x%x.\n", Address);        
+            DoOutputDebugString("ProtectionHandler: Breakpoints set on newly-protected executable region at: 0x%x.\n", Address);
         else
-            DoOutputDebugString("ProtectionHandler: Error - unable to activate breakpoints around address 0x%x.\n", Address);        
+            DoOutputDebugString("ProtectionHandler: Error - unable to activate breakpoints around address 0x%x.\n", Address);
     }
     else
     {
@@ -457,7 +463,7 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
         //TrackedRegion->Guarded = ActivateGuardPagesOnProtectedRange(TrackedRegion);
 
         if (TrackedRegion->Guarded)
-            DoOutputDebugString("ProtectionHandler: Guarded newly-protected executable region at: 0x%x.\n", Address);        
+            DoOutputDebugString("ProtectionHandler: Guarded newly-protected executable region at: 0x%x.\n", Address);
         else
             DoOutputDebugString("ProtectionHandler: Error - unable to activate guard pages around address 0x%x.\n", Address);
             
@@ -500,7 +506,7 @@ void FreeHandler(PVOID BaseAddress)
             if (TrackedRegion->PagesDumped)
                 DoOutputDebugString("FreeHandler: dumped executable memory range at 0x%x prior to its freeing.\n", TrackedRegion->BaseAddress);
             else
-                DoOutputDebugString("FreeHandler: failed to dump executable memory range at 0x%x prior to its freeing.\n", TrackedRegion->BaseAddress);        
+                DoOutputDebugString("FreeHandler: failed to dump executable memory range at 0x%x prior to its freeing.\n", TrackedRegion->BaseAddress);
         }
     }
     
@@ -645,7 +651,7 @@ BOOL StepOverGuardPageFault(struct _EXCEPTION_POINTERS* ExceptionInfo)
             }
 
             DoOutputDebugString("StepOverGuardPageFault: Failed to activate page guards.\n");
-            return FALSE;        
+            return FALSE;
         }
     }
     else
@@ -711,7 +717,7 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
             
         case EXCEPTION_READ_FAULT:
         
-            TrackedRegion->LastAccessAddress = AccessAddress;            
+            TrackedRegion->LastAccessAddress = AccessAddress;    
             
             TrackedRegion->LastAccessBy = FaultingAddress;
             
@@ -736,11 +742,11 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
                 DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - AccessAddress != FaultingAddress (0x%x, 0x%x).\n", AccessAddress, FaultingAddress);
             }
 
-            TrackedRegion->LastAccessAddress = AccessAddress;            
+            TrackedRegion->LastAccessAddress = AccessAddress;    
             
             if (!(TrackedRegion->Protect & EXECUTABLE_FLAGS))
             {
-                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - pages not marked with execute flag in tracked region list.\n");                
+                DoOutputDebugString("ExtractionGuardPageHandler: Anomaly detected - pages not marked with execute flag in tracked region list.\n");
             }
             
             if (!TrackedRegion->PagesDumped)
@@ -783,6 +789,30 @@ BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo)
 }
 
 //**************************************************************************************
+void ExtractionCallback()
+//**************************************************************************************
+{
+	if (TrackedRegionFromHook == NULL)
+		return;
+
+    hook_disable();
+	
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, TrackedRegionFromHook->BaseAddress);
+
+    if (DumpPEsInTrackedRegion(TrackedRegionFromHook))
+    {
+        TrackedRegionFromHook->PagesDumped = TRUE;
+        DoOutputDebugString("ExtractionCallback: successfully dumped module.\n");
+    }
+
+    TrackedRegionFromHook = NULL;
+    
+    hook_enable();
+    
+    return;
+}
+
+//**************************************************************************************
 BOOL HookReturnCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 //**************************************************************************************
 {
@@ -818,7 +848,7 @@ BOOL HookReturnCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     if (DumpPEsInTrackedRegion(TrackedRegion))
     {
         TrackedRegion->PagesDumped = TRUE;
-        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);        
+        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
         DoOutputDebugString("HookReturnCallback: successfully dumped module.\n");
         return TRUE;
     }
@@ -866,15 +896,27 @@ BOOL OverlayWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POI
     
     ReturnAddress = GetReturnAddress(ExceptionInfo);    
     
-    if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
+    if (ReturnAddress && !TrackedRegionFromHook)
     {
-        TrackedRegionFromHook = TrackedRegion;
-        DoOutputDebugString("OverlayWriteCallback: set exec bp on return address 0x%x.\n", ReturnAddress);
-    }
-    else
-    {
-        DoOutputDebugString("OverlayWriteCallback: Failed to set bp on return address 0x%x.\n", ReturnAddress);
-    }
+		if (InsideHook(NULL, ReturnAddress))
+        {
+            DoOutputDebugString("OverlayWriteCallback: We are in a hooked function with return address 0x%p.\n", ReturnAddress);
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
+            {
+                DoOutputDebugString("OverlayWriteCallback: set exec bp on return address 0x%p.\n", ReturnAddress);
+                TrackedRegionFromHook = TrackedRegion;
+            }
+            else
+            {
+                DoOutputDebugString("OverlayWriteCallback: Failed to set bp on return address 0x%p.\n", ReturnAddress);
+            }            
+        }
+        else
+        {
+            DoOutputDebugString("OverlayWriteCallback: Not in a hooked function, setting callback in enter_hook() to catch next hook (return address 0x%p).\n", ReturnAddress);
+            TrackedRegionFromHook = TrackedRegion;
+        }        
+	}
 	
 	return TRUE;
 }
@@ -884,6 +926,7 @@ BOOL FinalByteWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 //**************************************************************************************
 {
 	PTRACKEDREGION TrackedRegion;
+    LPVOID ReturnAddress;
 
 	if (pBreakpointInfo == NULL)
 	{
@@ -918,10 +961,33 @@ BOOL FinalByteWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         return TRUE;
     }
     else
-    {
         DoOutputDebugString("FinalByteWriteCallback: failed to dump PE module.\n");
-        return FALSE;
-    }
+        
+    ReturnAddress = GetReturnAddress(ExceptionInfo);    
+    
+    if (ReturnAddress && !TrackedRegionFromHook)
+    {
+		if (InsideHook(NULL, ReturnAddress))
+        {
+            DoOutputDebugString("FinalByteWriteCallback: We are in a hooked function with return address 0x%p.\n", ReturnAddress);
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
+            {
+                DoOutputDebugString("FinalByteWriteCallback: set exec bp on return address 0x%p.\n", ReturnAddress);
+                TrackedRegionFromHook = TrackedRegion;
+            }
+            else
+            {
+                DoOutputDebugString("FinalByteWriteCallback: Failed to set bp on return address 0x%p.\n", ReturnAddress);
+            }            
+        }
+        else
+        {
+            DoOutputDebugString("FinalByteWriteCallback: Not in a hooked function, setting callback in enter_hook() to catch next hook (return address 0x%p).\n", ReturnAddress);
+            TrackedRegionFromHook = TrackedRegion;
+        }        
+	}
+	
+	return TRUE;        
 }
 
 //**************************************************************************************
@@ -932,6 +998,7 @@ BOOL FinalSectionHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EX
     DWORD VirtualSize;
     PIMAGE_SECTION_HEADER FinalSectionHeader;
     PIMAGE_NT_HEADERS pNtHeader;
+    LPVOID ReturnAddress;
     
     if (pBreakpointInfo == NULL)
 	{
@@ -960,10 +1027,10 @@ BOOL FinalSectionHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EX
     if (!FinalSectionHeader->VirtualAddress || !FinalSectionHeader->SizeOfRawData)
     {
         DoOutputDebugString("FinalSectionHeaderWriteCallback: current VirtualAddress and FinalSectionHeader->SizeOfRawData not valid: 0x%x, 0x%x (at 0x%x, 0x%x).\n", FinalSectionHeader->VirtualAddress, FinalSectionHeader->SizeOfRawData, (DWORD*)pBreakpointInfo->Address - 1, pBreakpointInfo->Address);
-        return TRUE;        
+        return TRUE;
     }
     else
-        DoOutputDebugString("FinalSectionHeaderWriteCallback: Section %s VirtualAddress, FinalSectionHeader->Misc.VirtualSize, FinalSectionHeader->SizeOfRawData: 0x%x, 0x%x, 0x%x.\n", FinalSectionHeader->Name, FinalSectionHeader->VirtualAddress, FinalSectionHeader->Misc.VirtualSize, FinalSectionHeader->SizeOfRawData);
+        DoOutputDebugString("FinalSectionHeaderWriteCallback: Section %s VirtualAddress: 0x%x, FinalSectionHeader->Misc.VirtualSize: 0x%x, FinalSectionHeader->SizeOfRawData: 0x%x.\n", FinalSectionHeader->Name, FinalSectionHeader->VirtualAddress, FinalSectionHeader->Misc.VirtualSize, FinalSectionHeader->SizeOfRawData);
     
     ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
     
@@ -982,6 +1049,30 @@ BOOL FinalSectionHeaderWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EX
     if (ContextSetNextAvailableBreakpoint(ExceptionInfo->ContextRecord, NULL, sizeof(DWORD), (BYTE*)TrackedRegion->BaseAddress + FinalSectionHeader->VirtualAddress + VirtualSize, BP_WRITE, OverlayWriteCallback))
             DoOutputDebugString("FinalSectionHeaderWriteCallback: Set write breakpoint on final section, last byte: 0x%x\n", (BYTE*)TrackedRegion->BaseAddress + FinalSectionHeader->VirtualAddress + VirtualSize);
     
+    ReturnAddress = GetReturnAddress(ExceptionInfo);    
+    
+    if (ReturnAddress && !TrackedRegionFromHook)
+    {
+		if (InsideHook(NULL, ReturnAddress))
+        {
+            DoOutputDebugString("FinalSectionHeaderWriteCallback: We are in a hooked function with return address 0x%p.\n", ReturnAddress);
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
+            {
+                DoOutputDebugString("FinalSectionHeaderWriteCallback: set exec bp on return address 0x%p.\n", ReturnAddress);
+                TrackedRegionFromHook = TrackedRegion;
+            }
+            else
+            {
+                DoOutputDebugString("FinalSectionHeaderWriteCallback: Failed to set bp on return address 0x%p.\n", ReturnAddress);
+            }            
+        }
+        else
+        {
+            DoOutputDebugString("FinalSectionHeaderWriteCallback: Not in a hooked function, setting callback in enter_hook() to catch next hook (return address 0x%p).\n", ReturnAddress);
+            TrackedRegionFromHook = TrackedRegion;
+        }        
+	}
+	
 	return TRUE;
 }
 
@@ -1018,7 +1109,7 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
     if (DumpPEsInTrackedRegion(TrackedRegion))
     {
         TrackedRegion->PagesDumped = TRUE;
-        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);        
+        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
         DoOutputDebugString("EntryPointExecCallback: successfully dumped module.\n");
         return TRUE;
     }
@@ -1060,7 +1151,7 @@ BOOL EntryPointWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_
     if ((DWORD_PTR)pBreakpointInfo->Address < (DWORD_PTR)TrackedRegion->BaseAddress || (DWORD_PTR)pBreakpointInfo->Address > (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize)
     {
         DoOutputDebugString("EntryPointWriteCallback: current AddressOfEntryPoint is not within allocated region. We assume it's only partially written and await further writes.\n");
-        return TRUE;        
+        return TRUE;
     }
     
     if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, TrackedRegion->ExecBpRegister, 0, (BYTE*)TrackedRegion->BaseAddress+*(DWORD*)(pBreakpointInfo->Address), BP_EXEC, EntryPointExecCallback))
@@ -1085,6 +1176,7 @@ BOOL MagicWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 #else
 	PIMAGE_NT_HEADERS32 pNtHeader;
 #endif
+    LPVOID ReturnAddress;
     DWORD SizeOfHeaders, VirtualSize;
     unsigned int Register;
     
@@ -1127,6 +1219,30 @@ BOOL MagicWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
 	DoOutputDebugString("MagicWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
+    ReturnAddress = GetReturnAddress(ExceptionInfo);
+    
+    if (ReturnAddress && !TrackedRegionFromHook)
+    {
+		if (InsideHook(NULL, ReturnAddress))
+        {
+            DoOutputDebugString("MagicWriteCallback: We are in a hooked function with return address 0x%p.\n", ReturnAddress);
+            if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
+            {
+                DoOutputDebugString("MagicWriteCallback: set exec bp on return address 0x%p.\n", ReturnAddress);
+                TrackedRegionFromHook = TrackedRegion;
+            }
+            else
+            {
+                DoOutputDebugString("MagicWriteCallback: Failed to set bp on return address 0x%p.\n", ReturnAddress);
+            }            
+        }
+        else
+        {
+            DoOutputDebugString("MagicWriteCallback: Not in a hooked function, setting callback in enter_hook() to catch next hook (return address 0x%p).\n", ReturnAddress);
+            TrackedRegionFromHook = TrackedRegion;
+        }        
+	}
+
     pNtHeader = (PIMAGE_NT_HEADERS)((BYTE*)TrackedRegion->BaseAddress + pDosHeader->e_lfanew);
     
     if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
@@ -1143,22 +1259,25 @@ BOOL MagicWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     
     if (*(BYTE*)TrackedRegion->BaseAddress + pNtHeader->OptionalHeader.AddressOfEntryPoint)
     {
-        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);        
+        ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
 
         if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, TrackedRegion->ExecBpRegister, 0, (BYTE*)TrackedRegion->BaseAddress + pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_EXEC, EntryPointExecCallback))
         {
             DoOutputDebugString("MagicWriteCallback: ContextSetNextAvailableBreakpoint on EntryPoint 0x%x failed\n", (BYTE*)TrackedRegion->BaseAddress+*(DWORD*)(pBreakpointInfo->Address));
+            TrackedRegion->ExecBp = NULL;
             return FALSE;
         }
 
-        DoOutputDebugString("MagicWriteCallback: Execution bp %d set on EntryPoint 0x%x.\n", TrackedRegion->ExecBp);
+        TrackedRegion->ExecBp = (BYTE*)TrackedRegion->BaseAddress + pNtHeader->OptionalHeader.AddressOfEntryPoint;
+        
+        DoOutputDebugString("MagicWriteCallback: Execution bp %d set on EntryPoint 0x%x.\n", TrackedRegion->ExecBpRegister, TrackedRegion->ExecBp);
     }
     else
     {
         if (!ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, sizeof(BYTE), (BYTE*)TrackedRegion->BaseAddress + pNtHeader->OptionalHeader.AddressOfEntryPoint, BP_WRITE, EntryPointWriteCallback))
         {
             DoOutputDebugString("MagicWriteCallback: ContextUpdateCurrentBreakpoint failed\n");
-            ContextClearBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);        
+            ContextClearBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
             return FALSE;
         }
         
@@ -1229,7 +1348,6 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 #else
 	PIMAGE_NT_HEADERS32 pNtHeader;
 #endif    
-    LPVOID ReturnAddress;
 
     DoOutputDebugString("PEPointerWriteCallback entry.\n");
     
@@ -1245,35 +1363,20 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 		return FALSE;
 	}
 
-	DoOutputDebugString("PEPointerWriteCallback: Breakpoint %i at Address 0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
+	DoOutputDebugString("PEPointerWriteCallback: Breakpoint %i at Address 0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Address);
 
     TrackedRegion = GetTrackedRegion(pBreakpointInfo->Address);
     
 	if (TrackedRegion == NULL)
 	{
-		DoOutputDebugString("PEPointerWriteCallback: unable to locate address 0x%x in tracked region at 0x%x.\n", pBreakpointInfo->Address, TrackedRegion->BaseAddress);
+		DoOutputDebugString("PEPointerWriteCallback: unable to locate address 0x%p in tracked region at 0x%p.\n", pBreakpointInfo->Address, TrackedRegion->BaseAddress);
 		return FALSE;
 	} 
 
-    ReturnAddress = GetReturnAddress(ExceptionInfo);
-    
-    //if (ReturnAddress && InsideHook(NULL, ReturnAddress))
-    if (ReturnAddress)
-    {
-		DoOutputDebugString("PEPointerWriteCallback: We are in a hooked function with return address 0x%p.\n", ReturnAddress);
-    
-        if (ContextUpdateCurrentBreakpoint(ExceptionInfo->ContextRecord, 0, ReturnAddress, BP_EXEC, HookReturnCallback))
-        {
-            TrackedRegionFromHook = TrackedRegion;
-            DoOutputDebugString("PEPointerWriteCallback: set exec bp on return address 0x%x.\n", ReturnAddress);
-        }
-        else
-        {
-            DoOutputDebugString("PEPointerWriteCallback: Failed to set bp on return address 0x%x.\n", ReturnAddress);
-        }
-	}
-
-    pDosHeader = (PIMAGE_DOS_HEADER)TrackedRegion->BaseAddress;
+    if (TrackedRegion->ProtectAddress)
+        pDosHeader = (PIMAGE_DOS_HEADER)TrackedRegion->ProtectAddress;
+    else
+        pDosHeader = (PIMAGE_DOS_HEADER)TrackedRegion->BaseAddress;
     
     if (!pDosHeader->e_lfanew) 
     {
@@ -1283,8 +1386,9 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
     if ((ULONG)pDosHeader->e_lfanew > PE_HEADER_LIMIT)
     {
+        // This is to be expected a lot when it's not a PE.
         DoOutputDebugString("PEPointerWriteCallback: candidate pointer to PE header too big: 0x%x.\n", pDosHeader->e_lfanew);
-        return FALSE;
+        return TRUE;
     }
 
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, TrackedRegion->BaseAddress);
@@ -1294,7 +1398,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         if (DumpPEsInTrackedRegion(TrackedRegion))
         {
             TrackedRegion->PagesDumped = TRUE;
-            ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);        
+            ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
             DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
             return TRUE;
         }
@@ -1313,7 +1417,7 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
             if (DumpPEsInTrackedRegion(TrackedRegion))
             {
                 TrackedRegion->PagesDumped = TRUE;
-                ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);        
+                ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
                 DoOutputDebugString("PEPointerWriteCallback: successfully dumped module.\n");
                 return TRUE;
             }
@@ -1562,7 +1666,7 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
             DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked region protect address 0x%x.\n", TrackedRegion->ExecBp);
             return FALSE;
         }
-
+    
         DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", TrackedRegion->ExecBp);
     }
     else
@@ -1572,10 +1676,10 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
             DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked region protect address 0x%x.\n", TrackedRegion->ExecBp);
             return FALSE;
         }
-
+    
         DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", TrackedRegion->ExecBp);
     }
-
+    
     pDosHeader = (PIMAGE_DOS_HEADER)TrackedRegion->ExecBp;
     
     if (ExceptionInfo == NULL)
@@ -1585,7 +1689,7 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
             DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked region protect address 0x%x.\n", TrackedRegion->ExecBp);
             return FALSE;
         }
-
+    
         DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", TrackedRegion->ExecBp);
     }
     else
@@ -1595,7 +1699,7 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
             DoOutputDebugString("ActivateBreakpoints: SetNextAvailableBreakpoint failed to set exec bp on tracked region protect address 0x%x.\n", TrackedRegion->ExecBp);
             return FALSE;
         }
-
+    
         DoOutputDebugString("ActivateBreakpoints: Set write breakpoint on e_lfanew address: 0x%x\n", &pDosHeader->e_lfanew);
     }
 
