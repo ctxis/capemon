@@ -1430,6 +1430,12 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
 
     if (TrackedRegion->MagicBp)
     {
+        if (TrackedRegion->MagicBp == &pNtHeader->OptionalHeader.Magic)
+        {
+            DoOutputDebugString("PEPointerWriteCallback: Leaving 'magic' breakpoint unchanged.\n");
+            return TRUE;
+        }
+        
         if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, TrackedRegion->MagicBpRegister, sizeof(WORD), &pNtHeader->OptionalHeader.Magic, BP_WRITE, MagicWriteCallback))
         {
             DoOutputDebugString("PEPointerWriteCallback: Failed to set breakpoint on magic address.\n");
@@ -1690,7 +1696,7 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
             return FALSE;
         }
     
-        DoOutputDebugString("ActivateBreakpoints: Set execution breakpoint on protected address: 0x%x\n", TrackedRegion->ExecBp);
+        DoOutputDebugString("ActivateBreakpoints: Set write breakpoint on e_lfanew address: 0x%x\n", &pDosHeader->e_lfanew);
     }
     else
     {    

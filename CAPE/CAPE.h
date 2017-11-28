@@ -103,6 +103,7 @@ extern CHAR s_szDllPath[MAX_PATH];
 //Global debugger switch
 #define DEBUGGER_ENABLED 1
 
+SIZE_T GetAllocationSize(PVOID Address);
 PVOID GetPageAddress(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
 BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
@@ -121,8 +122,6 @@ void DumpSectionViewsForPid(DWORD Pid);
 
 unsigned int DumpSize;
 SYSTEM_INFO SystemInfo;
-
-
 
 struct CapeMetadata *CapeMetaData;
 

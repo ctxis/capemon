@@ -140,6 +140,45 @@ BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* Driv
 }
 
 //**************************************************************************************
+SIZE_T GetAllocationSize(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, AddressOfPage;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationSize: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationSize: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("GetAllocationSize: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    return (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+}
+
+//**************************************************************************************
 BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVOID Address)
 //**************************************************************************************
 {

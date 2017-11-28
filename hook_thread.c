@@ -143,7 +143,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThread,
 		
             if (!called_by_hook() && DEBUGGER_ENABLED)
             {
-                DoOutputDebugString("NtCreateThread: calling InitNewThreadBreakpoints");
+                DoOutputDebugString("NtCreateThread: Initialising breakpoints for thread %d.\n", ClientId->UniqueThread);
                 InitNewThreadBreakpoints((DWORD)(ULONG_PTR)ClientId->UniqueThread);
             }
         
@@ -190,7 +190,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 
         if (!called_by_hook() && DEBUGGER_ENABLED)
         {
-            DoOutputDebugString("NtCreateThreadEx: calling InitNewThreadBreakpoints");
+            DoOutputDebugString("NtCreateThreadEx: Initialising breakpoints for thread %d.\n", tid);
             InitNewThreadBreakpoints(tid);
         }
         
@@ -462,7 +462,7 @@ HOOKDEF(HANDLE, WINAPI, CreateThread,
     
     if (!called_by_hook() && DEBUGGER_ENABLED)
     {
-        DoOutputDebugString("CreateThread: calling InitNewThreadBreakpoints");
+        DoOutputDebugString("CreateThread: Initialising breakpoints for thread %d.\n", *lpThreadId);
         InitNewThreadBreakpoints(*lpThreadId);
     }
 
@@ -511,7 +511,7 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
         if (pid == GetCurrentProcessId()) {
             if (!called_by_hook() && DEBUGGER_ENABLED)
             {
-                DoOutputDebugString("CreateRemoteThread: calling InitNewThreadBreakpoints");
+                DoOutputDebugString("CreateRemoteThread: Initialising breakpoints for thread %d.\n", *lpThreadId);
                 InitNewThreadBreakpoints(*lpThreadId);
             }
         }
@@ -574,7 +574,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlCreateUserThread,
         if (pid == GetCurrentProcessId()) {
             if (!called_by_hook() && DEBUGGER_ENABLED)
             {
-                DoOutputDebugString("RtlCreateUserThread: calling InitNewThreadBreakpoints");
+                DoOutputDebugString("RtlCreateUserThread: Initialising breakpoints for thread %d.\n", ClientId->UniqueThread);
                 InitNewThreadBreakpoints((DWORD)(ULONG_PTR)ClientId->UniqueThread);
             }
         }
