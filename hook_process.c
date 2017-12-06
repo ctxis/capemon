@@ -348,9 +348,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
         {
             CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
             
-            if (!CurrentInjectionInfo->ImageBase)
-                DoOutputDebugString("NtOpenProcess: Unable to obtain target process image base for process %d (handle 0x%x).\n", pid, *ProcessHandle);
-            else
+            if (CurrentInjectionInfo->ImageBase)
                 DoOutputDebugString("NtOpenProcess: Image base for process %d (handle 0x%x): 0x%p.\n", pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
         }
     }    
@@ -516,7 +514,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
     {
         if (CurrentSectionView->LocalView == BaseAddress)
         {
-            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view, faking.\n");
+            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, faking.\n", BaseAddress);
 
 			ret = STATUS_SUCCESS;
 
@@ -565,8 +563,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     
     if (pid == GetCurrentProcessId())
     {
-        AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
-        DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
+        if (!GetSectionView(SectionHandle))
+        {
+            AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
+            DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
+        }
     }
     else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {

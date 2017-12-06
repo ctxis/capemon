@@ -340,18 +340,10 @@ PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
 {
     PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
 
-    //TODO remove debug
-    DoOutputDebugString("GetSectionView: Global section view list 0x%x, looking for handle 0x%x\n", CurrentSectionView, SectionHandle);
-	
     while (CurrentSectionView)
 	{
-        //TODO remove debug
-        DoOutputDebugString("GetSectionView: looking at section handle 0x%x.\n", CurrentSectionView->SectionHandle);
         if (CurrentSectionView->SectionHandle == SectionHandle)
-        {
-            DoOutputDebugString("GetSectionView: returning section view pointer 0x%x.\n", CurrentSectionView);
             return CurrentSectionView;
-        }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;
 	}
