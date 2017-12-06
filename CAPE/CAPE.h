@@ -20,9 +20,10 @@ extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
 
 //Global debugger switch
-#define DEBUGGER_ENABLED 0
+#define DEBUGGER_ENABLED 1
 
 PVOID GetPageAddress(PVOID Address);
+PVOID GetAllocationBase(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
 BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 int DumpMemory(LPVOID Buffer, unsigned int Size);

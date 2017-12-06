@@ -140,6 +140,30 @@ BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* Driv
 }
 
 //**************************************************************************************
+PVOID GetAllocationBase(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationBase: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationBase: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    return MemInfo.AllocationBase;
+}
+
+//**************************************************************************************
 BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVOID Address)
 //**************************************************************************************
 {
@@ -1591,7 +1615,7 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    // g_config.procdump = 0;
+    g_config.procdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;

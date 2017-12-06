@@ -27,8 +27,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 extern int RoutineProcessDump();
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL SetInitialBreakpoint();
+extern PVOID ModuleBase;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -296,6 +301,40 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess,
         ObjectAttributes, ClientId);
+        
+    if (NT_SUCCESS(ret) && !called_by_hook()){
+        CONTEXT ContextRecord;
+        PVOID ReturnAddress, AllocationBase;
+        
+#ifdef _WIN64
+        RtlCaptureContext(&ContextRecord);
+#else
+        ZeroMemory(&ContextRecord, sizeof(CONTEXT));
+
+        __asm {
+        Label:
+            mov eax, [Label];
+            mov [ContextRecord.Eip], eax;
+            mov [ContextRecord.Ebp], ebp;
+            mov [ContextRecord.Esp], esp;
+        }
+#endif
+        ReturnAddress = GetReturnAddress(&ContextRecord);
+        
+        if (ReturnAddress) {
+            AllocationBase = GetAllocationBase(ReturnAddress);
+            DoOutputDebugString("NtOpenProcess hook: return address 0x%p, allocation base 0x%p.\n", ReturnAddress, AllocationBase);
+            
+            if (AllocationBase && AllocationBase != GetModuleHandle(NULL)) {
+                ModuleBase = AllocationBase;
+                SetInitialBreakpoint();
+            }
+        }
+        else
+            DoOutputDebugString("NtOpenProcess hook: failed to get return address.\n");
+        
+    }
+    
     LOQ_ntstatus("process", "Phi", "ProcessHandle", ProcessHandle,
         "DesiredAccess", DesiredAccess,
         "ProcessIdentifier", pid);

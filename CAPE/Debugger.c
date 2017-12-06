@@ -79,6 +79,7 @@ typedef struct _INJECT_STRUCT {
 
 DWORD LengthMask[MAX_DEBUG_REGISTER_DATA_SIZE + 1] = DEBUG_REGISTER_LENGTH_MASKS;
 
+unsigned int DepthCount;
 DWORD MainThreadId;
 struct ThreadBreakpoints *MainThreadBreakpointList;
 SINGLE_STEP_HANDLER SingleStepHandler;
@@ -92,6 +93,7 @@ extern DWORD g_our_dll_size;
 extern BOOLEAN is_address_in_ntdll(ULONG_PTR address);
 extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset);
 extern LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
+extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
 
 extern PVOID GetPageAddress(PVOID Address);
 extern unsigned int address_is_in_stack(DWORD Address);
@@ -107,6 +109,72 @@ void DebugOutputThreadBreakpoints();
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
 unsigned int TrapIndex;
+
+//**************************************************************************************
+BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
+//**************************************************************************************
+{
+    DoOutputDebugString("CountDepth: Address 0x%p.\n", Address);
+    
+#ifdef _WIN64
+    if (DepthCount == 1 && ReturnAddress)
+#else
+    if (DepthCount == 3 && ReturnAddress)
+#endif
+    {
+        DepthCount = 0;
+        *ReturnAddress = Address;
+        return TRUE;
+    }
+    
+    DepthCount++;
+    
+    return FALSE;
+}
+
+//**************************************************************************************
+LPVOID GetReturnAddress(PCONTEXT ContextRecord)
+//**************************************************************************************
+{
+    LPVOID ReturnAddress = NULL;
+    
+    if (!ContextRecord)
+	{
+        DoOutputDebugString("GetReturnAddress: Null context record passed as argument - error.\n");
+        return FALSE;
+	}
+    
+    __try
+    {
+#ifdef _WIN64
+        DoOutputDebugString("GetReturnAddress: Rsp 0x%p, Rip 0x%p.\n", ContextRecord->Rsp, ContextRecord->Rip);
+        operate_on_backtrace((ULONG_PTR)ContextRecord->Rsp, (ULONG_PTR)ContextRecord->Rip, &ReturnAddress, CountDepth);
+#else
+        DoOutputDebugString("GetReturnAddress: Esp 0x%p, Ebp 0x%p.\n", ContextRecord->Esp, ContextRecord->Ebp);
+        operate_on_backtrace((ULONG_PTR)ContextRecord->Esp, (ULONG_PTR)ContextRecord->Ebp, &ReturnAddress, CountDepth);
+#endif
+        
+//#ifdef _WIN64
+//#else
+//#endif
+        if (!ReturnAddress)
+        {
+            DoOutputDebugString("GetReturnAddress: Failed to get return address.\n");
+            return NULL;
+        }
+        
+        return ReturnAddress;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+#ifdef _WIN64
+        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with Rip 0x%p and Rbp 0x%p.\n", ContextRecord->Rip, ContextRecord->Rbp);
+#else
+        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", ContextRecord->Ebp);
+#endif
+        return NULL;
+    }
+}
 
 //**************************************************************************************
 BOOL IsInTrackedPages(PVOID Address)
@@ -2608,6 +2676,7 @@ BOOL InitialiseDebugger(void)
     SingleStepHandler = NULL;
     SampleVectoredHandler = NULL;
     VECTORED_HANDLER = TRUE;
+    DepthCount = 0;
 
 #ifndef _WIN64
     // Ensure wow64 patch is installed if needed
@@ -2664,10 +2733,10 @@ __declspec (naked dllexport) void DebuggerInit(void)
 	if (InitialiseDebugger() == FALSE)
         DoOutputDebugString("Debugger initialisation failure!\n");
 	
-// Package specific code
-// End of package specific code
 
-	DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
+	// The initial breakpoint is set by the NtOpenProcess hook (hook_process.c)
+    
+    DoOutputDebugString("Debugger initialisation complete, about to execute OEP at 0x%x\n", OEP);
 
     _asm
     {
@@ -2692,8 +2761,7 @@ __declspec(dllexport) void DebuggerInit(void)
 	else
         DoOutputDebugString("Debugger initialised, ESP = 0x%x\n", StackPointer);
     
-// Package specific code
-// End of package specific code
+	// The initial breakpoint is set by the NtOpenProcess hook (hook_process.c)
 
 	DoOutputDebugString("Debugger initialisation complete, about to execute OEP.\n");
 
@@ -2769,15 +2837,15 @@ BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD Creati
 
     hCapePipe = CreateNamedPipe
     ( 
-        lpszPipename,             	
+        lpszPipename,	
         PIPE_ACCESS_DUPLEX,       	
         PIPE_TYPE_MESSAGE |       	
         PIPE_READMODE_MESSAGE |   	
-        PIPE_WAIT,                	
+        PIPE_WAIT,   	
         PIPE_UNLIMITED_INSTANCES, 	
-        PIPEBUFSIZE,                
-        PIPEBUFSIZE,                
-        0,                        	
+        PIPEBUFSIZE,   
+        PIPEBUFSIZE,   
+        0,           	
         NULL
     );								
 
@@ -2913,10 +2981,10 @@ DWORD WINAPI DebuggerLaunch(LPVOID lpParam)
 		lpszPipename,   
 		GENERIC_READ |  
 		GENERIC_WRITE,  
-		0,              
+		0, 
 		NULL,           
 		OPEN_EXISTING,  
-		0,              
+		0, 
 		NULL);          
 
 		if (hPipe != INVALID_HANDLE_VALUE) 
@@ -3051,28 +3119,35 @@ DWORD WINAPI DebuggerLaunch(LPVOID lpParam)
 int launch_debugger()
 //**************************************************************************************
 {
-	DWORD NewThreadId;
-	HANDLE hDebuggerLaunch;
-
-    hDebuggerLaunch = CreateThread(
-        NULL,		
-        0,             
-        DebuggerLaunch,
-        NULL,		
-        0,             
-        &NewThreadId); 
-
-    if (hDebuggerLaunch == NULL) 
+    if (DEBUGGER_LAUNCHER)
     {
-       DoOutputDebugString("CAPE: Failed to create debugger launch thread.\n");
-       return 0;
+        DWORD NewThreadId;
+        HANDLE hDebuggerLaunch;
+
+        hDebuggerLaunch = CreateThread(
+            NULL,		
+            0,
+            DebuggerLaunch,
+            NULL,		
+            0,
+            &NewThreadId); 
+
+        if (hDebuggerLaunch == NULL) 
+        {
+           DoOutputDebugString("CAPE: Failed to create debugger launch thread.\n");
+           return 0;
+        }
+        
+        DoOutputDebugString("CAPE: Launching debugger.\n");
+        
+        CloseHandle(hDebuggerLaunch);
+
+        return 1;
     }
     else
     {
-        DoOutputDebugString("CAPE: Launching debugger.\n");
+        DebuggerInitialised = InitialiseDebugger();
+     
+        return DebuggerInitialised;
     }
-
-	CloseHandle(hDebuggerLaunch);
-    
-    return 1;
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#define DEBUGGER_LAUNCHER 0
+
 void *CAPE_var1, *CAPE_var2, *CAPE_var3, *CAPE_var4;
 
 #define BP_EXEC        0x00
@@ -82,6 +84,8 @@ typedef void (WINAPI *PWIN32ENTRY)();
 extern "C" {
 #endif
 
+BOOL DebuggerInitialised;
+
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 PVOID CAPEExceptionFilterHandle;
 SAMPLE_HANDLER SampleVectoredHandler;
@@ -122,6 +126,8 @@ int launch_debugger(void);
 
 void ShowStack(DWORD_PTR StackPointer, unsigned int NumberOfRecords);
 
+BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address);
+LPVOID GetReturnAddress(PCONTEXT ContextRecord);
 BOOL IsInTrackedPages(PVOID Address);
 PTRACKEDPAGES CreateTrackedPagess();
 PTRACKEDPAGES GetTrackedPages(PVOID Address);
