@@ -31,7 +31,6 @@ extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 
 unsigned int DumpCount, Correction, StepCount;
-BOOL Patched;
 PVOID ModuleBase;
 
 //**************************************************************************************
@@ -62,14 +61,27 @@ BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
         return TRUE;
     }
     
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ExceptionRecord->ExceptionAddress, 0x1FB, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+#ifdef _WIN64
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x1FB, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+#else
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x1FB, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+#endif
         
-    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ExceptionRecord->ExceptionAddress, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
+#ifdef _WIN64
+    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
+#else
+    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
+#endif
     
-    if (strcmp(DecodedInstruction.mnemonic.p, "JZ"))
+    if (!strcmp(DecodedInstruction.mnemonic.p, "CMP"))
     {
-        DoOutputDebugString("SingleStepDisassemble: Conditional jump detected, skipping.");        
-        (unsigned int)ExceptionInfo->ContextRecord->Eip += 2;
+#ifdef _WIN64
+        DoOutputDebugString("SingleStepDisassemble: Comparison detected, RCX = 0x%x, patching.", ExceptionInfo->ContextRecord->Rcx);        
+        ExceptionInfo->ContextRecord->Rcx = 0;        
+#else
+        DoOutputDebugString("SingleStepDisassemble: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
+        ExceptionInfo->ContextRecord->Eax = 0;        
+#endif
     }
         
     SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepDisassemble);
@@ -95,18 +107,6 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
     StepCount = 0;
 
-//    if (!Patched)
-//    {
-//#ifdef _WIN64
-//        ExceptionInfo->ContextRecord->Rcx = 0;
-//		DoOutputDebugString("BreakpointCallback: patched ecx.\n");
-//#else
-//        ExceptionInfo->ContextRecord->Eax = 0;
-//		DoOutputDebugString("BreakpointCallback: patched eax.\n");
-//#endif
-//        Patched = TRUE;
-//    }
-    
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepDisassemble);
@@ -118,7 +118,6 @@ BOOL SetInitialBreakpoint()
 {
     DWORD_PTR BreakpointVA;
     DWORD Register = 0;
-    Patched = FALSE;
     
 	if (CAPE_var1 == NULL)
 	{
@@ -129,13 +128,6 @@ BOOL SetInitialBreakpoint()
     DoOutputDebugString("SetInitialBreakpoint: About to call FileOffsetToVA with image base 0x%p and offset 0x%x.\n", ModuleBase, CAPE_var1);
     
     BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)CAPE_var1);
-    
-    if (!BreakpointVA)
-    {
-        DoOutputDebugString("SetInitialBreakpoint: Unable to calculate virtual address for initial breakpoint.\n");
-        DumpMemory(ModuleBase, 187904);
-        return FALSE;
-    }
     
     if (SetBreakpoint(GetCurrentThreadId(), Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
     {

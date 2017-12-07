@@ -114,12 +114,10 @@ unsigned int TrapIndex;
 BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
 //**************************************************************************************
 {
-    DoOutputDebugString("CountDepth: Address 0x%p.\n", Address);
-    
 #ifdef _WIN64
     if (DepthCount == 1 && ReturnAddress)
 #else
-    if (DepthCount == 3 && ReturnAddress)
+    if (DepthCount == 2 && ReturnAddress)
 #endif
     {
         DepthCount = 0;
@@ -154,9 +152,6 @@ LPVOID GetReturnAddress(PCONTEXT ContextRecord)
         operate_on_backtrace((ULONG_PTR)ContextRecord->Esp, (ULONG_PTR)ContextRecord->Ebp, &ReturnAddress, CountDepth);
 #endif
         
-//#ifdef _WIN64
-//#else
-//#endif
         if (!ReturnAddress)
         {
             DoOutputDebugString("GetReturnAddress: Failed to get return address.\n");

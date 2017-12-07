@@ -70,7 +70,7 @@ extern "C" DWORD_PTR GetEntryPointVA(DWORD_PTR modBase)
 extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
 //**************************************************************************************
 {
-    DWORD_PTR Test;
+    DWORD_PTR VirtualAddress;
     PeParser * peFile = 0;
 
 	ScyllaInitCurrentProcess();
@@ -80,11 +80,11 @@ extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
     if (peFile->isValidPeFile())
     {
         //return peFile->convertOffsetToRVAVector(dwOffset) + modBase;
-        Test = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+        VirtualAddress = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
             
-        DoOutputDebugString("FileOffsetToVA: Debug - VA = 0x%p.\n", Test);
+        DoOutputDebugString("FileOffsetToVA: Virtual Address = 0x%p.\n", VirtualAddress);
         
-        return Test;
+        return VirtualAddress;
     }
     else
         DoOutputDebugString("FileOffsetToVA: Invalid PE image at 0x%p.\n", modBase);
