@@ -76,11 +76,19 @@ BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
     if (!strcmp(DecodedInstruction.mnemonic.p, "CMP"))
     {
 #ifdef _WIN64
-        DoOutputDebugString("SingleStepDisassemble: Comparison detected, RCX = 0x%x, patching.", ExceptionInfo->ContextRecord->Rcx);        
-        ExceptionInfo->ContextRecord->Rcx = 0;        
+        if (!strncmp(DecodedInstruction.operands.p, "ECX", 3))
+        {
+            DoOutputDebugString("SingleStepDisassemble: Comparison detected, RCX = 0x%x, patching.", ExceptionInfo->ContextRecord->Rcx);
+            ExceptionInfo->ContextRecord->Rcx = 0;
+        }
+        else if (!strncmp(DecodedInstruction.operands.p, "R11", 3))
+        {
+            DoOutputDebugString("SingleStepDisassemble: Comparison detected, R11 = 0x%x, patching.", ExceptionInfo->ContextRecord->R11);
+            ExceptionInfo->ContextRecord->R11 = 0;
+        }
 #else
         DoOutputDebugString("SingleStepDisassemble: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
-        ExceptionInfo->ContextRecord->Eax = 0;        
+        ExceptionInfo->ContextRecord->Eax = 0;
 #endif
     }
         
@@ -116,18 +124,23 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
 BOOL SetInitialBreakpoint()
 {
-    DWORD_PTR BreakpointVA;
+    DWORD_PTR BreakpointVA, FileOffset;
     DWORD Register = 0;
     
-	if (CAPE_var1 == NULL)
+	if (CAPE_var1 == NULL)// && CAPE_var2 == NULL)
 	{
 		DoOutputDebugString("SetInitialBreakpoint: Error - No address specified for Ursnif decryption function.\n");
 		return FALSE;
 	}
 
-    DoOutputDebugString("SetInitialBreakpoint: About to call FileOffsetToVA with image base 0x%p and offset 0x%x.\n", ModuleBase, CAPE_var1);
+	if (CAPE_var1)
+        FileOffset = CAPE_var1;
+    //if (CAPE_var2)
+    //    FileOffset = CAPE_var2;
     
-    BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)CAPE_var1);
+    DoOutputDebugString("SetInitialBreakpoint: About to call FileOffsetToVA with image base 0x%p and offset 0x%x.\n", ModuleBase, FileOffset);
+    
+    BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
     
     if (SetBreakpoint(GetCurrentThreadId(), Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
     {
