@@ -516,7 +516,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
         {
             DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, faking.\n", BaseAddress);
 
-			ret = STATUS_SUCCESS;
+            ret = STATUS_SUCCESS;
 
             LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
                 "RegionSize", map_size);
@@ -563,10 +563,21 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     
     if (pid == GetCurrentProcessId())
     {
-        if (!GetSectionView(SectionHandle))
+        PINJECTIONSECTIONVIEW CurrentSectionView = GetSectionView(SectionHandle);
+        
+        if (!CurrentSectionView)
         {
             AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
             DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
+        }
+        else
+        {
+            if (NT_SUCCESS(ret) && CurrentSectionView->LocalView != *BaseAddress)
+            {
+                CurrentSectionView->LocalView = *BaseAddress;
+                CurrentSectionView->ViewSize = *ViewSize;
+                DoOutputDebugString("NtMapViewOfSection hook: Updated local view to 0x%x for section view with handle 0x%x.\n", *BaseAddress, SectionHandle);
+            }
         }
     }
     else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
