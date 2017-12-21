@@ -262,9 +262,17 @@ PINJECTIONINFO GetInjectionInfo(DWORD ProcessId)
 //**************************************************************************************
 {
     DWORD CurrentProcessId;  
-	
-    PINJECTIONINFO CurrentInjectionInfo = InjectionInfoList;
-	while (CurrentInjectionInfo)
+	PINJECTIONINFO CurrentInjectionInfo;
+    
+    if (InjectionInfoList == NULL)
+    {
+        DoOutputDebugString("GetInjectionInfo: Failed to find InjectionInfoList.\n");
+        return NULL;
+    }
+
+    CurrentInjectionInfo = InjectionInfoList;
+    
+    while (CurrentInjectionInfo)
 	{
 		CurrentProcessId = CurrentInjectionInfo->ProcessId;
         
@@ -330,6 +338,8 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId)
         
         CurrentInjectionInfo->ProcessId = ProcessId;
 	}
+
+    DoOutputDebugString("CreateInjectionInfo: Created injection info at 0x%x for process %d.\n", CurrentInjectionInfo, CurrentInjectionInfo->ProcessId);
     
     return CurrentInjectionInfo;
 }

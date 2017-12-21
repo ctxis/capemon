@@ -188,7 +188,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 
             WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
             
-            DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
+            DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", CurrentInjectionInfo->ProcessId, CurrentInjectionInfo->ImageBase);
         }
 
         // if the CREATE_SUSPENDED flag was not set, then we have to resume

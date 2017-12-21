@@ -584,7 +584,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     {
         DoOutputDebugString("NtMapViewOfSection hook: Section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
         
-        CurrentSectionViewInfo = GetSectionView(SectionHandle);
+        CurrentSectionViewInfo = AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
 
         if (CurrentSectionViewInfo)
         {
@@ -593,7 +593,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
         }
         else
         {
-            DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
+            DoOutputDebugString("NtMapViewOfSection hook: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
         }
     }    
     else if (!CurrentInjectionInfo && pid != GetCurrentProcessId())
@@ -633,7 +633,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
                 DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
             }
             else
-                DoOutputDebugString("NtMapViewOfSection hook: Error, section view with handle 0x%x and target process %d not found in global list.\n", SectionHandle, pid);
+                DoOutputDebugString("NtMapViewOfSection hook: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
         }
     }
     
