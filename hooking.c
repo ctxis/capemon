@@ -28,6 +28,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern DWORD g_tls_hook_index;
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
+extern PVOID GetAllocationBase(PVOID Address);
+
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
 #define TLS_LAST_NTSTATUS_ERROR 0x1250
@@ -57,6 +61,42 @@ static int set_caller_info(void *unused, ULONG_PTR addr)
 		}
 	}
 	return 0;
+}
+
+void dump_on_api(hook_t *h)
+{
+	unsigned int i;
+	hook_info_t *hookinfo = hook_info();
+
+	for (i = 0; i < ARRAYSIZE(g_config.dump_on_apinames); i++) {
+        PVOID AllocationBase;
+		if (!g_config.dump_on_apinames[i])
+			break;
+		if (!stricmp(h->funcname, g_config.dump_on_apinames[i])) {
+            if (hookinfo->main_caller_retaddr) {
+                AllocationBase = GetAllocationBase((PVOID)hookinfo->main_caller_retaddr);
+                if (AllocationBase) {
+                    DoOutputDebugString("Dump-on-API: Dumping module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    DumpModuleInCurrentProcess(AllocationBase);
+                }
+                else
+                    DoOutputDebugString("Dump-on-API: Failed to obtain current module base address.\n");
+                
+            }
+            else if (hookinfo->parent_caller_retaddr) {
+                AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
+                if (AllocationBase) {
+                    DoOutputDebugString("Dump-on-API: Dumping module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    DumpModuleInCurrentProcess(AllocationBase);
+                }
+                else
+                    DoOutputDebugString("Dump-on-API: Failed to obtain current module base address.\n");
+            }
+            return;
+        }
+	}
+
+	return;
 }
 
 int hook_is_excluded(hook_t *h)
@@ -144,7 +184,9 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
-		return 1;
+		dump_on_api(h);
+        
+        return 1;
 	}
 
 	return 0;

@@ -96,7 +96,7 @@ extern "C" int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP)
     ModuleBase = (DWORD)(ULONG_PTR)GetModuleHandle(NULL);
 	ScyllaInitCurrentProcess();
     
-    DoOutputDebugString("DumpCurrentProcess: Instantiating PeParser with address: 0x%x.\n", ModuleBase);
+    DoOutputDebugString("DumpCurrentProcess: Instantiating PeParser with address: 0x%p.\n", ModuleBase);
 
     peFile = new PeParser(ModuleBase, TRUE);
 
@@ -107,7 +107,7 @@ extern "C" int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP)
         else
             entrypoint = peFile->getEntryPoint() + ModuleBase;
             
-        DoOutputDebugString("DumpCurrentProcess: Module entry point VA is 0x%x.\n", entrypoint);
+        DoOutputDebugString("DumpCurrentProcess: Module entry point VA is 0x%p.\n", entrypoint);
     
         if (peFile->dumpProcess(ModuleBase, entrypoint, NULL))
         {
@@ -154,7 +154,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
 
 	ScyllaInit(hProcess);
     
-    DoOutputDebugString("DumpProcess: Instantiating PeParser with address: 0x%x.\n", ModuleBase);
+    DoOutputDebugString("DumpProcess: Instantiating PeParser with address: 0x%p.\n", ModuleBase);
 
     peFile = new PeParser(ModuleBase, TRUE);
 
@@ -167,7 +167,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
 
         entrypoint = entrypoint + ModuleBase;
         
-        DoOutputDebugString("DumpProcess: Module entry point VA is 0x%x.\n", entrypoint);
+        DoOutputDebugString("DumpProcess: Module entry point VA is 0x%p.\n", entrypoint);
         
         if (peFile->dumpProcess(ModuleBase, entrypoint, NULL))
         {
@@ -204,7 +204,7 @@ DWORD SafeGetDword(PVOID Address)
     }  
     __except(EXCEPTION_EXECUTE_HANDLER)  
     {  
-        DoOutputDebugString("SafeGetDword: Exception occured reading memory address 0x%x\n", Address);
+        DoOutputDebugString("SafeGetDword: Exception occured reading memory address 0x%p\n", Address);
         return NULL;
     }
     
@@ -223,7 +223,7 @@ extern "C" int ScyllaDumpPE(DWORD_PTR Buffer)
 
 	ProcessAccessHelp::setCurrentProcessAsTarget();
    
-    DoOutputDebugString("DumpPE: Instantiating PeParser with address: 0x%x.\n", Buffer);
+    DoOutputDebugString("DumpPE: Instantiating PeParser with address: 0x%p.\n", Buffer);
     
     peFile = new PeParser((DWORD_PTR)Buffer, TRUE);
 
@@ -257,7 +257,7 @@ extern "C" int ScyllaDumpPE(DWORD_PTR Buffer)
 
         if (!ScanForNonZero((LPVOID)PointerToLastSection, SizeOfLastSection))
         {
-            DoOutputDebugString("DumpPE: Empty or inaccessible last section, file image seems incomplete (from 0x%x to 0x%x).\n", PointerToLastSection, (DWORD_PTR)PointerToLastSection + SizeOfLastSection);
+            DoOutputDebugString("DumpPE: Empty or inaccessible last section, file image seems incomplete (from 0x%p to 0x%p).\n", PointerToLastSection, (DWORD_PTR)PointerToLastSection + SizeOfLastSection);
             return 0;
         }
 
@@ -299,7 +299,7 @@ extern "C" int LooksLikeSectionBoundary(DWORD_PTR Buffer)
         )
         {
 #ifdef DEBUG_COMMENTS
-            DoOutputDebugString("LooksLikeSectionBoundary: Yes - end of previous candidate section zero, beginning of candidate section at 0x%x non-zero.\n", Buffer);
+            DoOutputDebugString("LooksLikeSectionBoundary: Yes - end of previous candidate section zero, beginning of candidate section at 0x%p non-zero.\n", Buffer);
 #endif
             return 1;
         }
@@ -307,17 +307,17 @@ extern "C" int LooksLikeSectionBoundary(DWORD_PTR Buffer)
         {
 #ifdef DEBUG_COMMENTS
             if (*(DWORD*)((BYTE*)Buffer - 4) != 0)
-                DoOutputDebugString("LooksLikeSectionBoundary: No - end of previous candidate section 0x%x not zero.\n", Buffer);
+                DoOutputDebugString("LooksLikeSectionBoundary: No - end of previous candidate section 0x%p not zero.\n", Buffer);
                 
             if (*(DWORD*)((BYTE*)Buffer) == 0)    
-                DoOutputDebugString("LooksLikeSectionBoundary: No - beginning of candidate section 0x%x zero.\n", Buffer);
+                DoOutputDebugString("LooksLikeSectionBoundary: No - beginning of candidate section 0x%p zero.\n", Buffer);
 #endif
             return 0;
         }
     }  
     __except(EXCEPTION_EXECUTE_HANDLER)  
     {  
-        DoOutputDebugString("LooksLikeSectionBoundary: Exception occured reading around suspected boundary at 0x%x\n", Buffer);
+        DoOutputDebugString("LooksLikeSectionBoundary: Exception occured reading around suspected boundary at 0x%p\n", Buffer);
         return 0;
     }
 }
@@ -456,7 +456,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
     // Enumerate DLLs and imported functions
     apiReader.readApisFromModuleList();
 
-    DoOutputDebugString("DumpCurrentProcessFixImports: Instantiating PeParser with address: 0x%x.\n", ModuleBase);
+    DoOutputDebugString("DumpCurrentProcessFixImports: Instantiating PeParser with address: 0x%p.\n", ModuleBase);
 
     peFile = new PeParser(ModuleBase, TRUE);
 
@@ -467,7 +467,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
         else
             entrypointRVA = peFile->getEntryPoint();
 
-        DoOutputDebugString(TEXT("DumpCurrentProcessFixImports: Module entry point VA is 0x%x"), ModuleBase + entrypointRVA);
+        DoOutputDebugString(TEXT("DumpCurrentProcessFixImports: Module entry point VA is 0x%p"), ModuleBase + entrypointRVA);
         
         //  Let's dump then fix the dump on disk
         if (peFile->dumpProcess(ModuleBase, ModuleBase + entrypointRVA, CAPE_OUTPUT_FILE))
@@ -484,7 +484,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
         
         if (addressIAT && sizeIAT)
         {
-            DoOutputDebugString(TEXT("DumpCurrentProcessFixImports: Found IAT: 0x%x, size: 0x%x"), addressIAT, sizeIAT);
+            DoOutputDebugString(TEXT("DumpCurrentProcessFixImports: Found IAT: 0x%p, size: 0x%x"), addressIAT, sizeIAT);
             
             apiReader.readAndParseIAT(addressIAT, sizeIAT, importsHandling.moduleList);
             importsHandling.scanAndFixModuleList();
@@ -618,7 +618,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
     
     apiReader.readApisFromModuleList();
 
-    DoOutputDebugString(TEXT("DumpProcessFixImports: Instantiating PeParser with address: 0x%x"), ModuleBase);
+    DoOutputDebugString(TEXT("DumpProcessFixImports: Instantiating PeParser with address: 0x%p"), ModuleBase);
 
     peFile = new PeParser(ModuleBase, true);
 
@@ -629,7 +629,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
         else
             entrypointRVA = peFile->getEntryPoint();
 
-        DoOutputDebugString(TEXT("DumpProcessFixImports: Module entry point VA is 0x%x"), ModuleBase + entrypointRVA);
+        DoOutputDebugString(TEXT("DumpProcessFixImports: Module entry point VA is 0x%p"), ModuleBase + entrypointRVA);
         
         //  Let's dump then fix the dump on disk
         if (peFile->dumpProcess(ModuleBase, ModuleBase + entrypointRVA, CAPE_OUTPUT_FILE))
@@ -646,7 +646,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
         
         if (addressIAT && sizeIAT)
         {
-            DoOutputDebugString(TEXT("DumpProcessFixImports: Found IAT - 0x%x, size: 0x%x"), addressIAT, sizeIAT);
+            DoOutputDebugString(TEXT("DumpProcessFixImports: Found IAT - 0x%p, size: 0x%x"), addressIAT, sizeIAT);
             
             apiReader.readAndParseIAT(addressIAT, sizeIAT, importsHandling.moduleList);
             importsHandling.scanAndFixModuleList();
