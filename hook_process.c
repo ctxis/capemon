@@ -27,7 +27,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int RoutineProcessDump();
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
@@ -120,6 +122,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateProcessEx,
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
         pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
         disable_sleep_skip();
+        
+        if (SectionHandle == DoppelSectionHandle)
+            if (DumpSection(SectionHandle))
+                DoOutputDebugString("NtCreateProcessEx hook: Dumped doppelgang section 0x%x.\n", SectionHandle);
+            else
+                DoOutputDebugString("NtCreateProcessEx hook: Failed to dump doppelgang section 0x%x.\n", SectionHandle);
+        else
+            DoOutputDebugString("NtCreateProcessEx hook: Section handle 0x%x doesn't match doppelgang section 0x%x.\n", SectionHandle, DoppelSectionHandle);
+                
     }
     return ret;
 }
@@ -380,6 +391,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateSection,
         "DesiredAccess", DesiredAccess, "ObjectAttributes", ObjectAttributes ? ObjectAttributes->ObjectName : NULL,
         "FileHandle", FileHandle);
 
+	if (NT_SUCCESS(ret) && FileHandle) {
+        if (FileHandle == DoppelFileHandle)
+        {
+            DoppelSectionHandle = *SectionHandle;
+            CapeMetaData->SectionHandle = DoppelSectionHandle;
+            DoOutputDebugString("NtCreateSection hook: Doppelganging section 0x%x created.\n", SectionHandle);
+        }
+	}
+    
 	if (NT_SUCCESS(ret) && FileHandle && (DesiredAccess & SECTION_MAP_WRITE)) {
 		file_write(FileHandle);
 	}
@@ -572,12 +592,12 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
     LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
         "Buffer", lpNumberOfBytesWritten, lpBuffer, "BufferLength", *lpNumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
-	if (pid != GetCurrentProcessId()) {
-		if (ret) {
-			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
-			disable_sleep_skip();
-		}
-	}
+	//if (pid != GetCurrentProcessId()) {
+	//	if (ret) {
+	//		pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
+	//		disable_sleep_skip();
+	//	}
+	//}
 
 	return ret;
 }

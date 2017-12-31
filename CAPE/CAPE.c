@@ -57,6 +57,12 @@ extern int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP);
 extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOEP);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
 
+extern void hook_enable();
+extern void hook_disable();
+
+_NtMapViewOfSection pNtMapViewOfSection;
+_NtUnmapViewOfSection pNtUnmapViewOfSection;
+
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
 
@@ -1390,6 +1396,53 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
+int DumpSection(HANDLE SectionHandle)
+//**************************************************************************************
+{
+    NTSTATUS Ret;
+    LARGE_INTEGER SectionOffset;
+    PVOID BaseAddress = NULL;
+    SIZE_T ViewSize = 0;
+    SectionOffset.LowPart = 0;
+    SectionOffset.HighPart = 0;
+    BOOL Dumped;
+    
+    if (!SectionHandle)
+	{
+		DoOutputDebugString("DumpSection: No section handle supplied.\n");
+		return 0;		
+	}
+    
+    hook_disable();
+    
+    Ret = pNtMapViewOfSection(SectionHandle, GetCurrentProcess(), &BaseAddress, 0, 0, &SectionOffset, &ViewSize, ViewUnmap, 0, PAGE_READWRITE);
+    
+	if (NT_SUCCESS(Ret)) 
+    {
+        DoOutputDebugString("DumpSection: Mapped view of section 0x%x at 0x%p, size 0x%x.\n", SectionHandle, BaseAddress, ViewSize);
+        
+        Dumped = DumpModuleInCurrentProcess(BaseAddress);
+        
+        if (!Dumped)
+        {
+            DoOutputDebugString("DumpSection: Module dump failed from section 0x%x via view at 0x%p, dumping memory.\n", SectionHandle, BaseAddress);
+            Dumped = DumpMemory(BaseAddress, ViewSize);
+        }
+        else
+            DoOutputDebugString("DumpSection: Successfully dumped module from section 0x%x via view at 0x%p.\n", SectionHandle, BaseAddress);
+
+        Ret = pNtUnmapViewOfSection(GetCurrentProcess(), BaseAddress);
+    }
+    else
+        DoOutputDebugString("DumpSection: Failed to map view of section 0x%x, return value 0x%x.\n", SectionHandle, Ret);
+    
+    hook_enable();
+    
+    return (int)Dumped;
+    
+}
+
+//**************************************************************************************
 int DumpCurrentProcessFixImports(LPVOID NewEP)
 //**************************************************************************************
 {
@@ -1432,8 +1485,6 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
-
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
         DumpCount++;
@@ -1580,7 +1631,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
+    CapeMetaData->DumpType = INJECTION_SECTION;
     ProcessDumped = FALSE;
 #endif
 
@@ -1591,7 +1642,7 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    // g_config.procdump = 0;
+    g_config.procdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;

@@ -41,6 +41,8 @@ _NtAllocateVirtualMemory pNtAllocateVirtualMemory;
 _NtProtectVirtualMemory pNtProtectVirtualMemory;
 _NtFreeVirtualMemory pNtFreeVirtualMemory;
 _LdrRegisterDllNotification pLdrRegisterDllNotification;
+extern _NtMapViewOfSection pNtMapViewOfSection;
+extern _NtUnmapViewOfSection pNtUnmapViewOfSection;
 
 void resolve_runtime_apis(void)
 {
@@ -56,6 +58,8 @@ void resolve_runtime_apis(void)
 	*(FARPROC *)&pNtAllocateVirtualMemory = GetProcAddress(ntdllbase, "NtAllocateVirtualMemory");
 	*(FARPROC *)&pNtProtectVirtualMemory = GetProcAddress(ntdllbase, "NtProtectVirtualMemory");
 	*(FARPROC *)&pNtFreeVirtualMemory = GetProcAddress(ntdllbase, "NtFreeVirtualMemory");
+	*(FARPROC *)&pNtMapViewOfSection = GetProcAddress(ntdllbase, "NtMapViewOfSection");
+	*(FARPROC *)&pNtUnmapViewOfSection = GetProcAddress(ntdllbase, "NtUnmapViewOfSection");
 	*(FARPROC *)&pLdrRegisterDllNotification = GetProcAddress(ntdllbase, "LdrRegisterDllNotification");
 	*(FARPROC *)&pRtlGenRandom = GetProcAddress(GetModuleHandle("advapi32"), "SystemFunction036");
 }

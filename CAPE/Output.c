@@ -197,6 +197,11 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
             // Injection-specific format
                 _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n%s\n%d\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, CapeMetaData->TargetProcess, CapeMetaData->TargetPid);
         }
+		else if (CapeMetaData->DumpType == INJECTION_SECTION)
+        {
+            // Section-specific format
+            _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n0x%x\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, (DWORD_PTR)CapeMetaData->SectionHandle);
+        }
 		else if (CapeMetaData->DumpType == SEDRECO_DATA)
         {
             // Sedreco-specific format where TargetPid is used for config item index #

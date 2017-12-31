@@ -168,7 +168,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 	
 	NTSTATUS ret = Old_NtCreateThreadEx(hThread, DesiredAccess,
         ObjectAttributes, ProcessHandle, lpStartAddress, lpParameter,
-        CreateFlags | 1, StackZeroBits, SizeOfStackCommit, SizeOfStackReserve,
+        CreateFlags, StackZeroBits, SizeOfStackCommit, SizeOfStackReserve,
         lpBytesBuffer);
 
 	if (NT_SUCCESS(ret)) {
@@ -177,12 +177,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 		//	add_ignored_thread(tid);
 
 		pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
-		if (!(CreateFlags & 1)) {
-			lasterror_t lasterror;
-			get_lasterrors(&lasterror);
-			ResumeThread(*hThread);
-			set_lasterrors(&lasterror);
-		}
+		//if (!(CreateFlags & 1)) {
+		//	lasterror_t lasterror;
+		//	get_lasterrors(&lasterror);
+		//	ResumeThread(*hThread);
+		//	set_lasterrors(&lasterror);
+		//}
 	}
 	LOQ_ntstatus("threading", "Ppph", "ThreadHandle", hThread, "ProcessHandle", ProcessHandle,
         "StartAddress", lpStartAddress, "CreateFlags", CreateFlags);

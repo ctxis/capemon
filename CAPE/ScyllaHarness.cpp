@@ -154,7 +154,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
 
 	ScyllaInit(hProcess);
     
-    DoOutputDebugString("DumpProcess: Instantiating PeParser with address: 0x%x.\n", ModuleBase);
+    DoOutputDebugString("DumpProcess: Instantiating PeParser with address: 0x%p.\n", ModuleBase);
 
     peFile = new PeParser(ModuleBase, TRUE);
 
@@ -167,7 +167,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
 
         entrypoint = entrypoint + ModuleBase;
         
-        DoOutputDebugString("DumpProcess: Module entry point VA is 0x%x.\n", entrypoint);
+        DoOutputDebugString("DumpProcess: Module entry point VA is 0x%p.\n", entrypoint);
         
         if (peFile->dumpProcess(ModuleBase, entrypoint, NULL))
         {

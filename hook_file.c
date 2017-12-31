@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ignore.h"
 #include "lookup.h"
 #include "config.h"
+#include "CAPE\CAPE.h"
 
 #define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_GENERIC_WRITE | \
     FILE_WRITE_DATA | FILE_APPEND_DATA | STANDARD_RIGHTS_WRITE | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
@@ -896,6 +897,9 @@ HOOKDEF (HANDLE, WINAPI, CreateFileTransactedA,
 
     LOQ_handle("filesystem", "hfhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
 
+    if (ret != INVALID_HANDLE_VALUE)
+        DoppelFileHandle = ret;
+    
     return ret;
 }
 
@@ -916,6 +920,9 @@ HOOKDEF (HANDLE, WINAPI, CreateFileTransactedW,
 
     LOQ_handle("filesystem", "hFhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
 
+    if (ret != INVALID_HANDLE_VALUE)
+        DoppelFileHandle = ret;
+    
     return ret;
 }
 

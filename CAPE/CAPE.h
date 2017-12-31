@@ -19,6 +19,8 @@ extern HMODULE s_hInst;
 extern WCHAR s_wzDllPath[MAX_PATH];
 extern CHAR s_szDllPath[MAX_PATH];
 
+#define NT_SUCCESS(Status) ((NTSTATUS)(Status) >= 0)
+
 //Global debugger switch
 #define DEBUGGER_ENABLED 0
 
@@ -26,8 +28,10 @@ PVOID GetPageAddress(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
 BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 int DumpMemory(LPVOID Buffer, unsigned int Size);
+int DumpSection(HANDLE SectionHandle);
 int DumpCurrentProcessNewEP(LPVOID NewEP);
 int DumpCurrentProcess();
+int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 int DumpProcess(HANDLE hProcess, LPVOID ImageBase);
 int DumpPE(LPVOID Buffer);
 int ScanForNonZero(LPVOID Buffer, unsigned int Size);
@@ -40,6 +44,29 @@ void DumpSectionViewsForPid(DWORD Pid);
 
 unsigned int DumpSize;
 SYSTEM_INFO SystemInfo;
+
+typedef enum _SECTION_INHERIT {
+    ViewShare = 1,
+    ViewUnmap = 2
+} SECTION_INHERIT;
+
+typedef NTSTATUS(WINAPI *_NtMapViewOfSection)(
+	_In_     HANDLE SectionHandle,
+	_In_     HANDLE ProcessHandle,
+	__inout  PVOID *BaseAddress,
+	_In_     ULONG_PTR ZeroBits,
+	_In_     SIZE_T CommitSize,
+	__inout  PLARGE_INTEGER SectionOffset,
+	__inout  PSIZE_T ViewSize,
+	__in     UINT InheritDisposition,
+	__in     ULONG AllocationType,
+	__in     ULONG Win32Protect
+);
+
+typedef NTSTATUS(WINAPI *_NtUnmapViewOfSection)(
+    _In_      HANDLE ProcessHandle,
+    _In_opt_  PVOID BaseAddress
+);
 
 typedef struct InjectionSectionView
 {
@@ -117,6 +144,7 @@ typedef struct CapeMetadata
     DWORD	TargetPid;      // "
     PVOID   Address;        // For shellcode/modules
 	SIZE_T  Size;           // "
+	HANDLE SectionHandle;  // For process doppelganging
 } CAPEMETADATA, *PCAPEMETADATA;
 
 struct CapeMetadata *CapeMetaData;
@@ -130,7 +158,7 @@ enum {
     
     INJECTION_PE            = 3,
     INJECTION_SHELLCODE     = 4,
-    //INJECTION_RUNPE         = 5,
+    INJECTION_SECTION       = 5,
 
     EXTRACTION_PE           = 8,
     EXTRACTION_SHELLCODE    = 9,
@@ -148,3 +176,10 @@ enum {
 };
 
 HANDLE EvilGrabRegHandle;
+
+// Doppelganging package
+//
+// Section Information Structures.
+//
+
+HANDLE DoppelFileHandle, DoppelSectionHandle;
