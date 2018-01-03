@@ -342,10 +342,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
 
     CurrentInjectionInfo = GetInjectionInfo(pid);
 
-    DoOutputDebugString("NtResumeThread hook: CurrentInjectionInfo 0x%x (pid %d).\n", CurrentInjectionInfo, pid);
-    
     if (CurrentInjectionInfo)
     {
+        DoOutputDebugString("NtResumeThread hook: CurrentInjectionInfo 0x%x (pid %d).\n", CurrentInjectionInfo, pid);
+        
         if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
         {
             CapeMetaData->DumpType = INJECTION_PE;

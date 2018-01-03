@@ -265,10 +265,7 @@ PINJECTIONINFO GetInjectionInfo(DWORD ProcessId)
 	PINJECTIONINFO CurrentInjectionInfo;
     
     if (InjectionInfoList == NULL)
-    {
-        DoOutputDebugString("GetInjectionInfo: Failed to find InjectionInfoList.\n");
         return NULL;
-    }
 
     CurrentInjectionInfo = InjectionInfoList;
     

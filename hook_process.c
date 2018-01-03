@@ -582,8 +582,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     }
     else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
     {
-        DoOutputDebugString("NtMapViewOfSection hook: Section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
-        
         CurrentSectionViewInfo = AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
 
         if (CurrentSectionViewInfo)
@@ -600,8 +598,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     {
         CurrentInjectionInfo = CreateInjectionInfo(pid);
         
-        DoOutputDebugString("NtMapViewOfSection hook: Injection info created for pid %d.\n", pid);
-    
         if (CurrentInjectionInfo == NULL)
         {
             DoOutputDebugString("NtMapViewOfSection hook: Cannot create new injection info - FATAL ERROR.\n");
