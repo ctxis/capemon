@@ -26,6 +26,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "misc.h"
 
+extern BOOL DumpRegion(PVOID Address);
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+
 static int did_initial_request;
 
 HOOKDEF(DWORD, WINAPI, InternetConfirmZoneCrossingA,
@@ -144,6 +147,10 @@ HOOKDEF(HINTERNET, WINAPI, WinHttpConnect,
 	_In_ INTERNET_PORT nServerPort,
 	_Reserved_ DWORD dwReserved
 ) {
+    if (DumpRegion((PVOID)pswzServerName))
+        DoOutputDebugString("WinHttpConnect hook: Successfully dumped region at 0x%p around %s.\n", pswzServerName, pswzServerName);
+    else
+        DoOutputDebugString("WinHttpConnect hook: Failed to dump region at 0x%p around %s.\n", pswzServerName, pswzServerName);
 	HINTERNET ret = Old_WinHttpConnect(hSession, pswzServerName, nServerPort, dwReserved);
 	LOQ_nonnull("network", "pui", "SessionHandle", hSession, "ServerName", pswzServerName, "ServerPort", nServerPort);
 	return ret;

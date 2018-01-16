@@ -140,6 +140,69 @@ BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* Driv
 }
 
 //**************************************************************************************
+PVOID GetAllocationBase(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationBase: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationBase: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    return MemInfo.AllocationBase;
+}
+
+//**************************************************************************************
+SIZE_T GetAllocationSize(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, AddressOfPage;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationSize: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationSize: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("GetAllocationSize: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    return (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+}
+
+//**************************************************************************************
 BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVOID Address)
 //**************************************************************************************
 {
@@ -1390,6 +1453,73 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
 }
 
 //**************************************************************************************
+BOOL DumpRegion(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, OriginalBaseAddress, AddressOfPage;
+    SIZE_T AllocationSize, OriginalRegionSize;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("DumpRegion: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("DumpRegion: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    OriginalBaseAddress = MemInfo.BaseAddress;
+    OriginalRegionSize = MemInfo.RegionSize;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("DumpRegion: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    AllocationSize = (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+
+    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalAllocationBase);
+
+    if (DumpMemory(OriginalAllocationBase, AllocationSize))
+    {
+        DoOutputErrorString("DumpRegion: Dumped entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        return TRUE;
+    }
+    else
+    {
+        DoOutputErrorString("DumpRegion: Failed to dump entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        
+        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalBaseAddress);
+        
+        if (DumpMemory(OriginalBaseAddress, OriginalRegionSize))
+        {
+            DoOutputErrorString("DumpRegion: Dumped base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return TRUE;
+        }
+        else
+        {
+            DoOutputErrorString("DumpRegion: Failed to dump base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return FALSE;
+        }
+    }
+}
+
+//**************************************************************************************
 int DumpCurrentProcessFixImports(LPVOID NewEP)
 //**************************************************************************************
 {
@@ -1580,7 +1710,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
+    CapeMetaData->DumpType = 2;
     ProcessDumped = FALSE;
 #endif
 
@@ -1591,7 +1721,7 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    // g_config.procdump = 0;
+   g_config.procdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;
