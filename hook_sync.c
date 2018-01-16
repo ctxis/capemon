@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hooking.h"
 #include "log.h"
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(NTSTATUS, WINAPI, NtCreateMutant,
     __out       PHANDLE MutantHandle,
@@ -62,6 +63,15 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateEvent,
 		LOQ_ntstatus("synchronization", "Poii", "Handle", EventHandle,
 			"EventName", eventname, "EventType", EventType, "InitialState", InitialState);
 	}
+    
+    DoOutputDebugString("NtCreateEvent hook: DesiredAccess 0x%x ObjectAttributes 0x%x EventType 0x%x InitialState 0x%x.\n", DesiredAccess, ObjectAttributes, EventType, InitialState);
+    
+    //if (DesiredAccess == 0x1f0003) {
+    //    GetHookCallerBase();
+	//	LOQ_ntstatus("synchronization", "Pii", "Handle", EventHandle,
+	//		"EventType", EventType, "InitialState", InitialState);
+    //}
+    
 	return ret;
 }
 

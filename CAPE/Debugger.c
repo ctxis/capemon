@@ -115,9 +115,9 @@ BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
 //**************************************************************************************
 {
 #ifdef _WIN64
-    if (DepthCount == 1 && ReturnAddress)
+    if (DepthCount == 1 && ReturnAddress && Address)
 #else
-    if (DepthCount == 2 && ReturnAddress)
+    if (DepthCount == 2 && ReturnAddress && Address)
 #endif
     {
         DepthCount = 0;
@@ -127,6 +127,8 @@ BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
     
     DepthCount++;
     
+    DoOutputDebugString("CountDepth: Address 0x%p, depthcount = %i.\n", Address, DepthCount);
+
     return FALSE;
 }
 
@@ -135,6 +137,7 @@ LPVOID GetReturnAddress(PCONTEXT ContextRecord)
 //**************************************************************************************
 {
     LPVOID ReturnAddress = NULL;
+    DepthCount = 0;    
     
     if (!ContextRecord)
 	{
@@ -1497,9 +1500,9 @@ BOOL ContextClearAllBreakpoints(PCONTEXT Context)
 {
 	unsigned int i; 
 	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
-    
+
     CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
- 
+
 	if (CurrentThreadBreakpoint == NULL)
 	{
 		DoOutputDebugString("ContextClearAllBreakpoints: No breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
@@ -2186,6 +2189,42 @@ BOOL ContextUpdateCurrentBreakpoint
         }
     }
     
+    return FALSE;
+}
+
+//**************************************************************************************
+BOOL ContextClearCurrentBreakpoint(PCONTEXT Context)
+//**************************************************************************************
+{
+	PTHREADBREAKPOINTS CurrentThreadBreakpoint;
+    PBREAKPOINTINFO pBreakpointInfo;
+    unsigned int bp;
+
+    CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
+
+    if (CurrentThreadBreakpoint == NULL)
+    {
+        DoOutputDebugString("ContextUpdateCurrentBreakpoint: Error - Failed to acquire thread breakpoints.\n");
+        return FALSE;
+    }
+
+    for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
+    {
+        if (Context->Dr6 & (DWORD_PTR)(1 << bp))
+        {
+            pBreakpointInfo = &(CurrentThreadBreakpoint->BreakpointInfo[bp]);
+
+            if (pBreakpointInfo == NULL)
+            {
+                DoOutputDebugString("ContextUpdateCurrentBreakpoint: Can't get BreakpointInfo.\n");
+                return FALSE;
+            }
+
+            if (pBreakpointInfo->Register == bp)
+                return ContextClearBreakpoint(Context, pBreakpointInfo);
+        }
+    }
+
     return FALSE;
 }
 

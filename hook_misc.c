@@ -26,8 +26,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "config.h"
 #include "ignore.h"
+#include "CAPE\CAPE.h"
 
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -1048,7 +1051,7 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void.
 
 	Old_memcpy(dest, src, count);
 	
@@ -1074,9 +1077,74 @@ HOOKDEF(void, WINAPIV, srand,
 	unsigned int seed
 )
 {
-	int ret = 0;	// seems this is needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void.
 
 	Old_srand(seed);
 
 	LOQ_void("misc", "h", "seed", seed);
+}
+
+HOOKDEF(DWORD, WINAPI, GetCurrentProcessId,
+	void
+) {
+	DWORD ret = Old_GetCurrentProcessId();
+	LOQ_void("misc", "");
+	return ret;
+}
+
+HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR   lpString1,
+  _In_  LPSTR   lpString2,
+  _In_  int     iMaxLength
+)
+{
+    LPSTR ret;
+    
+    const char UrsnifString[] = ".bss";
+
+    ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
+	
+    LOQ_void("misc", "s", "Source string", lpString2);
+    
+    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
+    {
+        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
+        GetHookCallerBase();    
+    }
+    else 
+        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
+
+    return ret; 
+}
+
+HOOKDEF(HANDLE, WINAPI, HeapCreate,
+  _In_ DWORD  flOptions,
+  _In_ SIZE_T dwInitialSize,
+  _In_ SIZE_T dwMaximumSize
+)
+{
+    HANDLE ret;
+    
+    ret = Old_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
+    
+    LOQ_nonnull("misc", "");
+
+    DoOutputDebugString("HeapCreate hook.\n");
+    
+    return ret;
+}
+
+HOOKDEF(DWORD, WINAPI, GetVersion,
+    void
+)
+{
+    DWORD ret;
+
+    ret = Old_GetVersion();
+    
+    LOQ_nonnull("misc", "");
+    
+    DoOutputDebugString("GetVersion hook.\n");
+
+    return ret;
 }

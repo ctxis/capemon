@@ -15,13 +15,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
-#include <windows.h>
+#include "..\hooking.h"
 #include <distorm.h>
 #include "Debugger.h"
 #include "CAPE.h"
 
 #define MAX_INSTRUCTIONS 32
-#define SINGLE_STEP_LIMIT 10
+#define SINGLE_STEP_LIMIT 0x10
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -30,8 +30,10 @@ extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 
+BOOL BreakpointSet;
 unsigned int DumpCount, Correction, StepCount;
-PVOID ModuleBase;
+PVOID ModuleBase, DumpAddress;
+SIZE_T DumpSize;
 
 //**************************************************************************************
 BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
@@ -86,6 +88,12 @@ BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
             DoOutputDebugString("SingleStepDisassemble: Comparison detected, R11 = 0x%x, patching.", ExceptionInfo->ContextRecord->R11);
             ExceptionInfo->ContextRecord->R11 = 0;
         }
+        else if (!strncmp(DecodedInstruction.operands.p, "EAX", 3))
+        {
+            DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
+            DoOutputDebugString("SingleStepDisassemble: Comparison detected: RAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rax, Constant);
+            ExceptionInfo->ContextRecord->Rax = Constant;
+        }
 #else
         DoOutputDebugString("SingleStepDisassemble: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
         ExceptionInfo->ContextRecord->Eax = 0;
@@ -122,34 +130,144 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     return TRUE;
 }
 
+BOOL DumpCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+    if (pBreakpointInfo == NULL)
+	{
+		DoOutputDebugString("DumpCallback executed with pBreakpointInfo NULL.\n");
+		return FALSE;
+	}
+	
+	if (pBreakpointInfo->ThreadHandle == NULL)
+	{
+		DoOutputDebugString("DumpCallback executed with NULL thread handle.\n");
+		return FALSE;
+	}
+
+	DoOutputDebugString("DumpCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+    
+    if (!DumpAddress || !DumpSize)
+    {
+        DoOutputDebugString("DumpCallback: Error - problem with address 0x%p or size 0x%x.\n", DumpAddress, DumpSize);
+        return FALSE;
+    }
+
+    if (DumpMemory(DumpAddress, (unsigned int)DumpSize))
+    {
+        DoOutputDebugString("DumpCallback: Dumped decrypted region at 0x%p, size 0x%x.\n", DumpAddress, DumpSize);
+    }
+    else
+    {
+        DoOutputDebugString("DumpCallback: Failed to dump decrypted region at 0x%p, size 0x%x.\n", DumpAddress, DumpSize);
+    }
+    
+    DumpAddress = NULL;
+    DumpSize = 0;
+    
+    ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
+    
+    StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    
+    return TRUE;
+}
+
+BOOL CryptoCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+	PVOID ReturnAddress;
+    DWORD Register = 1;
+    
+    if (pBreakpointInfo == NULL)
+	{
+		DoOutputDebugString("BreakpointCallback executed with pBreakpointInfo NULL.\n");
+		return FALSE;
+	}
+	
+	if (pBreakpointInfo->ThreadHandle == NULL)
+	{
+		DoOutputDebugString("BreakpointCallback executed with NULL thread handle.\n");
+		return FALSE;
+	}
+
+	DoOutputDebugString("CryptoCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+
+    DumpAddress = (PVOID)ExceptionInfo->ContextRecord->Rcx;
+    DumpSize = (SIZE_T)ExceptionInfo->ContextRecord->Rdx;
+    
+#ifdef _WIN64
+	DoOutputDebugString("CryptoCallback: Source 0x%p, Destination 0x%p, Size=0x%x.\n", ExceptionInfo->ContextRecord->R8, DumpAddress, DumpSize);
+    ReturnAddress = (PVOID)*(DWORD_PTR*)(ExceptionInfo->ContextRecord->Rsp);
+#else
+	DoOutputDebugString("CryptoCallback: Source 0x%p, Destination 0x%p, Size=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, DumpSize);
+#endif
+
+    
+    if (ContextSetBreakpoint(ExceptionInfo->ContextRecord, Register, 0, (BYTE*)ReturnAddress, BP_EXEC, DumpCallback))
+    {
+        DoOutputDebugString("CryptoCallback: Breakpoint %d set on return address 0x%p\n", Register, ReturnAddress);
+    }
+    else
+    {
+        DoOutputDebugString("CryptoCallback: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
+    }    
+    
+    StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    
+    return TRUE;
+}
+
 BOOL SetInitialBreakpoint()
 {
     DWORD_PTR BreakpointVA, FileOffset;
     DWORD Register = 0;
     
-	if (CAPE_var1 == NULL)// && CAPE_var2 == NULL)
+    if (BreakpointSet)
+	{
+		DoOutputDebugString("SetInitialBreakpoint: Initial breakpoint already set.\n");
+		return FALSE;
+	}
+        
+	if (CAPE_var1 == NULL)
 	{
 		DoOutputDebugString("SetInitialBreakpoint: Error - No address specified for Ursnif decryption function.\n");
 		return FALSE;
 	}
 
 	if (CAPE_var1)
-        FileOffset = CAPE_var1;
-    //if (CAPE_var2)
-    //    FileOffset = CAPE_var2;
+        FileOffset = (DWORD_PTR)CAPE_var1;
     
     DoOutputDebugString("SetInitialBreakpoint: About to call FileOffsetToVA with image base 0x%p and offset 0x%x.\n", ModuleBase, FileOffset);
     
     BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
     
-    if (SetBreakpoint(GetCurrentThreadId(), Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
+    if (SetBreakpoint(GetCurrentThreadId(), Register, 0, (BYTE*)BreakpointVA, BP_EXEC, CryptoCallback))
     {
         DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
+        BreakpointSet = TRUE;
         return TRUE;
     }
     else
     {
         DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed.\n");
+        BreakpointSet = FALSE;
         return FALSE;
     }
 }
+
+//HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+//  _Out_ LPSTR   lpString1,
+//  _In_  LPSTR   lpString2,
+//  _In_  int     iMaxLength
+//)
+//{
+//    const char UrsnifString[] = ".bss";
+//    
+//    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
+//    {
+//        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
+//        GetHookCallerBase();    
+//    }
+//    else 
+//        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
+//
+//    return Old_lstrcpynA(lpString1, lpString2, iMaxLength);
+//}

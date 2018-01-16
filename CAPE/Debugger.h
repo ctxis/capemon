@@ -115,6 +115,7 @@ BOOL ClearSingleStepMode(PCONTEXT Context);
 BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL ContextClearAllBreakpoints(PCONTEXT Context);
+BOOL ContextClearCurrentBreakpoint(PCONTEXT Context);
 BOOL ClearAllBreakpoints(DWORD ThreadId);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 int CheckDebugRegister(HANDLE hThread, int Register);

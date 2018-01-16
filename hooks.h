@@ -2806,3 +2806,19 @@ extern HOOKDEF(unsigned int, WINAPIV, SizeofResource,
 extern HOOKDEF(void, WINAPIV, srand,
    unsigned int seed
 );   
+
+extern HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR  lpString1,
+  _In_  LPSTR lpString2,
+  _In_  int     iMaxLength
+);
+
+extern HOOKDEF(HANDLE, WINAPI, HeapCreate,
+  _In_ DWORD  flOptions,
+  _In_ SIZE_T dwInitialSize,
+  _In_ SIZE_T dwMaximumSize
+);
+
+extern HOOKDEF(DWORD, WINAPI, GetVersion,
+    void
+);

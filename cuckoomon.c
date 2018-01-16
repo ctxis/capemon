@@ -164,6 +164,10 @@ static hook_t g_hooks[] = {
 
 	HOOK(kernel32, FindFirstChangeNotificationW),
 
+	HOOK(kernel32, GetVersion),
+	HOOK(kernel32, lstrcpynA),
+	HOOK(kernel32, HeapCreate),
+    
     //
     // Registry Hooks
     //
@@ -1062,7 +1066,14 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		}
 #endif
 
-		notify_successful_load();
+		if (!memcmp((PUCHAR)lstrcpynA, "\x8b\xff\xff\x25", 4) || !memcmp((PUCHAR)lstrcpynA, "\xff\x25", 2) ||
+			!memcmp((PUCHAR)lstrcpynA, "\x8b\xff\xe9", 3) || !memcmp((PUCHAR)lstrcpynA, "\xe9", 1) ||
+			!memcmp((PUCHAR)lstrcpynA, "\xeb\xf9", 2))
+			DoOutputDebugString("Ursnif package: lstrcpynA hooked!\n");
+        else
+			DoOutputDebugString("Ursnif package: No lstrcpynA hooks detected :(\n");
+        
+        notify_successful_load();
     }
     else if(dwReason == DLL_PROCESS_DETACH) {
 		// in production, we shouldn't ever get called in this way since we

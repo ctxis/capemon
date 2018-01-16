@@ -59,12 +59,58 @@ extern int ScyllaDumpPE(DWORD_PTR Buffer);
 
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
+extern ULONG_PTR g_our_dll_base;
 
 static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
 CHAR s_szDllPath[MAX_PATH];
 
 BOOL ProcessDumped;
+extern BOOL SetInitialBreakpoint();
+extern PVOID ModuleBase;
+
+//**************************************************************************************
+void GetHookCallerBase()
+//**************************************************************************************
+{
+    CONTEXT ContextRecord;
+    PVOID ReturnAddress, AllocationBase;
+
+    if (ModuleBase)
+        return;
+        
+#ifdef _WIN64
+    RtlCaptureContext(&ContextRecord);
+#else
+    ZeroMemory(&ContextRecord, sizeof(CONTEXT));
+
+    __asm
+    {
+    Label:
+        mov eax, [Label];
+        mov [ContextRecord.Eip], eax;
+        mov [ContextRecord.Ebp], ebp;
+        mov [ContextRecord.Esp], esp;
+    }
+#endif
+    ReturnAddress = GetReturnAddress(&ContextRecord);
+
+    if (ReturnAddress)
+    {
+        AllocationBase = GetAllocationBase(ReturnAddress);
+        DoOutputDebugString("GetHookCallerBase: return address 0x%p, allocation base 0x%p.\n", ReturnAddress, AllocationBase);
+
+        if (AllocationBase)
+        {
+            ModuleBase = AllocationBase;
+            SetInitialBreakpoint();
+        }
+    }
+    else
+        DoOutputDebugString("GetHookCallerBase: failed to get return address.\n");
+
+    return;
+}
 
 //**************************************************************************************
 void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned int Count)
@@ -1404,6 +1450,9 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
     CapeMetaData->Address = Buffer;
     CapeMetaData->Size = Size;
     
+    // Ursnif-specific
+    CapeMetaData->DumpType = EXTRACTION_SHELLCODE;
+
     CapeOutputFile(FullPathName);
     
     // We can free the filename buffers
@@ -1604,7 +1653,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
+    CapeMetaData->DumpType = EXTRACTION_SHELLCODE;
     ProcessDumped = FALSE;
 #endif
 
@@ -1626,9 +1675,9 @@ void init_CAPE()
         launch_debugger();
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised (64-bit).\n");
+    DoOutputDebugString("CAPE initialised: 64-bit Ursnif package. Loaded at 0x%p\n", g_our_dll_base);
 #else
-    DoOutputDebugString("CAPE initialised (32-bit).\n");
+    DoOutputDebugString("CAPE initialised: 32-bit Ursnif package. Loaded at 0x%x\n", g_our_dll_base);
 #endif
     
     return;
