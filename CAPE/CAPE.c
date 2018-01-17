@@ -59,6 +59,7 @@ extern int ScyllaDumpPE(DWORD_PTR Buffer);
 
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
+extern unsigned int address_is_in_stack(PVOID Address);
 
 static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
@@ -1497,23 +1498,29 @@ BOOL DumpRegion(PVOID Address)
 
     if (DumpMemory(OriginalAllocationBase, AllocationSize))
     {
-        DoOutputErrorString("DumpRegion: Dumped entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped entire allocation from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
         return TRUE;
     }
     else
     {
-        DoOutputErrorString("DumpRegion: Failed to dump entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        DoOutputDebugString("DumpRegion: Failed to dump entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
         
         SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalBaseAddress);
         
         if (DumpMemory(OriginalBaseAddress, OriginalRegionSize))
         {
-            DoOutputErrorString("DumpRegion: Dumped base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped base address 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
             return TRUE;
         }
         else
         {
-            DoOutputErrorString("DumpRegion: Failed to dump base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            DoOutputDebugString("DumpRegion: Failed to dump base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
             return FALSE;
         }
     }

@@ -1,5 +1,7 @@
 #pragma once
 
+#define DEBUGGER_LAUNCHER 0
+
 void *CAPE_var1, *CAPE_var2, *CAPE_var3, *CAPE_var4;
 
 #define BP_EXEC        0x00
@@ -81,6 +83,8 @@ typedef void (WINAPI *PWIN32ENTRY)();
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+BOOL DebuggerInitialised;
 
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 PVOID CAPEExceptionFilterHandle;
