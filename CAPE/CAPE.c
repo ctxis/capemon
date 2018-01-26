@@ -68,6 +68,7 @@ CHAR s_szDllPath[MAX_PATH];
 BOOL ProcessDumped;
 extern BOOL SetInitialBreakpoint();
 extern PVOID ModuleBase;
+extern LPVOID GetReturnAddress(PCONTEXT ContextRecord);
 
 //**************************************************************************************
 void GetHookCallerBase()
@@ -97,8 +98,10 @@ void GetHookCallerBase()
 
     if (ReturnAddress)
     {
+        DWORD ThreadId = GetCurrentThreadId();
+        
         AllocationBase = GetAllocationBase(ReturnAddress);
-        DoOutputDebugString("GetHookCallerBase: return address 0x%p, allocation base 0x%p.\n", ReturnAddress, AllocationBase);
+        DoOutputDebugString("GetHookCallerBase: thread %d (handle 0x%x), return address 0x%p, allocation base 0x%p.\n", ThreadId, GetThreadHandle(ThreadId), ReturnAddress, AllocationBase);
 
         if (AllocationBase)
         {
@@ -210,6 +213,46 @@ PVOID GetAllocationBase(PVOID Address)
 }
 
 //**************************************************************************************
+SIZE_T GetAllocationSize(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, AddressOfPage;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationSize: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationSize: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("GetAllocationSize: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    return (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+
+}
+
+//**************************************************************************************
 BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVOID Address)
 //**************************************************************************************
 {
@@ -250,11 +293,11 @@ BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVO
             return FALSE;
         }
     }
-    else if (DumpType == EXTRACTION_PE || DumpType == EXTRACTION_SHELLCODE)
+    else if (DumpType == EXTRACTION_PE || DumpType == EXTRACTION_SHELLCODE || DumpType == URSNIF_PAYLOAD)
     {
         if (!Address)
         {
-            DoOutputDebugString("SetCapeMetaData: Extraction type with no PID - error.\n");
+            DoOutputDebugString("SetCapeMetaData: CAPE type with missing PID - error.\n");
             return FALSE;
         }
 
@@ -1451,7 +1494,7 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
     CapeMetaData->Size = Size;
     
     // Ursnif-specific
-    CapeMetaData->DumpType = EXTRACTION_SHELLCODE;
+    CapeMetaData->DumpType = URSNIF_CONFIG;
 
     CapeOutputFile(FullPathName);
     
@@ -1460,6 +1503,79 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
     free(BufferCopy);
 	
     return 1;
+}
+
+//**************************************************************************************
+BOOL DumpRegion(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, OriginalBaseAddress, AddressOfPage;
+    SIZE_T AllocationSize, OriginalRegionSize;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("DumpRegion: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("DumpRegion: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    OriginalBaseAddress = MemInfo.BaseAddress;
+    OriginalRegionSize = MemInfo.RegionSize;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("DumpRegion: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    AllocationSize = (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+
+    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalAllocationBase);
+
+    if (DumpMemory(OriginalAllocationBase, AllocationSize))
+    {
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped entire allocation from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        return TRUE;
+    }
+    else
+    {
+        DoOutputDebugString("DumpRegion: Failed to dump entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        
+        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalBaseAddress);
+        
+        if (DumpMemory(OriginalBaseAddress, OriginalRegionSize))
+        {
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped base address 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return TRUE;
+        }
+        else
+        {
+            DoOutputDebugString("DumpRegion: Failed to dump base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return FALSE;
+        }
+    }
 }
 
 //**************************************************************************************
@@ -1505,7 +1621,7 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    SetCapeMetaData(URSNIF_PAYLOAD, 0, NULL, (PVOID)ModuleBase);
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
@@ -1653,7 +1769,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = EXTRACTION_SHELLCODE;
+    CapeMetaData->DumpType = URSNIF_CONFIG;
     ProcessDumped = FALSE;
 #endif
 

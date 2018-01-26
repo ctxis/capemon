@@ -31,6 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL GetSystemTimeAsFileTimeImported;
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -160,6 +161,11 @@ HOOKDEF(NTSTATUS, WINAPI, LdrGetProcedureAddress,
 		ExitThread(0);
 	}
 
+	if (FunctionName != NULL && FunctionName->Length == 23 && FunctionName->Buffer != NULL &&
+		(!strncmp(FunctionName->Buffer, "GetSystemTimeAsFileTime", 23))) {
+		GetSystemTimeAsFileTimeImported = TRUE;
+    }
+    
 	return ret;
 }
 
@@ -1092,31 +1098,6 @@ HOOKDEF(DWORD, WINAPI, GetCurrentProcessId,
 	return ret;
 }
 
-HOOKDEF(LPSTR, WINAPI, lstrcpynA,
-  _Out_ LPSTR   lpString1,
-  _In_  LPSTR   lpString2,
-  _In_  int     iMaxLength
-)
-{
-    LPSTR ret;
-    
-    const char UrsnifString[] = ".bss";
-
-    ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
-	
-    LOQ_void("misc", "s", "Source string", lpString2);
-    
-    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
-    {
-        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
-        GetHookCallerBase();    
-    }
-    else 
-        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
-
-    return ret; 
-}
-
 HOOKDEF(HANDLE, WINAPI, HeapCreate,
   _In_ DWORD  flOptions,
   _In_ SIZE_T dwInitialSize,
@@ -1142,9 +1123,7 @@ HOOKDEF(DWORD, WINAPI, GetVersion,
 
     ret = Old_GetVersion();
     
-    LOQ_nonnull("misc", "");
+    LOQ_void("misc", "");
     
-    DoOutputDebugString("GetVersion hook.\n");
-
     return ret;
 }

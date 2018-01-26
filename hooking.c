@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 
 extern DWORD g_tls_hook_index;
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
@@ -147,7 +148,11 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 		return 1;
 	}
 
-	return 0;
+    if (h->new_func == &New_lstrcpynA) {
+        DoOutputDebugString("enter_hook: about to call original lstrcpynA, NO HOOK!. disable_count = %i, h->allow_hook_recursion = %i.\n", hookinfo->disable_count, h->allow_hook_recursion);
+    }
+
+    return 0;
 }
 
 hook_info_t *hook_info()

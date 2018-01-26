@@ -23,10 +23,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 #include "config.h"
 #include "misc.h"
+#include "CAPE\CAPE.h"
 
 // only skip Sleep()'s the first five seconds
 #define MAX_SLEEP_SKIP_DIFF 5000
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL GetSystemTimeAsFileTimeImported;
 
 // skipping sleep calls is done while this variable is set to true
 static int sleep_skip_active = 1;
@@ -583,6 +586,12 @@ HOOKDEF(void, WINAPI, GetSystemTimeAsFileTime,
 	memcpy(lpSystemTimeAsFileTime, &ft, sizeof(ft));
 
 	LOQ_void("system", "");
+    
+    //if (!called_by_hook() && GetSystemTimeAsFileTimeImported) {
+    //    GetSystemTimeAsFileTimeImported = FALSE; // we need this once only
+    //    DoOutputDebugString("GetSystemTimeAsFileTime hook: about to call GetHookCallerBase().\n");
+    //    GetHookCallerBase();
+    //}
 
 	return;
 }

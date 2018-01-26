@@ -27,6 +27,7 @@ PVOID GetPageAddress(PVOID Address);
 PVOID GetAllocationBase(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
 BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
+BOOL DumpRegion(PVOID Address);
 int DumpMemory(LPVOID Buffer, unsigned int Size);
 int DumpCurrentProcessNewEP(LPVOID NewEP);
 int DumpCurrentProcess();
@@ -143,6 +144,9 @@ enum {
     EVILGRAB_DATA           = 0x15,
     
     SEDRECO_DATA            = 0x20,
+    
+    URSNIF_CONFIG           = 0x24,
+    URSNIF_PAYLOAD          = 0x25,
 	
     CERBER_CONFIG           = 0x30,
     CERBER_PAYLOAD          = 0x31

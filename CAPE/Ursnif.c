@@ -21,7 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE.h"
 
 #define MAX_INSTRUCTIONS 32
-#define SINGLE_STEP_LIMIT 0x10
+#define SINGLE_STEP_LIMIT 0x20
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -29,16 +29,57 @@ extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 extern int DumpMemory(LPVOID Buffer, unsigned int Size);
 
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
-
 BOOL BreakpointSet;
 unsigned int DumpCount, Correction, StepCount;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
+BOOL GetSystemTimeAsFileTimeImported, PayloadDumped;
 
-//**************************************************************************************
-BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
-//**************************************************************************************
+BOOL DumpCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
+    if (pBreakpointInfo == NULL)
+	{
+		DoOutputDebugString("DumpCallback executed with pBreakpointInfo NULL.\n");
+		return FALSE;
+	}
+	
+	if (pBreakpointInfo->ThreadHandle == NULL)
+	{
+		DoOutputDebugString("DumpCallback executed with NULL thread handle.\n");
+		return FALSE;
+	}
+
+	DoOutputDebugString("DumpCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+    
+    DoOutputDebugString("DumpCallback: single-step limit reached, dumping module.");
+    
+    if (!PayloadDumped)
+    {
+        PayloadDumped = TRUE;   // set this to prevent a second dump
+                                // from another thread before the
+                                // first is complete
+        PayloadDumped = DumpModuleInCurrentProcess(ModuleBase);
+        
+        if (PayloadDumped)
+        {
+            DoOutputDebugString("DumpCallback: Succssfully dumped module.");
+        }
+        else
+            DoOutputDebugString("DumpCallback: Module dump failed.");
+    }
+
+    ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
+    
+    StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+    
+    return TRUE;
+}
+
+BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+	PVOID ReturnAddress;
+    DWORD Register = 1;
+
     _DecodeResult res;
     _OffsetType offset = 0;
     _DecodedInst DecodedInstruction;
@@ -54,19 +95,15 @@ BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
     
     if (StepCount > SINGLE_STEP_LIMIT)
     {
-        DoOutputDebugString("SingleStepDisassemble: single-step limit reached, dumping module.");
-        if (DumpModuleInCurrentProcess(ModuleBase))
-            DoOutputDebugString("SingleStepDisassemble: Succssfully dumped module.");
-        else
-            DoOutputDebugString("SingleStepDisassemble: Module dump failed.");
+        DoOutputDebugString("Trace: single-step limit reached, releasing.");
         
         return TRUE;
     }
     
 #ifdef _WIN64
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x1FB, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
 #else
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x1FB, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
 #endif
         
 #ifdef _WIN64
@@ -80,27 +117,92 @@ BOOL SingleStepDisassemble(struct _EXCEPTION_POINTERS* ExceptionInfo)
 #ifdef _WIN64
         if (!strncmp(DecodedInstruction.operands.p, "ECX", 3))
         {
-            DoOutputDebugString("SingleStepDisassemble: Comparison detected, RCX = 0x%x, patching.", ExceptionInfo->ContextRecord->Rcx);
-            ExceptionInfo->ContextRecord->Rcx = 0;
+            DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
+            DoOutputDebugString("Trace: Comparison detected: RCX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rcx, Constant);
+            ExceptionInfo->ContextRecord->Rcx = Constant;
         }
         else if (!strncmp(DecodedInstruction.operands.p, "R11", 3))
         {
-            DoOutputDebugString("SingleStepDisassemble: Comparison detected, R11 = 0x%x, patching.", ExceptionInfo->ContextRecord->R11);
-            ExceptionInfo->ContextRecord->R11 = 0;
+            DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
+            DoOutputDebugString("Trace: Comparison detected: R11 (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->R11, Constant);
+            //ExceptionInfo->ContextRecord->R11 = Constant;
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EAX", 3))
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
-            DoOutputDebugString("SingleStepDisassemble: Comparison detected: RAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rax, Constant);
+            DoOutputDebugString("Trace: Comparison detected: RAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rax, Constant);
             ExceptionInfo->ContextRecord->Rax = Constant;
         }
 #else
-        DoOutputDebugString("SingleStepDisassemble: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
+        DoOutputDebugString("Trace: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
         ExceptionInfo->ContextRecord->Eax = 0;
 #endif
     }
+    
+    if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
+    {
+#ifdef _WIN64
+        ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
+#else
+        ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size);
+#endif
+        if (ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, Register, 0, (BYTE*)ReturnAddress, BP_EXEC, DumpCallback))
+        {
+            DoOutputDebugString("Trace: Breakpoint %d set on return address 0x%p\n", Register, ReturnAddress);
+        }
+        else
+        {
+            DoOutputDebugString("Trace: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
+        }
         
-    SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepDisassemble);
+        ClearSingleStepMode(ExceptionInfo->ContextRecord);
+        
+        return TRUE;
+    }
+    
+    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+    
+    return TRUE;
+}
+    
+BOOL Trace2(struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+	PVOID ReturnAddress;
+    DWORD Register = 1;
+
+    _DecodeResult res;
+    _OffsetType offset = 0;
+    _DecodedInst DecodedInstruction;
+    unsigned int DecodedInstructionsCount = 0;
+
+#ifdef _WIN64
+    _DecodeType DecodeType = Decode64Bits;
+#else
+    _DecodeType DecodeType = Decode32Bits;
+#endif
+
+    StepCount++;
+    
+    if (StepCount > SINGLE_STEP_LIMIT)
+    {
+        DoOutputDebugString("Trace2: single-step limit reached, releasing.");
+        
+        return TRUE;
+    }
+    
+#ifdef _WIN64
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+#else
+    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+#endif
+        
+#ifdef _WIN64
+    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
+#else
+    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
+#endif
+    
+    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace2);
     
     return TRUE;
 }
@@ -123,102 +225,69 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
     StepCount = 0;
 
+    ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);    
+    
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
-    SetSingleStepMode(ExceptionInfo->ContextRecord, SingleStepDisassemble);
+    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
     
     return TRUE;
 }
 
-BOOL DumpCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
+BOOL ConfigCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-    if (pBreakpointInfo == NULL)
+    PVOID DumpAddress;
+    unsigned int DumpSize = 0, NumOfSections = 0, EntryOffset = 0;
+    
+	if (pBreakpointInfo == NULL)
 	{
-		DoOutputDebugString("DumpCallback executed with pBreakpointInfo NULL.\n");
+		DoOutputDebugString("ConfigCallback executed with pBreakpointInfo NULL.\n");
 		return FALSE;
 	}
 	
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("DumpCallback executed with NULL thread handle.\n");
+		DoOutputDebugString("ConfigCallback executed with NULL thread handle.\n");
 		return FALSE;
 	}
 
-	DoOutputDebugString("DumpCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
+	DoOutputDebugString("ConfigCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
     
-    if (!DumpAddress || !DumpSize)
-    {
-        DoOutputDebugString("DumpCallback: Error - problem with address 0x%p or size 0x%x.\n", DumpAddress, DumpSize);
-        return FALSE;
-    }
-
-    if (DumpMemory(DumpAddress, (unsigned int)DumpSize))
-    {
-        DoOutputDebugString("DumpCallback: Dumped decrypted region at 0x%p, size 0x%x.\n", DumpAddress, DumpSize);
-    }
-    else
-    {
-        DoOutputDebugString("DumpCallback: Failed to dump decrypted region at 0x%p, size 0x%x.\n", DumpAddress, DumpSize);
-    }
-    
-    DumpAddress = NULL;
-    DumpSize = 0;
-    
-    ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
-    
-    StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
-    
-    return TRUE;
-}
-
-BOOL CryptoCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-	PVOID ReturnAddress;
-    DWORD Register = 1;
-    
-    if (pBreakpointInfo == NULL)
-	{
-		DoOutputDebugString("BreakpointCallback executed with pBreakpointInfo NULL.\n");
-		return FALSE;
-	}
-	
-	if (pBreakpointInfo->ThreadHandle == NULL)
-	{
-		DoOutputDebugString("BreakpointCallback executed with NULL thread handle.\n");
-		return FALSE;
-	}
-
-	DoOutputDebugString("CryptoCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
-
     DumpAddress = (PVOID)ExceptionInfo->ContextRecord->Rcx;
-    DumpSize = (SIZE_T)ExceptionInfo->ContextRecord->Rdx;
     
-#ifdef _WIN64
-	DoOutputDebugString("CryptoCallback: Source 0x%p, Destination 0x%p, Size=0x%x.\n", ExceptionInfo->ContextRecord->R8, DumpAddress, DumpSize);
-    ReturnAddress = (PVOID)*(DWORD_PTR*)(ExceptionInfo->ContextRecord->Rsp);
-#else
-	DoOutputDebugString("CryptoCallback: Source 0x%p, Destination 0x%p, Size=0x%x.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, DumpSize);
-#endif
-
+	DoOutputDebugString("ConfigCallback: Config location set to Rcx: 0x%p.\n", DumpAddress);
     
-    if (ContextSetBreakpoint(ExceptionInfo->ContextRecord, Register, 0, (BYTE*)ReturnAddress, BP_EXEC, DumpCallback))
+    NumOfSections = (unsigned int)(*(DWORD*)DumpAddress);
+    
+    EntryOffset = 8 + ((NumOfSections - 1)* 24);
+    
+    DumpSize = EntryOffset + *(DWORD*)((PUCHAR)DumpAddress + EntryOffset + 8);
+    
+    if (DumpMemory(DumpAddress, DumpSize))
     {
-        DoOutputDebugString("CryptoCallback: Breakpoint %d set on return address 0x%p\n", Register, ReturnAddress);
+        DoOutputDebugString("ConfigCallback: Dumped config region at 0x%p size 0x%x.\n", DumpAddress, DumpSize);
     }
     else
     {
-        DoOutputDebugString("CryptoCallback: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
-    }    
+        DoOutputDebugString("ConfigCallback: Failed to dump config region at 0x%p.\n", DumpAddress);
+    }
+    
+    ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);    
     
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+
+    StepCount = 0;
     
+    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace2);
+
     return TRUE;
 }
 
 BOOL SetInitialBreakpoint()
 {
     DWORD_PTR BreakpointVA, FileOffset;
-    DWORD Register = 0;
+    PTHREADBREAKPOINTS CurrentThreadBreakpoints;
+    DWORD Register = 0, ThreadId = GetCurrentThreadId();
     
     if (BreakpointSet)
 	{
@@ -226,48 +295,108 @@ BOOL SetInitialBreakpoint()
 		return FALSE;
 	}
         
-	if (CAPE_var1 == NULL)
+	if (!bp0 && !bp1 && !bp2)
 	{
-		DoOutputDebugString("SetInitialBreakpoint: Error - No address specified for Ursnif decryption function.\n");
+		DoOutputDebugString("SetInitialBreakpoint: Error - No address specified for Ursnif breakpoints.\n");
 		return FALSE;
 	}
 
-	if (CAPE_var1)
-        FileOffset = (DWORD_PTR)CAPE_var1;
+	CurrentThreadBreakpoints = GetThreadBreakpoints(ThreadId);
+
+    if (CurrentThreadBreakpoints == NULL)
+    {
+        CurrentThreadBreakpoints = CreateThreadBreakpoints(ThreadId);
+
+        if (CurrentThreadBreakpoints == NULL)
+        {
+            DoOutputDebugString("SetInitialBreakpoint: Failed to create thread breakpoints for current thread %d.\n", ThreadId);
+            return FALSE;        
+        }
+    }
     
-    DoOutputDebugString("SetInitialBreakpoint: About to call FileOffsetToVA with image base 0x%p and offset 0x%x.\n", ModuleBase, FileOffset);
+    if (CurrentThreadBreakpoints->ThreadHandle == NULL)
+    {
+		DoOutputDebugString("SetInitialBreakpoint error: thread handle not set (thread %d).\n", ThreadId);
+		return FALSE;        
+    }
     
+    if (bp0)
+    {
+        FileOffset = (DWORD_PTR)bp0;
+        BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
+        
+        if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, ConfigCallback))
+        {
+            DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
+            BreakpointSet = TRUE;
+        }
+        else
+        {
+            DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed.\n");
+            BreakpointSet = FALSE;
+            return FALSE;
+        }
+    }
+    
+    //if (!bp1 && !bp2)
+    if (!bp1)
+        return TRUE;
+    
+    if (bp1)
+    {
+        Register = 2;
+        FileOffset = (DWORD_PTR)bp1;
+        BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
+        
+        if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
+        {
+            DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
+        }
+        else
+        {
+            DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2s.\n");
+            return FALSE;
+        }
+    }
+    
+    if (!bp2)
+        return TRUE;
+    
+    Register = 3;
+    FileOffset = (DWORD_PTR)bp2;
     BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
     
-    if (SetBreakpoint(GetCurrentThreadId(), Register, 0, (BYTE*)BreakpointVA, BP_EXEC, CryptoCallback))
+    if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
     {
         DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
-        BreakpointSet = TRUE;
         return TRUE;
     }
     else
     {
-        DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed.\n");
-        BreakpointSet = FALSE;
+        DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2s.\n");
         return FALSE;
-    }
+    }    
 }
 
-//HOOKDEF(LPSTR, WINAPI, lstrcpynA,
-//  _Out_ LPSTR   lpString1,
-//  _In_  LPSTR   lpString2,
-//  _In_  int     iMaxLength
-//)
-//{
-//    const char UrsnifString[] = ".bss";
-//    
-//    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
-//    {
-//        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
-//        GetHookCallerBase();    
-//    }
-//    else 
-//        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
-//
-//    return Old_lstrcpynA(lpString1, lpString2, iMaxLength);
-//}
+HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR   lpString1,
+  _In_  LPSTR   lpString2,
+  _In_  int     iMaxLength
+)
+{
+    LPSTR ret;
+    
+    const char UrsnifString[] = ".bss";
+
+    ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
+    
+    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
+    {
+        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
+        GetHookCallerBase();    
+    }
+    else 
+        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
+
+    return ret; 
+}

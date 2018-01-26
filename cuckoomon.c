@@ -37,6 +37,9 @@ extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 
+DWORD our_tid;
+DWORD our_pid;
+
 void disable_tail_call_optimization(void)
 {
 	dummy_val++;
@@ -85,6 +88,7 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
+	HOOK_SPECIAL(kernel32, lstrcpynA),
 
 	// has special handling
 
@@ -165,7 +169,6 @@ static hook_t g_hooks[] = {
 	HOOK(kernel32, FindFirstChangeNotificationW),
 
 	HOOK(kernel32, GetVersion),
-	HOOK(kernel32, lstrcpynA),
 	HOOK(kernel32, HeapCreate),
     
     //
@@ -689,10 +692,11 @@ void set_hooks()
 	DWORD i;
 	HANDLE hSnapShot;
 	THREADENTRY32 threadInfo;
-	DWORD our_tid = GetCurrentThreadId();
-	DWORD our_pid = GetCurrentProcessId();
 	// the hooks contain executable code as well, so they have to be RWX
 	DWORD old_protect;
+
+	our_tid = GetCurrentThreadId();
+	our_pid = GetCurrentProcessId();
 
 	InitializeCriticalSection(&g_tmp_hookinfo_lock);
 
@@ -1066,13 +1070,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		}
 #endif
 
-		if (!memcmp((PUCHAR)lstrcpynA, "\x8b\xff\xff\x25", 4) || !memcmp((PUCHAR)lstrcpynA, "\xff\x25", 2) ||
-			!memcmp((PUCHAR)lstrcpynA, "\x8b\xff\xe9", 3) || !memcmp((PUCHAR)lstrcpynA, "\xe9", 1) ||
-			!memcmp((PUCHAR)lstrcpynA, "\xeb\xf9", 2))
-			DoOutputDebugString("Ursnif package: lstrcpynA hooked!\n");
-        else
-			DoOutputDebugString("Ursnif package: No lstrcpynA hooks detected :(\n");
-        
         notify_successful_load();
     }
     else if(dwReason == DLL_PROCESS_DETACH) {

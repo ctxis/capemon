@@ -30,6 +30,7 @@ TCHAR ErrorOutput[MAX_PATH];
 
 extern struct CapeMetadata *CapeMetaData;
 extern ULONG_PTR base_of_dll_of_interest;
+extern DWORD our_pid;
 
 //**************************************************************************************
 void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...)
@@ -45,7 +46,7 @@ void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...)
     OutputDebugString(DebugOutput);
 #else
     memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", DebugOutput);
+    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:(%i) %s", our_pid, DebugOutput);
     pipe(PipeOutput, strlen(PipeOutput));
 #endif
     va_end(args);
@@ -82,7 +83,7 @@ void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...)
     OutputDebugString(ErrorOutput);
 #else
     memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", ErrorOutput);
+    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:(%i) %s", our_pid, ErrorOutput);
     pipe(PipeOutput, strlen(PipeOutput));
 #endif
     

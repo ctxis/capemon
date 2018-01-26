@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ntapi.h"
 #include "hooking.h"
 #include "log.h"
+#include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
@@ -64,9 +65,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateEvent,
 			"EventName", eventname, "EventType", EventType, "InitialState", InitialState);
 	}
     
-    DoOutputDebugString("NtCreateEvent hook: DesiredAccess 0x%x ObjectAttributes 0x%x EventType 0x%x InitialState 0x%x.\n", DesiredAccess, ObjectAttributes, EventType, InitialState);
-    
-    //if (DesiredAccess == 0x1f0003) {
+    //DoOutputDebugString("NtCreateEvent hook: DesiredAccess 0x%x ObjectAttributes 0x%x EventType 0x%x InitialState 0x%x.\n", DesiredAccess, ObjectAttributes, EventType, InitialState);
+    //
+    //if (DesiredAccess == 0x1f0003 && InitialState == 1) {
     //    GetHookCallerBase();
 	//	LOQ_ntstatus("synchronization", "Pii", "Handle", EventHandle,
 	//		"EventType", EventType, "InitialState", InitialState);
