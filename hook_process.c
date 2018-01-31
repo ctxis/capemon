@@ -349,7 +349,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 #endif
                     if (SetThreadContext(ThreadHandle, &Context))
                     {
-                        SendDebuggerMessage((DWORD_PTR)ChildNewEP);
+                        SendDebuggerMessage((PVOID)ChildNewEP);
                         DoOutputDebugString("NtResumeProcess: Reset Debugger entry (0x%x) in child process, updated EP to 0x%x.\n", DebuggerEP, ChildNewEP);
                     }
                     else
@@ -940,7 +940,7 @@ HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
 ) {
 	HANDLE ret = Old_GetProcessHeap();
 
-    if (NT_SUCCESS(ret))
+    if (ret != NULL)
     {
         *((DWORD *)ret + 17) &= HEAP_NO_SERIALIZE;
     

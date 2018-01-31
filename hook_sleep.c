@@ -23,10 +23,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 #include "config.h"
 #include "misc.h"
+#include "CAPE\CAPE.h"
 
 // only skip Sleep()'s the first five seconds
 #define MAX_SLEEP_SKIP_DIFF 5000
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 // skipping sleep calls is done while this variable is set to true
 static int sleep_skip_active = 1;
@@ -460,9 +462,9 @@ HOOKDEF(void, WINAPI, GetLocalTime,
     ft.dwLowDateTime = li.LowPart;
     FileTimeToSystemTime(&ft, lpSystemTime);
 
-	set_lasterrors(&lasterror);
-
 	LOQ_void("system", "");
+
+	set_lasterrors(&lasterror);
 }
 
 HOOKDEF(void, WINAPI, GetSystemTime,
@@ -484,9 +486,9 @@ HOOKDEF(void, WINAPI, GetSystemTime,
     ft.dwLowDateTime = li.LowPart;
     FileTimeToSystemTime(&ft, lpSystemTime);
 
-	set_lasterrors(&lasterror);
-
 	LOQ_void("system", "");
+
+	set_lasterrors(&lasterror);
 }
 
 DWORD raw_gettickcount(void)
@@ -583,7 +585,7 @@ HOOKDEF(void, WINAPI, GetSystemTimeAsFileTime,
 	memcpy(lpSystemTimeAsFileTime, &ft, sizeof(ft));
 
 	LOQ_void("system", "");
-
+    
 	return;
 }
 

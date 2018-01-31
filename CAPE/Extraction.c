@@ -28,7 +28,7 @@ extern DWORD g_our_dll_size;
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
-extern unsigned int address_is_in_stack(DWORD Address);
+extern unsigned int address_is_in_stack(PVOID Address);
 extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
 
@@ -38,8 +38,8 @@ extern void hook_disable();
 extern void hook_enable();
 
 extern BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
-extern int DumpMemory(LPVOID Buffer, unsigned int Size);
-extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
+extern int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 extern int ScanPageForNonZero(LPVOID Address);
 
 BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTERS* ExceptionInfo);
@@ -293,8 +293,6 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         return;    
     }
     
-    ProcessTrackedRegion();
-    
     if (RegionSize < EXTRACTION_MIN_SIZE)
         return;
     
@@ -303,6 +301,10 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         return;
 
     DoOutputDebugString("Allocation: 0x%x - 0x%x, (size: 0x%x), protection: 0x%x.\n", BaseAddress, (PUCHAR)BaseAddress + RegionSize, RegionSize, Protect);
+
+    hook_disable();
+    
+    ProcessTrackedRegion();
     
     if (TrackedRegionList)
         TrackedRegion = GetTrackedRegion(BaseAddress);
@@ -318,6 +320,7 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     else if (TrackedRegion && (AllocationType & MEM_RESERVE))
     {
         DoOutputDebugString("AllocationHandler: Re-reserving region at: 0x%x.\n", BaseAddress);
+        hook_enable();
         return;
     }
     else if (TrackedRegion)
@@ -325,6 +328,7 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         // Surely anomolous?!
         DoOutputDebugString("AllocationHandler: Anomaly detected, new allocation already in tracked region list: 0x%x.\n", BaseAddress);
         DoOutputDebugString("AllocationHandler: Debug: TrackedRegion->Committed %d AllocationType 0x%x.\n", TrackedRegion->Committed, AllocationType);
+        hook_enable();
         return;
     }
     else
@@ -333,6 +337,7 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
     if (!TrackedRegion)
     {
         DoOutputDebugString("AllocationHandler: Error, unable to locate or add allocation in tracked region list: 0x%x.\n", BaseAddress);
+        hook_enable();
         return;
     }
     
@@ -374,6 +379,8 @@ void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationTyp
         DoOutputDebugString("AllocationHandler: Memory reserved but not committed at 0x%x.\n", BaseAddress);
     }
     
+    hook_enable();
+
     return;
 }
 
@@ -402,6 +409,8 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
     
     DoOutputDebugString("ProtectionHandler: Address:0x%x, NumberOfBytesToProtect: 0x%x, NewAccessProtection: 0x%x\n", Address, RegionSize, Protect);
 
+    hook_disable();
+
     if (TrackedRegionList)
         TrackedRegion = GetTrackedRegion(Address);
         
@@ -422,12 +431,14 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
     if (!TrackedRegion)
     {
         DoOutputDebugString("ProtectionHandler: Error, unable to add new region at 0x%x to tracked region list.\n", Address);
+        hook_enable();
         return;
     }
     
     if (!VirtualQuery(Address, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
         DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%x", Address);
+        hook_enable();
         return;
     }
 
@@ -469,6 +480,8 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
             
     }
 
+    hook_enable();
+
     return;
 }
 
@@ -488,6 +501,8 @@ void FreeHandler(PVOID BaseAddress)
     }
 
     DoOutputDebugString("FreeHandler: Address: 0x%x.\n", BaseAddress);
+
+    hook_disable();
 
     if (ScanForNonZero(TrackedRegion->BaseAddress, TrackedRegion->RegionSize) && !TrackedRegion->PagesDumped)
     {
@@ -512,6 +527,8 @@ void FreeHandler(PVOID BaseAddress)
     
     ExtractionClearAll(TrackedRegion);
     
+    hook_enable();
+
     return;
 }
 
@@ -1408,7 +1425,11 @@ BOOL PEPointerWriteCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         }
     }
 
+#ifdef _WIN64
+    pNtHeader = (PIMAGE_NT_HEADERS64)((BYTE*)TrackedRegion->BaseAddress + pDosHeader->e_lfanew);
+#else
     pNtHeader = (PIMAGE_NT_HEADERS32)((BYTE*)TrackedRegion->BaseAddress + pDosHeader->e_lfanew);
+#endif
 
     if ((pNtHeader->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) || (pNtHeader->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC))
     {
@@ -1523,12 +1544,12 @@ BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
     {
         SetCapeMetaData(EXTRACTION_PE, 0, NULL, TrackedRegion->MemInfo.AllocationBase);
         
-        if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress > (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
+        if (!address_is_in_stack((PVOID)pBreakpointInfo->Address) && (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress > (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
         {
             DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", TrackedRegion->MemInfo.AllocationBase, (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress + TrackedRegion->MemInfo.RegionSize - (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase);
             TrackedRegion->PagesDumped = DumpPEsInRange(TrackedRegion->MemInfo.AllocationBase, (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress + TrackedRegion->MemInfo.RegionSize - (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase);
         }
-        else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress == (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
+        else if (address_is_in_stack((PVOID)pBreakpointInfo->Address) || (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress == (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
         {
             DoOutputDebugString("ShellcodeExecCallback: Debug: About to scan region for a PE image (base 0x%x, size 0x%x).\n", TrackedRegion->MemInfo.BaseAddress, TrackedRegion->MemInfo.RegionSize);
             TrackedRegion->PagesDumped = DumpPEsInRange(TrackedRegion->MemInfo.BaseAddress, TrackedRegion->MemInfo.RegionSize);
@@ -1541,7 +1562,7 @@ BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
         }
         else
         {
-            if (!address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) && (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress > (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
+            if (!address_is_in_stack((PVOID)pBreakpointInfo->Address) && (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress > (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
             {
                 SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedRegion->MemInfo.AllocationBase);
                 
@@ -1553,7 +1574,7 @@ BOOL ShellcodeExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_PO
                     ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
                 }
             }
-            else if (address_is_in_stack((DWORD_PTR)pBreakpointInfo->Address) || (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress == (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
+            else if (address_is_in_stack((PVOID)pBreakpointInfo->Address) || (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress == (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase)
             {
                 SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, TrackedRegion->MemInfo.BaseAddress);
                 

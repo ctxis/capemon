@@ -59,12 +59,59 @@ extern int ScyllaDumpPE(DWORD_PTR Buffer);
 
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
+extern ULONG_PTR g_our_dll_base;
 
 static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
 CHAR s_szDllPath[MAX_PATH];
 
 BOOL ProcessDumped;
+extern PVOID CallingModule;
+extern LPVOID GetReturnAddress(PCONTEXT ContextRecord);
+
+//**************************************************************************************
+void GetHookCallerBase()
+//**************************************************************************************
+{
+    CONTEXT ContextRecord;
+    PVOID ReturnAddress, AllocationBase;
+
+    if (CallingModule)
+        return;
+        
+#ifdef _WIN64
+    RtlCaptureContext(&ContextRecord);
+#else
+    ZeroMemory(&ContextRecord, sizeof(CONTEXT));
+
+    __asm
+    {
+    Label:
+        mov eax, [Label];
+        mov [ContextRecord.Eip], eax;
+        mov [ContextRecord.Ebp], ebp;
+        mov [ContextRecord.Esp], esp;
+    }
+#endif
+    ReturnAddress = GetReturnAddress(&ContextRecord);
+
+    if (ReturnAddress)
+    {
+        DWORD ThreadId = GetCurrentThreadId();
+        
+        AllocationBase = GetAllocationBase(ReturnAddress);
+        DoOutputDebugString("GetHookCallerBase: thread %d (handle 0x%x), return address 0x%p, allocation base 0x%p.\n", ThreadId, GetThreadHandle(ThreadId), ReturnAddress, AllocationBase);
+
+        if (AllocationBase)
+        {
+            CallingModule = AllocationBase;
+        }
+    }
+    else
+        DoOutputDebugString("GetHookCallerBase: failed to get return address.\n");
+
+    return;
+}
 
 //**************************************************************************************
 void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned int Count)
@@ -140,6 +187,30 @@ BOOL TranslatePathFromDeviceToLetter(__in char *DeviceFilePath, __out char* Driv
 }
 
 //**************************************************************************************
+PVOID GetAllocationBase(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("GetAllocationBase: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("GetAllocationBase: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    return MemInfo.AllocationBase;
+}
+
+//**************************************************************************************
 SIZE_T GetAllocationSize(PVOID Address)
 //**************************************************************************************
 {
@@ -176,6 +247,7 @@ SIZE_T GetAllocationSize(PVOID Address)
     }
     
     return (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+
 }
 
 //**************************************************************************************
@@ -219,11 +291,11 @@ BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVO
             return FALSE;
         }
     }
-    else if (DumpType == EXTRACTION_PE || DumpType == EXTRACTION_SHELLCODE)
+    else if (DumpType == EXTRACTION_PE || DumpType == EXTRACTION_SHELLCODE || DumpType == URSNIF_PAYLOAD)
     {
         if (!Address)
         {
-            DoOutputDebugString("SetCapeMetaData: Extraction type with no PID - error.\n");
+            DoOutputDebugString("SetCapeMetaData: CAPE type with missing PID - error.\n");
             return FALSE;
         }
 
@@ -777,9 +849,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 //**************************************************************************************
 {
 	LONG e_lfanew;
-    DWORD NT_Signature, FullKey;
-	WORD TestKey;
-    unsigned int i, j, k, rotation;
+    DWORD NT_Signature;
+    unsigned int i, j, k;
 	BYTE* DecryptedBuffer;
 
     for (i=0; i<=0xFF; i++)
@@ -841,184 +912,12 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 			}
 			else
 			{
-				DoOutputDebugString("PE signature invalid, looks like a false positive! 1 in 0x10000!!\n");
+				DoOutputDebugString("PE signature invalid, looks like a false positive.\n");
 				return FALSE;
 			}
 		}
 	}
 	
-#ifndef _WIN64
-	for (i=0; i<=0xffff; i++)
-	{
-		// check for the DOS signature a.k.a MZ header
-		if ((*(WORD*)Buffer^(WORD)i) == IMAGE_DOS_SIGNATURE)
-		{
-			DoOutputDebugString("MZ header found with wordwise XOR key 0x%.2x%.2x\n", *(BYTE*)&i, *((BYTE*)&i+1));
-			
-			// let's try just the little end of the full lfanew which is almost always the whole value anyway
-			e_lfanew = *(WORD*)(Buffer+0x3c);
-
-			// try and decrypt
-			e_lfanew = e_lfanew^(WORD)i;
-
-			if ((unsigned int)e_lfanew > PE_HEADER_LIMIT)
-			{	
-				// even if dword-encrypted, 
-				// if the little endian word of the dword takes it too far it's over
-				DoOutputDebugString("Sadly the pointer to the PE header seems a tad too large: 0x%x", e_lfanew);
-				//return FALSE;
-			}
-
-			// get PE header
-			memcpy(&NT_Signature, Buffer+e_lfanew, 4);
-			
-			// We need to rotate our key for a non-dword aligned offset
-			TestKey = i;
-			if (e_lfanew % 2)
-			{
-				__asm 
-				{	
-					mov ax, TestKey
-					ror ax, 8
-					mov TestKey, ax
-				}
-			}				
-
-			// let's try decrypting it with the word key
-			for (k=0; k<2; k++)
-				*((WORD*)&NT_Signature+k) = *((WORD*)&NT_Signature+k)^TestKey;
-				
-			// does it check out?
-			if (NT_Signature == IMAGE_NT_SIGNATURE)
-			{
-				DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                
-                DecryptedBuffer = (BYTE*)malloc(Size);
-                
-                if (DecryptedBuffer == NULL)
-                {
-                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                    return FALSE;
-                }
-                
-                memcpy(DecryptedBuffer, Buffer, Size);
-                
-                for (k=0; k<Size; k=k+2)
-                    *(WORD*)(DecryptedBuffer+k) = *(WORD*)(DecryptedBuffer+k)^TestKey;
-                
-                CapeMetaData->Address = DecryptedBuffer;
-                DumpImageInCurrentProcess(DecryptedBuffer);
-                
-                free(DecryptedBuffer);
-				return TRUE;
-			}
-			else if ((WORD)NT_Signature == (WORD)IMAGE_NT_SIGNATURE)
-			{
-				// looks like DWORD encrypted with zero most significant word of lfanew
-				// let's confirm
-				DWORD FullKey = TestKey + ((*(WORD*)(Buffer+0x3e))<<16);
-
-				// let's recopy our candidate PE header
-				memcpy(&NT_Signature, Buffer+e_lfanew, 4);
-
-				// We need to rotate our key for a non-dword aligned offset
-				for (rotation = 0; rotation<(unsigned int)(e_lfanew % 4); rotation++)
-				{
-					__asm 
-					{	
-						mov eax, FullKey
-						ror eax, 8
-						mov FullKey, eax
-					}
-				}	
-			
-				// final test of the latter two bytes of PE header
-				// (might as well test the whole thing)
-				if ((NT_Signature ^ FullKey) == IMAGE_NT_SIGNATURE)
-                {
-                    DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                    
-                    DecryptedBuffer = (BYTE*)malloc(Size);
-                    
-                    if (DecryptedBuffer == NULL)
-                    {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                        return FALSE;
-                    }
-                    
-                    memcpy(DecryptedBuffer, Buffer, Size);
-                    
-                    for (k=0; k<Size; k=k+4)
-                        *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                    
-                    CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess(DecryptedBuffer);
-                    
-                    free(DecryptedBuffer);
-                    return TRUE;
-                }
-                else
-				{
-					// There's *very* remote this was a false positive, we should continue
-					continue;
-				}
-			}
-
-			// could be dword with non-zero most signicant bytes of lfanew
-			// brute force the 0xffff possibilities here
-			
-			for (TestKey=0; TestKey<0xffff; TestKey++)
-			{
-				long full_lfanew = e_lfanew + (0x10000*((*(WORD*)(Buffer+0x3e))^TestKey));						
-				
-				if ((unsigned int)full_lfanew > PE_HEADER_LIMIT)
-				{	
-					continue;			
-				}
-
-				memcpy(&NT_Signature, Buffer+full_lfanew, 4);
-
-				// We need to rotate our key for a non-dword aligned offset
-				FullKey = i + (TestKey<<16);
-				for (rotation = 0; rotation<(unsigned int)(full_lfanew % 4); rotation++)
-				{
-					__asm 
-					{	
-						mov eax, FullKey
-						ror eax, 8
-						mov FullKey, eax
-					}
-				}
-
-				// let's try decrypting it with the key
-				if ((NT_Signature ^ FullKey) == IMAGE_NT_SIGNATURE)
-                {
-                    DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                    
-                    DecryptedBuffer = (BYTE*)malloc(Size);
-                    
-                    if (DecryptedBuffer == NULL)
-                    {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                        return FALSE;
-                    }
-                    
-                    memcpy(DecryptedBuffer, Buffer, Size);
-                    
-                    for (k=0; k<Size; k=k+4)
-                        *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                    
-                    CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess(DecryptedBuffer);
-                    
-                    free(DecryptedBuffer);
-                    return TRUE;
-                }
-			}
-		}
-	}
-
-#endif
     // We free can free DecryptedBuffer as it's no longer needed
     free(DecryptedBuffer);
     
@@ -1065,10 +964,10 @@ int ScanPageForNonZero(LPVOID Address)
 }
 
 //**************************************************************************************
-int ScanForNonZero(LPVOID Buffer, unsigned int Size)
+int ScanForNonZero(LPVOID Buffer, SIZE_T Size)
 //**************************************************************************************
 {
-    unsigned int p;
+    SIZE_T p;
     
     if (!Buffer)
     {  
@@ -1114,10 +1013,10 @@ PVOID GetPageAddress(PVOID Address)
  
 }
 //**************************************************************************************
-int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
+int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
 //**************************************************************************************
 {   // deprecated in favour of ScanForDisguisedPE
-    unsigned int p;
+    SIZE_T p;
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
@@ -1263,10 +1162,10 @@ int IsDisguisedPEHeader(LPVOID Buffer)
 }
 
 //**************************************************************************************
-int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
+int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
 //**************************************************************************************
 {
-    unsigned int p;
+    SIZE_T p;
     int RetVal;
     
     if (Size == 0)
@@ -1358,7 +1257,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
 }
 
 //**************************************************************************************
-int DumpMemory(LPVOID Buffer, unsigned int Size)
+int DumpMemory(LPVOID Buffer, SIZE_T Size)
 //**************************************************************************************
 {
 	char *FullPathName;
@@ -1406,7 +1305,7 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
         return 0;
     }
     
-    if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
+    if (FALSE == WriteFile(hOutputFile, BufferCopy, (DWORD)Size, &dwBytesWritten, NULL))
 	{
 		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
         free(FullPathName); 
@@ -1426,6 +1325,79 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
     free(BufferCopy);
 	
     return 1;
+}
+
+//**************************************************************************************
+BOOL DumpRegion(PVOID Address)
+//**************************************************************************************
+{
+    MEMORY_BASIC_INFORMATION MemInfo;
+    PVOID OriginalAllocationBase, OriginalBaseAddress, AddressOfPage;
+    SIZE_T AllocationSize, OriginalRegionSize;
+    
+    if (!SystemInfo.dwPageSize)
+        GetSystemInfo(&SystemInfo);
+    
+    if (!SystemInfo.dwPageSize)
+    {
+        DoOutputErrorString("DumpRegion: Failed to obtain system page size.\n");
+        return 0;
+    }
+
+    if (!VirtualQuery(Address, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("DumpRegion: unable to query memory address 0x%x", Address);
+        return 0;
+    }
+    
+    OriginalAllocationBase = MemInfo.AllocationBase;
+    OriginalBaseAddress = MemInfo.BaseAddress;
+    OriginalRegionSize = MemInfo.RegionSize;
+    AddressOfPage = OriginalAllocationBase;
+    
+    while (MemInfo.AllocationBase == OriginalAllocationBase)
+    {
+        (PUCHAR)AddressOfPage += SystemInfo.dwPageSize;
+
+        if (!VirtualQuery(AddressOfPage, &MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+        {
+            DoOutputErrorString("DumpRegion: unable to query memory page 0x%x", AddressOfPage);
+            return 0;
+        }        
+    }
+    
+    AllocationSize = (SIZE_T)((DWORD_PTR)AddressOfPage - (DWORD_PTR)OriginalAllocationBase);
+
+    SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalAllocationBase);
+
+    if (DumpMemory(OriginalAllocationBase, AllocationSize))
+    {
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped entire allocation from 0x%p, size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        return TRUE;
+    }
+    else
+    {
+        DoOutputDebugString("DumpRegion: Failed to dump entire allocation from 0x%p size 0x%x.\n", OriginalAllocationBase, AllocationSize);
+        
+        SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, (PVOID)OriginalBaseAddress);
+        
+        if (DumpMemory(OriginalBaseAddress, OriginalRegionSize))
+        {
+        if (address_is_in_stack(Address))
+            DoOutputDebugString("DumpRegion: Dumped stack region from 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+        else
+            DoOutputDebugString("DumpRegion: Dumped base address 0x%p, size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return TRUE;
+        }
+        else
+        {
+            DoOutputDebugString("DumpRegion: Failed to dump base address 0x%p size 0x%x.\n", OriginalBaseAddress, OriginalRegionSize);
+            return FALSE;
+        }
+    }
 }
 
 //**************************************************************************************
@@ -1616,7 +1588,7 @@ void init_CAPE()
     CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
-    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // Specific to Extraction package:
     CapeMetaData->DumpType = EXTRACTION_SHELLCODE;  // default value for now, may be changed to EXTRACTION_PE
@@ -1642,9 +1614,9 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised (64-bit).\n");
+    DoOutputDebugString("CAPE initialised: 64-bit Extraction package. Loaded at 0x%p\n", g_our_dll_base);
 #else
-    DoOutputDebugString("CAPE initialised (32-bit).\n");
+    DoOutputDebugString("CAPE initialised: 32-bit Extraction package. Loaded at 0x%x\n", g_our_dll_base);
 #endif
     
     return;

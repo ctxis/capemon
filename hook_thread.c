@@ -32,8 +32,6 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 static lookup_t g_ignored_threads;
 
-extern DWORD ChildProcessId;
-
 void ignored_threads_init(void)
 {
 	lookup_init(&g_ignored_threads);
@@ -171,6 +169,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
     IN      LPTHREAD_START_ROUTINE lpStartAddress,
     IN      PVOID lpParameter,
     IN      DWORD dwCreationFlags,
+
     IN      LONG StackZeroBits,
     IN      LONG SizeOfStackCommit,
     IN      LONG SizeOfStackReserve,
@@ -196,6 +195,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
         
         pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
 		if (!(dwCreationFlags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED)) {
+
 			lasterror_t lasterror;
 			get_lasterrors(&lasterror);
 			ResumeThread(*hThread);
@@ -214,7 +214,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateThreadEx,
 	
 	return ret;
 }
-
 HOOKDEF(NTSTATUS, WINAPI, NtOpenThread,
     __out  PHANDLE ThreadHandle,
     __in   ACCESS_MASK DesiredAccess,
@@ -246,42 +245,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
     __in     HANDLE ThreadHandle,
     __inout  LPCONTEXT Context
 ) {
-	DWORD pid = pid_from_thread_handle(ThreadHandle);
-
     NTSTATUS ret = Old_NtGetContextThread(ThreadHandle, Context);
-	
-    if (called_by_hook())
-        return ret;
-        
-    if (Context->ContextFlags & CONTEXT_CONTROL)
-    {
-        if 
-        (
-            DEBUGGER_ENABLED && 
-            pid == ChildProcessId && 
-            OEP && 
+	if (Context->ContextFlags & CONTEXT_CONTROL)
 #ifdef _WIN64
-
-            DebuggerEP == Context->Rcx
+		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
 #else
-
-            DebuggerEP == Context->Eax
+		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eax);
 #endif
-        )
-        {
-#ifdef _WIN64
-            Context->Rcx = (DWORD_PTR)OEP;
-#else
-            Context->Eax = (DWORD)OEP;
-#endif
-        }
-
-#ifdef _WIN64
-        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
-#else
-        LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Eax);
-#endif
-    }
 	else
 		LOQ_ntstatus("threading", "p", "ThreadHandle", ThreadHandle);
     return ret;
@@ -289,36 +259,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
 
 HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     __in  HANDLE ThreadHandle,
-    __in  CONTEXT *Context
+    __in  const CONTEXT *Context
 ) {
 	NTSTATUS ret;
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
 
-	if (DEBUGGER_ENABLED && pid == ChildProcessId && Context->ContextFlags & CONTEXT_CONTROL)
-    {
-        if (!DebuggerEP)
-            DoOutputDebugString("NtSetContextThread hook: Error - DebuggerEP not set.\n");
-        else
-        {
-#ifdef _WIN64
-			SendDebuggerMessage((DWORD_PTR)Context->Rcx);
-            DoOutputDebugString("NtSetContextThread hook: Sent new child EP to Debugger - 0x%x\n", Context->Rcx);
-#else
-			SendDebuggerMessage((DWORD_PTR)Context->Eax);
-            DoOutputDebugString("NtSetContextThread hook: Sent new child EP to Debugger - 0x%x\n", Context->Eax);
-#endif
-            Context->ContextFlags = Context->ContextFlags |~ CONTEXT_CONTROL;
-            
-            ret = Old_NtSetContextThread(ThreadHandle, Context);
-
-            Context->ContextFlags = Context->ContextFlags & CONTEXT_CONTROL;
-        }
-    }
-    else
-        ret = Old_NtSetContextThread(ThreadHandle, Context);
-        
+	ret = Old_NtSetContextThread(ThreadHandle, Context);
 	if (Context->ContextFlags & CONTEXT_CONTROL)
 #ifdef _WIN64
 		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
@@ -352,7 +300,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtSuspendThread,
 		pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
 
 		ret = Old_NtSuspendThread(ThreadHandle, PreviousSuspendCount);
-		LOQ_ntstatus("threadingb", "pL", "ThreadHandle", ThreadHandle,
+		LOQ_ntstatus("threading", "pL", "ThreadHandle", ThreadHandle,
 			"SuspendCount", PreviousSuspendCount);
 	}
     return ret;
@@ -362,52 +310,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
     __in        HANDLE ThreadHandle,
     __out_opt   ULONG *SuspendCount
 ) {
-    CONTEXT Context;
-    DWORD_PTR ChildNewEP;
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	NTSTATUS ret;
 	ENSURE_ULONG(SuspendCount);
 	pipe("RESUME:%d,%d", pid, tid);
-    
-    if (DEBUGGER_ENABLED && pid == ChildProcessId && tid == ChildThreadId)
-    {
-        Context.ContextFlags = CONTEXT_ALL;
-        
-        ret = Old_NtGetContextThread(ThreadHandle, &Context);
-
-        if (NT_SUCCESS(ret))
-        {
-#ifdef _WIN64
-            if (Context.Rcx != DebuggerEP)
-            {
-                ChildNewEP = Context.Rcx;
-                Context.Rcx = DebuggerEP;
-#else
-            if (Context.Eax != DebuggerEP)
-            {
-                ChildNewEP = Context.Eax;
-                Context.Eax = DebuggerEP;
-#endif
-                ret = Old_NtSetContextThread(ThreadHandle, &Context);
-                
-                if (NT_SUCCESS(ret))
-                {
-                    SendDebuggerMessage((DWORD_PTR)ChildNewEP);
-                    DoOutputDebugString("NtResumeThread: Reset Debugger entry (0x%x) in child process, updated EP to 0x%x.\n", DebuggerEP, ChildNewEP);
-                }
-                else
-                    DoOutputDebugString("NtResumeThread: Error - failed to ensure Debugger entry in child process.\n");
-            }
-        }
-        else
-        {
-            DoOutputDebugString("NtResumeThread: NtGetContextThread failed.\n");
-        }        
-    }
 
     ret = Old_NtResumeThread(ThreadHandle, SuspendCount);
-    LOQ_ntstatus("threading", "ipI", "ThreadId", tid, "ThreadHandle", ThreadHandle, "SuspendCount", SuspendCount);
+    LOQ_ntstatus("threading", "pI", "ThreadHandle", ThreadHandle, "SuspendCount", SuspendCount);
     return ret;
 }
 
@@ -438,7 +348,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateThread,
 		return ret;
 	}
 
-	LOQ_ntstatus("threading", "iph", "ThreadId", tid, "ThreadHandle", ThreadHandle, "ExitStatus", ExitStatus);
+	LOQ_ntstatus("threading", "ph", "ThreadHandle", ThreadHandle, "ExitStatus", ExitStatus);
     ret = Old_NtTerminateThread(ThreadHandle, ExitStatus);
 
 	disable_tail_call_optimization();
@@ -498,7 +408,7 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
     if (pid == ChildProcessId)
     {
         DoOutputDebugString("CreateRemoteThread: RemoteThread created in child process, sending address to debugger: 0x%x", lpStartAddress);
-        SendDebuggerMessage((DWORD_PTR)lpStartAddress);
+        SendDebuggerMessage((PVOID)lpStartAddress);
         ret = Old_CreateRemoteThread(hProcess, lpThreadAttributes,
             dwStackSize, (LPTHREAD_START_ROUTINE)DebuggerEP, lpParameter, dwCreationFlags | CREATE_SUSPENDED,
             lpThreadId);
@@ -556,7 +466,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlCreateUserThread,
     if (pid == ChildProcessId)
     {
         DoOutputDebugString("RtlCreateUserThread: RemoteThread created in child process, sending address to debugger: 0x%x", StartAddress);
-        SendDebuggerMessage((DWORD_PTR)StartAddress);
+        SendDebuggerMessage((PVOID)StartAddress);
         ret = Old_RtlCreateUserThread(ProcessHandle, SecurityDescriptor,
             TRUE, StackZeroBits, StackReserved, StackCommit,
             (LPTHREAD_START_ROUTINE)DebuggerEP, StartParameter, ThreadHandle, ClientId);

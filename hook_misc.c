@@ -27,7 +27,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "ignore.h"
 #include "CAPE\CAPE.h"
-#include "CAPE\Debugger.h"
+
+#define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
@@ -88,18 +89,7 @@ HOOKDEF(LPTOP_LEVEL_EXCEPTION_FILTER, WINAPI, SetUnhandledExceptionFilter,
     BOOL ret = 1;
     LPTOP_LEVEL_EXCEPTION_FILTER res;
 
-	if (DEBUGGER_ENABLED && !VECTORED_HANDLER)
-    {
-        DoOutputDebugString("SetUnhandledExceptionFilter hook: switching CAPE debugger to vectored handler.\n");
-        AddVectoredExceptionHandler(1, CAPEExceptionFilter);
-        VECTORED_HANDLER = TRUE;
-        OriginalExceptionHandler = lpTopLevelExceptionFilter;
-        if (g_config.debug)
-            res = NULL;
-		else
-            res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
-    }
-	else if (g_config.debug)
+	if (g_config.debug)
 		res = NULL;
 	else
 		res = Old_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
@@ -114,29 +104,7 @@ HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
 ) {
 	PVOID ret = 0;
     
-    if (DEBUGGER_ENABLED && VECTORED_HANDLER && First)
-    {
-        if (!CAPEExceptionFilterHandle)
-        {
-            DoOutputDebugString("RtlAddVectoredExceptionHandler hook: Error - CAPE vectored handler not registered.\n");
-            ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
-            LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
-            return ret;
-        }
-
-        // We register the handler at the bottom, this minimizes
-        // our interference and means the handle is valid 
-        ret = Old_RtlAddVectoredExceptionHandler(0, Handler);
-        
-        if (ret == NULL)
-            return ret;
-            
-        // We record the handler address so that 
-        // CAPEExceptionFilter can call it directly
-        SampleVectoredHandler = (SAMPLE_HANDLER)Handler;        
-    }
-    else
-        ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+    ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
 	
     LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
     
@@ -607,8 +575,14 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	NTSTATUS ret = Old_RtlDecompressBuffer(CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
 		CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
 
-	LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
-		ret ? 0 : *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", ret ? 0 : *FinalUncompressedSize);
+    if ((NT_SUCCESS(ret) || ret == STATUS_BAD_COMPRESSION_BUFFER) && (*FinalUncompressedSize > 0)) {
+	//	There are samples that return STATUS_BAD_COMPRESSION_BUFFER but still continue
+        LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+            *FinalUncompressedSize, UncompressedBuffer, "UncompressedBufferLength", *FinalUncompressedSize);
+	}
+    else
+        LOQ_ntstatus("misc", "pch", "UncompressedBufferAddress", UncompressedBuffer, "UncompressedBuffer",
+            0, UncompressedBuffer, "UncompressedBufferLength", 0);
 
 	return ret;
 }
@@ -789,12 +763,13 @@ HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsA,
 		memcpy(&id1, ClassGuid, sizeof(id1));
 		sprintf(idbuf, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 			id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
-		set_lasterrors(&lasterror);
 
 		if ((known = known_object(&id1)))
 			LOQ_handle("misc", "ss", "ClassGuid", idbuf, "Known", known);
 		else
 			LOQ_handle("misc", "s", "ClassGuid", idbuf);
+
+        set_lasterrors(&lasterror);
 	}
 	return ret;
 }
@@ -814,12 +789,13 @@ HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsW,
 		memcpy(&id1, ClassGuid, sizeof(id1));
 		sprintf(idbuf, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 			id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
-		set_lasterrors(&lasterror);
 
 		if ((known = known_object(&id1)))
 			LOQ_handle("misc", "ss", "ClassGuid", idbuf, "Known", known);
 		else
 			LOQ_handle("misc", "s", "ClassGuid", idbuf);
+            
+        set_lasterrors(&lasterror);
 	}
 	return ret;
 }
@@ -867,14 +843,14 @@ HOOKDEF(BOOL, WINAPI, SetupDiGetDeviceRegistryPropertyW,
 
 	ret = Old_SetupDiGetDeviceRegistryPropertyW(DeviceInfoSet, DeviceInfoData, Property, PropertyRegDataType, PropertyBuffer, PropertyBufferSize, RequiredSize);
 
-	if (PropertyBuffer)
-		LOQ_bool("misc", "iR", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
-
 	if (!g_config.no_stealth && ret && PropertyBuffer) {
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"VBOX", L"DELL_");
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"QEMU", L"DELL");
 		replace_ci_wstring_in_buf((PWCHAR)PropertyBuffer, *RequiredSize / sizeof(WCHAR), L"VMWARE", L"DELL__");
 	}
+
+	if (PropertyBuffer)
+		LOQ_bool("misc", "iR", "Property", Property, "PropertyBuffer", *PropertyRegDataType, PropertyBufferSize, PropertyBuffer);
 
 	return ret;
 }
@@ -1075,7 +1051,7 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// seems this is needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void.
 
 	Old_memcpy(dest, src, count);
 	
@@ -1085,13 +1061,63 @@ HOOKDEF(void, WINAPIV, memcpy,
 	return;
 }
 
+HOOKDEF(unsigned int, WINAPIV, SizeofResource,
+    _In_opt_ HMODULE hModule,
+    _In_     HRSRC   hResInfo
+)
+{
+	unsigned int ret = Old_SizeofResource(hModule, hResInfo);
+
+	LOQ_nonzero("misc", "ppi", "ModuleHandle", hModule, "ResourceInfo", hResInfo, "Size", ret);
+    
+    return ret;
+}
+
 HOOKDEF(void, WINAPIV, srand,
 	unsigned int seed
 )
 {
-	int ret = 0;	// seems this is needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void.
 
 	Old_srand(seed);
 
 	LOQ_void("misc", "h", "seed", seed);
+}
+
+HOOKDEF(DWORD, WINAPI, GetCurrentProcessId,
+	void
+) {
+	DWORD ret = Old_GetCurrentProcessId();
+	LOQ_void("misc", "");
+	return ret;
+}
+
+HOOKDEF(HANDLE, WINAPI, HeapCreate,
+  _In_ DWORD  flOptions,
+  _In_ SIZE_T dwInitialSize,
+  _In_ SIZE_T dwMaximumSize
+)
+{
+    HANDLE ret;
+    
+    ret = Old_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
+    
+    LOQ_nonnull("misc", "");
+
+    DoOutputDebugString("HeapCreate hook.\n");
+    
+    return ret;
+}
+
+HOOKDEF(DWORD, WINAPI, GetVersion,
+    void
+)
+{
+    DWORD ret;
+
+    ret = Old_GetVersion();
+    
+    LOQ_void("misc", "");
+    
+    return ret;
 }

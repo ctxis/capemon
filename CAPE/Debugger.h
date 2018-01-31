@@ -2,6 +2,7 @@
 #pragma once
 
 #define DEBUGGER_LAUNCHER 0
+#define DisableThreadSuspend 0
 
 #define BP_EXEC        0x00
 #define BP_WRITE       0x01
@@ -94,7 +95,9 @@ extern "C" {
 
 BOOL DebuggerInitialised;
 
+// Global variables for submission options
 void *CAPE_var1, *CAPE_var2, *CAPE_var3, *CAPE_var4;
+PVOID bp0, bp1, bp2, bp3;
 
 LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 PVOID CAPEExceptionFilterHandle;
@@ -121,6 +124,7 @@ BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, 
 BOOL SetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL SetResumeFlag(PCONTEXT Context);
+PTHREADBREAKPOINTS CreateThreadBreakpoints(DWORD ThreadId);
 
 // Get
 BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register);
@@ -130,6 +134,7 @@ BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register,
 int CheckDebugRegister(HANDLE hThread, int Register);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 int ContextCheckDebugRegister(CONTEXT Context, int Register);
+HANDLE GetThreadHandle(DWORD ThreadId);
 
 // Clear
 BOOL ClearBreakpoint(DWORD ThreadId, int Register);
@@ -144,7 +149,7 @@ BOOL ClearSingleStepMode(PCONTEXT Context);
 BOOL InitNewThreadBreakpoints(DWORD ThreadId);
 BOOL InitialiseDebugger(void);
 BOOL DebugNewProcess(unsigned int ProcessId, unsigned int ThreadId, DWORD CreationFlags);
-BOOL SendDebuggerMessage(DWORD Input);
+BOOL SendDebuggerMessage(PVOID Input);
 BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo);
 

@@ -15,35 +15,34 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
-//  STATUS_SUCCESS
-#define STATUS_SUCCESS                  ((NTSTATUS)0x00000000L)
+extern HMODULE s_hInst;
+extern WCHAR s_wzDllPath[MAX_PATH];
+extern CHAR s_szDllPath[MAX_PATH];
 
-// STATUS_BAD_COMPRESSION_BUFFER    "The specified buffer contains ill-formed data."
-#define STATUS_BAD_COMPRESSION_BUFFER   ((NTSTATUS)0xC0000242L)
+//Global debugger switch
+#define DEBUGGER_ENABLED 1
 
-#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
+void GetHookCallerBase();
+PVOID GetPageAddress(PVOID Address);
+PVOID GetAllocationBase(PVOID Address);
+BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
+BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
+BOOL DumpRegion(PVOID Address);
+int DumpMemory(LPVOID Buffer, unsigned int Size);
+int DumpCurrentProcessNewEP(LPVOID NewEP);
+int DumpCurrentProcess();
+int DumpProcess(HANDLE hProcess, LPVOID ImageBase);
+int DumpPE(LPVOID Buffer);
+int ScanForNonZero(LPVOID Buffer, unsigned int Size);
+int ScanPageForNonZero(LPVOID Address);
+int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+int IsDisguisedPEHeader(LPVOID Buffer);
+int DumpImageInCurrentProcess(LPVOID ImageBase);
+void DumpSectionViewsForPid(DWORD Pid);
 
-#define SIZE_OF_LARGEST_IMAGE ((ULONG)0x77000000)
-
-#pragma comment(lib, "Wininet.lib")
-
-#define	DATA				0
-#define	EXECUTABLE			1
-#define	DLL			        2
-
-#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
-
-typedef struct CapeMetadata 
-{
-	char*	ProcessPath;
-	char*	ModulePath;
-    DWORD   Pid;
-    DWORD   DumpType;
-    char*	TargetProcess;  // For injection
-    DWORD	TargetPid;      // "
-    PVOID   Address;        // For shellcode/modules
-	SIZE_T  Size;           // "
-} CAPEMETADATA, *PCAPEMETADATA;
+SYSTEM_INFO SystemInfo;
+PVOID CallingModule;
 
 typedef struct InjectionSectionView
 {
@@ -53,6 +52,10 @@ typedef struct InjectionSectionView
 	int                             TargetProcessId;
     struct InjectionSectionView     *NextSectionView;
 } INJECTIONSECTIONVIEW, *PINJECTIONSECTIONVIEW;
+
+PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
+PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
+BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
 
 typedef struct InjectionInfo
 {
@@ -69,25 +72,6 @@ typedef struct InjectionInfo
     struct InjectionInfo        *NextInjectionInfo;
 } INJECTIONINFO, *PINJECTIONINFO;
 
-// To allow access to a subset of current hook info
-// (without including hooking.h)
-#ifndef __HOOKING_H
-typedef struct _hook_info_t {
-	int disable_count;
-	ULONG_PTR last_hook;    // These were hook_t* but we
-	ULONG_PTR current_hook; // don't need to include this.
-	ULONG_PTR return_address;
-	ULONG_PTR stack_pointer;
-	ULONG_PTR frame_pointer;
-	ULONG_PTR main_caller_retaddr;
-	ULONG_PTR parent_caller_retaddr;
-} hook_info_t;
-#endif
-
-PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
-PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
-BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
-
 struct InjectionInfo *InjectionInfoList;
 
 PINJECTIONINFO GetInjectionInfo(DWORD ProcessId);
@@ -95,33 +79,48 @@ PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId);
 
 struct InjectionSectionView *SectionViewList;
 
+//
+// MessageId: STATUS_SUCCESS
+//
+// MessageText:
+//
+//  STATUS_SUCCESS
+//
+#define STATUS_SUCCESS                   ((NTSTATUS)0x00000000L)
 
-extern HMODULE s_hInst;
-extern WCHAR s_wzDllPath[MAX_PATH];
-extern CHAR s_szDllPath[MAX_PATH];
+//
+// MessageId: STATUS_BAD_COMPRESSION_BUFFER
+//
+// MessageText:
+//
+// The specified buffer contains ill-formed data.
+//
+#define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
-//Global debugger switch
-#define DEBUGGER_ENABLED 1
+#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
 
-SIZE_T GetAllocationSize(PVOID Address);
-PVOID GetPageAddress(PVOID Address);
-BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
-BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
-int DumpMemory(LPVOID Buffer, unsigned int Size);
-int DumpCurrentProcessNewEP(LPVOID NewEP);
-int DumpCurrentProcess();
-int DumpProcess(HANDLE hProcess, LPVOID ImageBase);
-int DumpPE(LPVOID Buffer);
-int ScanForNonZero(LPVOID Buffer, unsigned int Size);
-int ScanPageForNonZero(LPVOID Address);
-int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
-int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
-int IsDisguisedPEHeader(LPVOID Buffer);
-int DumpImageInCurrentProcess(LPVOID ImageBase);
-void DumpSectionViewsForPid(DWORD Pid);
+#define SIZE_OF_LARGEST_IMAGE ((ULONG)0x77000000)
 
-unsigned int DumpSize;
-SYSTEM_INFO SystemInfo;
+#pragma comment(lib, "Wininet.lib")
+
+#define	DATA				0
+#define	EXECUTABLE			1
+#define	DLL			        2
+
+#define PLUGX_SIGNATURE		0x5658	// 'XV'
+#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
+
+typedef struct CapeMetadata 
+{
+	char*	ProcessPath;
+	char*	ModulePath;
+    DWORD   Pid;
+    DWORD   DumpType;
+    char*	TargetProcess;  // For injection
+    DWORD	TargetPid;      // "
+    PVOID   Address;        // For shellcode/modules
+	SIZE_T  Size;           // "
+} CAPEMETADATA, *PCAPEMETADATA;
 
 struct CapeMetadata *CapeMetaData;
 
@@ -146,6 +145,9 @@ enum {
     EVILGRAB_DATA           = 0x15,
     
     SEDRECO_DATA            = 0x20,
+    
+    URSNIF_CONFIG           = 0x24,
+    URSNIF_PAYLOAD          = 0x25,
 	
     CERBER_CONFIG           = 0x30,
     CERBER_PAYLOAD          = 0x31
