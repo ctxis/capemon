@@ -45,6 +45,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 
 static unsigned int DumpCount;
  
+extern BOOL is_64bit_os; 
 extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buffer_len);
 extern unsigned int address_is_in_stack(PVOID Address);
 
@@ -104,7 +105,11 @@ void GetHookCallerBase()
         AllocationBase = GetAllocationBase(ReturnAddress);
         DoOutputDebugString("GetHookCallerBase: thread %d (handle 0x%x), return address 0x%p, allocation base 0x%p.\n", ThreadId, GetThreadHandle(ThreadId), ReturnAddress, AllocationBase);
 
+#ifdef _WIN64
         if (AllocationBase)
+#else
+        if (is_64bit_os == FALSE && AllocationBase)
+#endif
         {
             ModuleBase = AllocationBase;
             SetInitialBreakpoint();
@@ -1613,7 +1618,6 @@ void init_CAPE()
     // g_config.debug = 2;
     
     // Start the debugger thread
-    // if required by package
     if (DEBUGGER_ENABLED)
         launch_debugger();
 

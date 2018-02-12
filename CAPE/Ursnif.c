@@ -119,7 +119,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
             DoOutputDebugString("Trace: Comparison detected: RCX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rcx, Constant);
-            ExceptionInfo->ContextRecord->Rcx = Constant;
+            //ExceptionInfo->ContextRecord->Rcx = Constant;
         }
         else if (!strncmp(DecodedInstruction.operands.p, "R11", 3))
         {
@@ -131,12 +131,12 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
             DoOutputDebugString("Trace: Comparison detected: RAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rax, Constant);
-            ExceptionInfo->ContextRecord->Rax = Constant;
+            //ExceptionInfo->ContextRecord->Rax = Constant;
         }
 #else
         DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Eip + 1);
         DoOutputDebugString("Trace: Comparison detected, EAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Eax, Constant);
-        ExceptionInfo->ContextRecord->Eax = Constant;
+        //ExceptionInfo->ContextRecord->Eax = Constant;
 #endif
     }
     
@@ -288,10 +288,28 @@ BOOL SetInitialBreakpoint()
     {
         FileOffset = (DWORD_PTR)bp0;
         BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
+        ChunkSize = 0x10;
+        
+        memset(&DecodedInstructions, 0, sizeof(DecodedInstructions));
+        
+#ifdef _WIN64
+        _DecodeType DecodeType = Decode64Bits;
+#else
+        _DecodeType DecodeType = Decode32Bits;
+#endif
+        
+        Result = distorm_decode(Offset, (const unsigned char*)BreakpointVA, ChunkSize, DecodeType, DecodedInstructions, 1, &DecodedInstructionsCount); 
+
+        if (strcmp(DecodedInstructions[0].mnemonic.p, "MOV"))
+        {
+            DoOutputDebugString("SetInitialBreakpoint: Not within Ursnif payload - bailing.\n");
+            BreakpointSet = FALSE;
+            return FALSE;
+        }
         
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, ConfigCallback))
         {
-            DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
+            DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on config parsing function at 0x%p\n", Register, BreakpointVA);
             BreakpointSet = TRUE;
         }
         else
@@ -311,6 +329,8 @@ BOOL SetInitialBreakpoint()
         FileOffset = (DWORD_PTR)bp1;
         BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
         ChunkSize = 0x40;    // Size of code to disassemble
+        
+        memset(&DecodedInstructions, 0, sizeof(DecodedInstructions));
         
 #ifdef _WIN64
         _DecodeType DecodeType = Decode64Bits;
@@ -339,7 +359,6 @@ BOOL SetInitialBreakpoint()
             }
             
             Delta += DecodedInstructions[i].size;
-            DoOutputDebugString("SetInitialBreakpoint: Delta updated by %d to 0x%x (index %d).\n", DecodedInstructions[i].size, Delta, i);
         }
     }
     

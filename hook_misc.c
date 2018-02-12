@@ -1109,8 +1109,6 @@ HOOKDEF(HANDLE, WINAPI, HeapCreate,
     ret = Old_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
     
     LOQ_nonnull("misc", "");
-
-    DoOutputDebugString("HeapCreate hook.\n");
     
     return ret;
 }
