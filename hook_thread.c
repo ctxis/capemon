@@ -408,7 +408,7 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
     if (pid == ChildProcessId)
     {
         DoOutputDebugString("CreateRemoteThread: RemoteThread created in child process, sending address to debugger: 0x%x", lpStartAddress);
-        SendDebuggerMessage((DWORD_PTR)lpStartAddress);
+        SendDebuggerMessage((PVOID)lpStartAddress);
         ret = Old_CreateRemoteThread(hProcess, lpThreadAttributes,
             dwStackSize, (LPTHREAD_START_ROUTINE)DebuggerEP, lpParameter, dwCreationFlags | CREATE_SUSPENDED,
             lpThreadId);
@@ -466,7 +466,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlCreateUserThread,
     if (pid == ChildProcessId)
     {
         DoOutputDebugString("RtlCreateUserThread: RemoteThread created in child process, sending address to debugger: 0x%x", StartAddress);
-        SendDebuggerMessage((DWORD_PTR)StartAddress);
+        SendDebuggerMessage((PVOID)StartAddress);
         ret = Old_RtlCreateUserThread(ProcessHandle, SecurityDescriptor,
             TRUE, StackZeroBits, StackReserved, StackCommit,
             (LPTHREAD_START_ROUTINE)DebuggerEP, StartParameter, ThreadHandle, ClientId);

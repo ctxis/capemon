@@ -236,19 +236,19 @@ int read_config(void)
                 DoOutputDebugString("CAPE_var4 set to 0x%x", CAPE_var4);
 			}
             else if (!strcmp(key, "bp0")) {
-				bp0 = (DWORD_PTR)strtoul(value, NULL, 10);
+				bp0 = (PVOID)strtoul(value, NULL, 10);
                 DoOutputDebugString("bp0 set to 0x%x", bp0);
 			}
             else if (!strcmp(key, "bp1")) {
-				bp1 = (DWORD_PTR)strtoul(value, NULL, 10);
+				bp1 = (PVOID)strtoul(value, NULL, 10);
                 DoOutputDebugString("bp1 set to 0x%x", bp1);
 			}
             else if (!strcmp(key, "bp2")) {
-				bp2 = (DWORD_PTR)strtoul(value, NULL, 10);
+				bp2 = (PVOID)strtoul(value, NULL, 10);
                 DoOutputDebugString("bp2 set to 0x%x", bp2);
 			}
             else if (!strcmp(key, "bp3")) {
-				bp3 = (DWORD_PTR)strtoul(value, NULL, 10);
+				bp3 = (PVOID)strtoul(value, NULL, 10);
                 DoOutputDebugString("bp3 set to 0x%x", bp3);
 			}
             else if (!strcmp(key, "procdump")) {

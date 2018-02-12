@@ -26,14 +26,14 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
-extern int DumpMemory(LPVOID Buffer, unsigned int Size);
+extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
 
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 BOOL BreakpointSet;
 unsigned int DumpCount, Correction, StepCount;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
-BOOL GetSystemTimeAsFileTimeImported, PayloadDumped;
+BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
 
 BOOL DumpCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
@@ -80,8 +80,8 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 	PVOID ReturnAddress;
     DWORD Register = 1;
 
-    _DecodeResult res;
-    _OffsetType offset = 0;
+    _DecodeResult Result;
+    _OffsetType Offset = 0;
     _DecodedInst DecodedInstruction;
     unsigned int DecodedInstructionsCount = 0;
 
@@ -101,9 +101,9 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
 #ifdef _WIN64
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
 #else
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
 #endif
         
 #ifdef _WIN64
@@ -134,8 +134,9 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             ExceptionInfo->ContextRecord->Rax = Constant;
         }
 #else
-        DoOutputDebugString("Trace: Comparison detected, EAX = 0x%x, patching.", ExceptionInfo->ContextRecord->Eax);
-        ExceptionInfo->ContextRecord->Eax = 0;
+        DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Eip + 1);
+        DoOutputDebugString("Trace: Comparison detected, EAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Eax, Constant);
+        ExceptionInfo->ContextRecord->Eax = Constant;
 #endif
     }
     
@@ -161,48 +162,6 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-    
-    return TRUE;
-}
-    
-BOOL Trace2(struct _EXCEPTION_POINTERS* ExceptionInfo)
-{
-	PVOID ReturnAddress;
-    DWORD Register = 1;
-
-    _DecodeResult res;
-    _OffsetType offset = 0;
-    _DecodedInst DecodedInstruction;
-    unsigned int DecodedInstructionsCount = 0;
-
-#ifdef _WIN64
-    _DecodeType DecodeType = Decode64Bits;
-#else
-    _DecodeType DecodeType = Decode32Bits;
-#endif
-
-    StepCount++;
-    
-    if (StepCount > SINGLE_STEP_LIMIT)
-    {
-        DoOutputDebugString("Trace2: single-step limit reached, releasing.");
-        
-        return TRUE;
-    }
-    
-#ifdef _WIN64
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-#else
-    res = distorm_decode(offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, 0x10, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-#endif
-        
-#ifdef _WIN64
-    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
-#else
-    DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p); 
-#endif
-    
-    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace2);
     
     return TRUE;
 }
@@ -252,10 +211,14 @@ BOOL ConfigCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS*
 	}
 
 	DoOutputDebugString("ConfigCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
-    
+
+#ifdef _WIN64    
     DumpAddress = (PVOID)ExceptionInfo->ContextRecord->Rcx;
+#else
+    DumpAddress = (PVOID)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Ebp+8);
+#endif
     
-	DoOutputDebugString("ConfigCallback: Config location set to Rcx: 0x%p.\n", DumpAddress);
+	DoOutputDebugString("ConfigCallback: Config location set to: 0x%p.\n", DumpAddress);
     
     NumOfSections = (unsigned int)(*(DWORD*)DumpAddress);
     
@@ -276,15 +239,16 @@ BOOL ConfigCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS*
     
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
-    StepCount = 0;
-    
-    SetSingleStepMode(ExceptionInfo->ContextRecord, Trace2);
-
     return TRUE;
 }
 
 BOOL SetInitialBreakpoint()
 {
+    _DecodeResult Result;
+    _OffsetType Offset = 0;
+    _DecodedInst DecodedInstructions[MAX_INSTRUCTIONS];
+    unsigned int DecodedInstructionsCount = 0, ChunkSize, Delta = 0;
+
     DWORD_PTR BreakpointVA, FileOffset;
     PTHREADBREAKPOINTS CurrentThreadBreakpoints;
     DWORD Register = 0, ThreadId = GetCurrentThreadId();
@@ -338,44 +302,48 @@ BOOL SetInitialBreakpoint()
         }
     }
     
-    //if (!bp1 && !bp2)
     if (!bp1)
         return TRUE;
-    
+
     if (bp1)
     {
         Register = 2;
         FileOffset = (DWORD_PTR)bp1;
         BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
+        ChunkSize = 0x40;    // Size of code to disassemble
         
-        if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
+#ifdef _WIN64
+        _DecodeType DecodeType = Decode64Bits;
+#else
+        _DecodeType DecodeType = Decode32Bits;
+#endif
+        Result = distorm_decode(Offset, (const unsigned char*)BreakpointVA, ChunkSize, DecodeType, DecodedInstructions, MAX_INSTRUCTIONS, &DecodedInstructionsCount); 
+
+        for (unsigned int i = 0; i < DecodedInstructionsCount; i++) 
         {
-            DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
-        }
-        else
-        {
-            DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2s.\n");
-            return FALSE;
+        
+            DoOutputDebugString("%0*I64x (%02d) %-24s %s%s%s\n", DecodeType != Decode64Bits ? 8 : 16, BreakpointVA + Delta, DecodedInstructions[i].size, (char*)DecodedInstructions[i].instructionHex.p, (char*)DecodedInstructions[i].mnemonic.p, DecodedInstructions[i].operands.length != 0 ? " " : "", (char*)DecodedInstructions[i].operands.p); 
+        
+            if (!strcmp(DecodedInstructions[i].mnemonic.p, "RET"))
+            {
+                if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA + Delta, BP_EXEC, BreakpointCallback))
+                {
+                    DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on ret instruction at 0x%p (delta 0x%x).\n", Register, BreakpointVA, Delta);
+                    return TRUE;
+                }
+                else
+                {
+                    DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2s.\n");
+                    return FALSE;
+                }
+            }
+            
+            Delta += DecodedInstructions[i].size;
+            DoOutputDebugString("SetInitialBreakpoint: Delta updated by %d to 0x%x (index %d).\n", DecodedInstructions[i].size, Delta, i);
         }
     }
     
-    if (!bp2)
-        return TRUE;
-    
-    Register = 3;
-    FileOffset = (DWORD_PTR)bp2;
-    BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
-    
-    if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
-    {
-        DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
-        return TRUE;
-    }
-    else
-    {
-        DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2s.\n");
-        return FALSE;
-    }    
+    return FALSE;
 }
 
 HOOKDEF(LPSTR, WINAPI, lstrcpynA,
@@ -390,13 +358,12 @@ HOOKDEF(LPSTR, WINAPI, lstrcpynA,
 
     ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
     
-    if (!strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
+    if (!PayloadMarker && !strncmp(lpString2, UrsnifString, strlen(UrsnifString)))
     {
-        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker.\n");
+        DoOutputDebugString("lstrcpynA hook: Ursnif payload marker: %s.\n", lpString2);
+        PayloadMarker = TRUE;
         GetHookCallerBase();    
     }
-    else 
-        DoOutputDebugString("lstrcpynA hook: Unrecognised string: %s.\n", lpString2);
 
     return ret; 
 }

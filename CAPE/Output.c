@@ -134,7 +134,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
             }
             
             CapeMetaData->ModulePath = (char*)malloc(MAX_PATH);
-            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)g_config.file_of_interest, wcslen(g_config.file_of_interest)+1, CapeMetaData->ModulePath, MAX_PATH, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)g_config.file_of_interest, (int)wcslen(g_config.file_of_interest)+1, CapeMetaData->ModulePath, MAX_PATH, NULL, NULL);
         }
         else
             CapeMetaData->ModulePath = CapeMetaData->ProcessPath;
@@ -142,7 +142,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 		// This metadata format is specific to process dumps
 		_snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath);
 
-		if (FALSE == WriteFile(hMetadata, Buffer, strlen(Buffer), &dwBytesWritten, NULL))
+		if (FALSE == WriteFile(hMetadata, Buffer, (DWORD)strlen(Buffer), &dwBytesWritten, NULL))
 		{
 			DoOutputDebugString("WriteFile error on CAPE metadata file %s\n");
 			CloseHandle(hMetadata);
@@ -190,7 +190,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 		if (CapeMetaData->DumpType == EXTRACTION_PE || CapeMetaData->DumpType == EXTRACTION_SHELLCODE)
         {
             // Extraction-specific format
-            _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n0x%x\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, (DWORD_PTR)CapeMetaData->Address);
+            _snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n0x%x\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath, CapeMetaData->Address);
         }
 		else if (CapeMetaData->DumpType == INJECTION_PE || CapeMetaData->DumpType == INJECTION_SHELLCODE || CapeMetaData->DumpType == EVILGRAB_PAYLOAD || CapeMetaData->DumpType == EVILGRAB_DATA)
         {
@@ -207,7 +207,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
             if (CapeMetaData->ProcessPath)
 				_snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath);
 
-        if (FALSE == WriteFile(hMetadata, Buffer, strlen(Buffer), &dwBytesWritten, NULL))
+        if (FALSE == WriteFile(hMetadata, Buffer, (DWORD)strlen(Buffer), &dwBytesWritten, NULL))
 		{
 			DoOutputDebugString("WriteFile error on CAPE metadata file %s\n");
 			CloseHandle(hMetadata);

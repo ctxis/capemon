@@ -3000,7 +3000,7 @@ void DebuggerInit(void)
 #pragma optimize("", on)
 #endif
 
-BOOL SendDebuggerMessage(DWORD Input)
+BOOL SendDebuggerMessage(PVOID Input)
 { 
     BOOL fSuccess;
 	DWORD cbReplyBytes, cbWritten; 

@@ -41,11 +41,12 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define DUMP_MAX            100     
 #define CAPE_OUTPUT_FILE "CapeOutput.bin"
 
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+
 static unsigned int DumpCount;
  
 extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buffer_len);
-
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+extern unsigned int address_is_in_stack(PVOID Address);
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -851,9 +852,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 //**************************************************************************************
 {
 	LONG e_lfanew;
-    DWORD NT_Signature, FullKey;
-	WORD TestKey;
-    unsigned int i, j, k, rotation;
+    DWORD NT_Signature;
+    unsigned int i, j, k;
 	BYTE* DecryptedBuffer;
 
     for (i=0; i<=0xFF; i++)
@@ -921,178 +921,6 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 		}
 	}
 	
-#ifndef _WIN64
-	for (i=0; i<=0xffff; i++)
-	{
-		// check for the DOS signature a.k.a MZ header
-		if ((*(WORD*)Buffer^(WORD)i) == IMAGE_DOS_SIGNATURE)
-		{
-			DoOutputDebugString("MZ header found with wordwise XOR key 0x%.2x%.2x\n", *(BYTE*)&i, *((BYTE*)&i+1));
-			
-			// let's try just the little end of the full lfanew which is almost always the whole value anyway
-			e_lfanew = *(WORD*)(Buffer+0x3c);
-
-			// try and decrypt
-			e_lfanew = e_lfanew^(WORD)i;
-
-			if ((unsigned int)e_lfanew > PE_HEADER_LIMIT)
-			{	
-				// even if dword-encrypted, 
-				// if the little endian word of the dword takes it too far it's over
-				DoOutputDebugString("Sadly the pointer to the PE header seems a tad too large: 0x%x", e_lfanew);
-				//return FALSE;
-			}
-
-			// get PE header
-			memcpy(&NT_Signature, Buffer+e_lfanew, 4);
-			
-			// We need to rotate our key for a non-dword aligned offset
-			TestKey = i;
-			if (e_lfanew % 2)
-			{
-				__asm 
-				{	
-					mov ax, TestKey
-					ror ax, 8
-					mov TestKey, ax
-				}
-			}				
-
-			// let's try decrypting it with the word key
-			for (k=0; k<2; k++)
-				*((WORD*)&NT_Signature+k) = *((WORD*)&NT_Signature+k)^TestKey;
-				
-			// does it check out?
-			if (NT_Signature == IMAGE_NT_SIGNATURE)
-			{
-				DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                
-                DecryptedBuffer = (BYTE*)malloc(Size);
-                
-                if (DecryptedBuffer == NULL)
-                {
-                    DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                    return FALSE;
-                }
-                
-                memcpy(DecryptedBuffer, Buffer, Size);
-                
-                for (k=0; k<Size; k=k+2)
-                    *(WORD*)(DecryptedBuffer+k) = *(WORD*)(DecryptedBuffer+k)^TestKey;
-                
-                CapeMetaData->Address = DecryptedBuffer;
-                DumpImageInCurrentProcess(DecryptedBuffer);
-                
-                free(DecryptedBuffer);
-				return TRUE;
-			}
-			else if ((WORD)NT_Signature == (WORD)IMAGE_NT_SIGNATURE)
-			{
-				// looks like DWORD encrypted with zero most significant word of lfanew
-				// let's confirm
-				DWORD FullKey = TestKey + ((*(WORD*)(Buffer+0x3e))<<16);
-
-				// let's recopy our candidate PE header
-				memcpy(&NT_Signature, Buffer+e_lfanew, 4);
-
-				// We need to rotate our key for a non-dword aligned offset
-				for (rotation = 0; rotation<(unsigned int)(e_lfanew % 4); rotation++)
-				{
-					__asm 
-					{	
-						mov eax, FullKey
-						ror eax, 8
-						mov FullKey, eax
-					}
-				}	
-			
-				// final test of the latter two bytes of PE header
-				// (might as well test the whole thing)
-				if ((NT_Signature ^ FullKey) == IMAGE_NT_SIGNATURE)
-                {
-                    DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                    
-                    DecryptedBuffer = (BYTE*)malloc(Size);
-                    
-                    if (DecryptedBuffer == NULL)
-                    {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                        return FALSE;
-                    }
-                    
-                    memcpy(DecryptedBuffer, Buffer, Size);
-                    
-                    for (k=0; k<Size; k=k+4)
-                        *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                    
-                    CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess(DecryptedBuffer);
-                    
-                    free(DecryptedBuffer);
-                    return TRUE;
-                }
-                else
-				{
-					// There's *very* remote this was a false positive, we should continue
-					continue;
-				}
-			}
-
-			// could be dword with non-zero most signicant bytes of lfanew
-			// brute force the 0xffff possibilities here
-			
-			for (TestKey=0; TestKey<0xffff; TestKey++)
-			{
-				long full_lfanew = e_lfanew + (0x10000*((*(WORD*)(Buffer+0x3e))^TestKey));						
-				
-				if ((unsigned int)full_lfanew > PE_HEADER_LIMIT)
-				{	
-					continue;			
-				}
-
-				memcpy(&NT_Signature, Buffer+full_lfanew, 4);
-
-				// We need to rotate our key for a non-dword aligned offset
-				FullKey = i + (TestKey<<16);
-				for (rotation = 0; rotation<(unsigned int)(full_lfanew % 4); rotation++)
-				{
-					__asm 
-					{	
-						mov eax, FullKey
-						ror eax, 8
-						mov FullKey, eax
-					}
-				}
-
-				// let's try decrypting it with the key
-				if ((NT_Signature ^ FullKey) == IMAGE_NT_SIGNATURE)
-                {
-                    DoOutputDebugString("Xor-encrypted PE detected, about to dump.\n");
-                    
-                    DecryptedBuffer = (BYTE*)malloc(Size);
-                    
-                    if (DecryptedBuffer == NULL)
-                    {
-                        DoOutputErrorString("Error allocating memory for decrypted PE binary");
-                        return FALSE;
-                    }
-                    
-                    memcpy(DecryptedBuffer, Buffer, Size);
-                    
-                    for (k=0; k<Size; k=k+4)
-                        *(DWORD*)(DecryptedBuffer+k) = *(DWORD*)(DecryptedBuffer+k)^FullKey;
-                    
-                    CapeMetaData->Address = DecryptedBuffer;
-                    DumpImageInCurrentProcess(DecryptedBuffer);
-                    
-                    free(DecryptedBuffer);
-                    return TRUE;
-                }
-			}
-		}
-	}
-
-#endif
     // We free can free DecryptedBuffer as it's no longer needed
     free(DecryptedBuffer);
     
@@ -1103,7 +931,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 int ScanPageForNonZero(LPVOID Address)
 //**************************************************************************************
 {
-    unsigned int p;
+    SIZE_T p;
 	DWORD_PTR AddressOfPage;
     
     if (!Address)
@@ -1139,10 +967,10 @@ int ScanPageForNonZero(LPVOID Address)
 }
 
 //**************************************************************************************
-int ScanForNonZero(LPVOID Buffer, unsigned int Size)
+int ScanForNonZero(LPVOID Buffer, SIZE_T Size)
 //**************************************************************************************
 {
-    unsigned int p;
+    SIZE_T p;
     
     if (!Buffer)
     {  
@@ -1188,10 +1016,10 @@ PVOID GetPageAddress(PVOID Address)
  
 }
 //**************************************************************************************
-int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
+int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
 //**************************************************************************************
 {   // deprecated in favour of ScanForDisguisedPE
-    unsigned int p;
+    SIZE_T p;
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
     
@@ -1337,10 +1165,10 @@ int IsDisguisedPEHeader(LPVOID Buffer)
 }
 
 //**************************************************************************************
-int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
+int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
 //**************************************************************************************
 {
-    unsigned int p;
+    SIZE_T p;
     int RetVal;
     
     if (Size == 0)
@@ -1432,7 +1260,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
 }
 
 //**************************************************************************************
-int DumpMemory(LPVOID Buffer, unsigned int Size)
+int DumpMemory(LPVOID Buffer, SIZE_T Size)
 //**************************************************************************************
 {
 	char *FullPathName;
@@ -1480,7 +1308,7 @@ int DumpMemory(LPVOID Buffer, unsigned int Size)
         return 0;
     }
     
-    if (FALSE == WriteFile(hOutputFile, BufferCopy, Size, &dwBytesWritten, NULL))
+    if (FALSE == WriteFile(hOutputFile, BufferCopy, (DWORD)Size, &dwBytesWritten, NULL))
 	{
 		DoOutputErrorString("DumpMemory: WriteFile error on CAPE output file");
         free(FullPathName); 
@@ -1766,13 +1594,12 @@ void init_CAPE()
     CapeMetaData = (PCAPEMETADATA)malloc(sizeof(CAPEMETADATA));
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
-    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
     CapeMetaData->DumpType = URSNIF_CONFIG;
     ProcessDumped = FALSE;
 #endif
-
 
     DumpCount = 0;
 
