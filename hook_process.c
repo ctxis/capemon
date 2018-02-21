@@ -892,7 +892,14 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                             DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer at 0x%x, SizeOfImage 0x%x.\n", lpBuffer, CurrentInjectionInfo->BufferSizeOfImage);
                         }
                         else
-                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump PE image from buffer.\n");
+                        {
+                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump PE image from buffer, dumping raw buffer.\n");
+
+                            if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
+                                DoOutputDebugString("WriteProcessMemory hook: Dumped malformed PE image from buffer.");
+                            else
+                                DoOutputDebugString("WriteProcessMemory hook: Failed to dump malformed PE image from buffer.");
+                        }
                     }                    
                 }
                 else

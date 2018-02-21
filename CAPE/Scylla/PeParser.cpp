@@ -310,15 +310,16 @@ bool PeParser::readPeSectionsFromProcess()
 		if (!readSectionFromProcess(readOffset, listPeSection[i]))
 		{
 #ifdef DEBUG_COMMENTS
-            DoOutputDebugString("PeParser::readPeSectionsFromProcess: readSectionFromProcess failed offset 0x%x, section %d\n", readOffset, i+1);
+            DoOutputDebugString("PeParser::readPeSectionsFromProcess: readSectionFromProcess failed offset 0x%x, section %d (VA 0x%p, size 0x%x)\n", readOffset, i+1, listPeSection[i].sectionHeader.VirtualAddress, listPeSection[i].normalSize);
 #endif
 			retValue = false;
+            goto out;   // To continue upon failure may lead to crashes
 		}
 	}
 #ifdef DEBUG_COMMENTS
             DoOutputDebugString("PeParser::readPeSectionsFromProcess: readSectionFromProcess success.\n");
 #endif
-
+out:
 	return retValue;
 }
 
@@ -1278,6 +1279,10 @@ bool PeParser::dumpProcess(DWORD_PTR modBase, DWORD_PTR entryPoint, const CHAR *
 
 		return savePeFileToDisk(dumpFilePath);
 	}
+#ifdef DEBUG_COMMENTS
+    else
+            DoOutputDebugString("PeParser::dumpProcess: readPeSectionsFromProcess failed.\n");
+#endif
 	
 	return false;
 }
