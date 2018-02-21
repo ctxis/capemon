@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern PVOID get_process_image_base(HANDLE process_handle);
 
 HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in_opt    PWCHAR PathToFile,
@@ -186,7 +187,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
                 }
             }
 
-            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, (int)wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
             
             DoOutputDebugString("CreateProcessInternal hook: Injection info set for new process %d, ImageBase: 0x%x", CurrentInjectionInfo->ProcessId, CurrentInjectionInfo->ImageBase);
         }

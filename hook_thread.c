@@ -29,8 +29,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
-extern int DumpImageInCurrentProcess(DWORD_PTR ImageBase);
-extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+extern int DumpImageInCurrentProcess(PVOID ImageBase);
+extern int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 
 static lookup_t g_ignored_threads;
 
@@ -353,7 +353,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
             
             DoOutputDebugString("NtResumeThread hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
             
-            CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, CurrentInjectionInfo->ImageBase);
+            CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
             
             if (CurrentInjectionInfo->ImageDumped)
             {

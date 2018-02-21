@@ -33,8 +33,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
-extern int DumpImageInCurrentProcess(DWORD_PTR ImageBase);
-extern int ScanForPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset);
+extern int DumpImageInCurrentProcess(PVOID ImageBase);
+extern int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
+extern PVOID get_process_image_base(HANDLE process_handle);
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -379,7 +380,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
             
             DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
             
-            CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, CurrentInjectionInfo->ImageBase);
+            CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
             
             if (CurrentInjectionInfo->ImageDumped)
             {
@@ -752,7 +753,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD_PTR)Buffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((PVOID)Buffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
@@ -883,7 +884,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
                     if (CurrentInjectionInfo->ImageDumped == FALSE)
                     {
                         SetCapeMetaData(INJECTION_PE, pid, hProcess, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((DWORD_PTR)lpBuffer);
+                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((PVOID)lpBuffer);
                         
                         if (CurrentInjectionInfo->ImageDumped)
                         {
