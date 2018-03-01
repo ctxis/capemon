@@ -24,7 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hooking.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern void* CAPE_var;
+extern DWORD_PTR CAPE_var1, CAPE_var2, CAPE_var3, CAPE_var4;
 
 int read_config(void)
 {
@@ -50,7 +50,7 @@ int read_config(void)
 #else
 	g_config.hook_type = HOOK_HOTPATCH_JMP_INDIRECT;
 #endif
-    g_config.procmemdump = 0;
+    g_config.procdump = 0;
 
 	memset(buf, 0, sizeof(buf));
 	while (fgets(buf, sizeof(buf), fp) != NULL)
@@ -218,13 +218,25 @@ int read_config(void)
 					p = p2 + 1;
 				}
 			}
-            else if (!strcmp(key, "breakpoint")) {
-				CAPE_var = (void*)strtoul(value, NULL, 10);
-                DoOutputDebugString("CAPE_var set to 0x%x", CAPE_var);
+            else if (!strcmp(key, "CAPE_var1")) {
+				CAPE_var1 = (DWORD_PTR)strtoul(value, NULL, 10);
+                DoOutputDebugString("CAPE_var1 set to 0x%x", CAPE_var1);
 			}
-            else if (!strcmp(key, "procmemdump")) {
-				g_config.procmemdump = value[0] == '1';
-                if (g_config.procmemdump)
+            else if (!strcmp(key, "CAPE_var2")) {
+				CAPE_var2 = (DWORD_PTR)strtoul(value, NULL, 10);
+                DoOutputDebugString("CAPE_var2 set to 0x%x", CAPE_var2);
+			}
+            else if (!strcmp(key, "CAPE_var3")) {
+				CAPE_var3 = (DWORD_PTR)strtoul(value, NULL, 10);
+                DoOutputDebugString("CAPE_var3 set to 0x%x", CAPE_var3);
+			}
+            else if (!strcmp(key, "CAPE_var4")) {
+				CAPE_var4 = (DWORD_PTR)strtoul(value, NULL, 10);
+                DoOutputDebugString("CAPE_var4 set to 0x%x", CAPE_var4);
+			}
+            else if (!strcmp(key, "procdump")) {
+				g_config.procdump = value[0] == '1';
+                if (g_config.procdump)
                     DoOutputDebugString("Process memory dumps enabled.\n");
                 else
                     DoOutputDebugString("Process memory dumps disabled.\n");
@@ -236,7 +248,7 @@ int read_config(void)
                 else
                     DoOutputDebugString("Import reconstruction of process dumps disabled.\n");
 			}
-
+            else DoOutputDebugString("CAPE debug - unrecognised key %s.\n", key);
 		}
     }
 

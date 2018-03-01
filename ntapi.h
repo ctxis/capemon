@@ -476,9 +476,12 @@ typedef struct _LDR_MODULE {
 
 #ifdef _WIN64
 typedef struct _PEB {
-	BYTE Reserved1[2];
-	BYTE BeingDebugged;
-	BYTE Reserved2[21];
+    BOOLEAN InheritedAddressSpace;
+    BOOLEAN ReadImageFileExecOptions;
+    BOOLEAN BeingDebugged;
+    BOOLEAN Spare;
+    HANDLE  Mutant;
+    PVOID   ImageBaseAddress;
 	PPEB_LDR_DATA LoaderData;
 	PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
 	BYTE Reserved3[520];
@@ -660,6 +663,25 @@ static inline void __writefsdword(unsigned int index, unsigned int value)
 #ifndef HKEY_CURRENT_USER_LOCAL_SETTINGS
 (( HKEY ) (ULONG_PTR)((LONG)0x80000007) )
 #endif
+
+typedef unsigned short RTL_ATOM, *PRTL_ATOM;
+
+typedef enum _ATOM_INFORMATION_CLASS {
+    AtomBasicInformation,
+    AtomTableInformation
+} ATOM_INFORMATION_CLASS;
+
+typedef struct _ATOM_BASIC_INFORMATION {
+    USHORT UsageCount;
+    USHORT Flags;
+    USHORT NameLength;
+    WCHAR Name[ 1 ];
+} ATOM_BASIC_INFORMATION, *PATOM_BASIC_INFORMATION;
+
+typedef struct _ATOM_TABLE_INFORMATION {
+    ULONG NumberOfAtoms;
+    RTL_ATOM Atoms[ 1 ];
+} ATOM_TABLE_INFORMATION, *PATOM_TABLE_INFORMATION;
 
 typedef struct _SECTION_IMAGE_INFORMATION {
     VOID*               TransferAddress;
