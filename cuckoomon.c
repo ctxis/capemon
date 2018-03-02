@@ -80,13 +80,11 @@ static hook_t g_hooks[] = {
     //
 
 	HOOK_NOTAIL_ALT(ntdll, LdrLoadDll, 4),
-	//HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
+	HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
     HOOK_SPECIAL(kernel32, CreateProcessInternalW),
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
-
-    //HOOK_SPECIAL(kernel32, HeapAlloc),
 
 	// has special handling
 
@@ -127,6 +125,8 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, NtCreateDirectoryObject),
     HOOK(ntdll, NtQueryDirectoryObject),
 
+    HOOK(kernel32, CreateFileTransactedA),
+    HOOK(kernel32, CreateFileTransactedW),
     // CreateDirectoryExA calls CreateDirectoryExW
     // CreateDirectoryW does not call CreateDirectoryExW
     HOOK(kernel32, CreateDirectoryW),
@@ -143,7 +143,7 @@ static hook_t g_hooks[] = {
     // Covered by NtCreateFile() but still grab this information
     HOOK(kernel32, CopyFileA),
     HOOK(kernel32, CopyFileW),
-    HOOK(kernel32, CopyFileExW),
+    HOOK_NOTAIL_ALT(kernel32, CopyFileExW, 6),
 
     // Covered by NtSetInformationFile() but still grab this information
     HOOK(kernel32, DeleteFileA),
@@ -272,6 +272,10 @@ static hook_t g_hooks[] = {
 	// won't end up logging. We need another hook type which logs the hook and then every function
 	// called by that hook (modulo perhaps some blacklisted functions for this specific hook type)
     //HOOK(user32, EnumWindows),
+	HOOK(user32, PostMessageA),
+	HOOK(user32, PostMessageW),
+	HOOK(user32, SendMessageA),
+	HOOK(user32, SendMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -288,7 +292,11 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtCreateEvent),
 	HOOK(ntdll, NtOpenEvent),
 	HOOK(ntdll, NtCreateNamedPipeFile),
-
+	HOOK(ntdll, NtAddAtom),
+	HOOK(ntdll, NtAddAtomEx),
+	HOOK(ntdll, NtFindAtom),
+	HOOK(ntdll, NtDeleteAtom),
+	HOOK(ntdll, NtQueryInformationAtom),
 	
 	//
     // Process Hooks
@@ -351,10 +359,12 @@ static hook_t g_hooks[] = {
 	//
     // Misc Hooks
     //
-
-	//HOOK(msvcrt, memcpy),
-	//HOOK(ntdll, memcpy),  
-	HOOK(kernel32, GetProcessHeap),
+#ifndef _WIN64
+	HOOK(ntdll, memcpy),
+#endif
+	HOOK(msvcrt, memcpy),
+	//HOOK(kernel32, SizeofResource),
+    HOOK(msvcrt, srand),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -363,6 +373,7 @@ static hook_t g_hooks[] = {
     HOOK(user32, SetWindowsHookExW),
     HOOK(user32, UnhookWindowsHookEx),
     HOOK(kernel32, SetUnhandledExceptionFilter),
+    HOOK(ntdll, RtlAddVectoredExceptionHandler),
 	HOOK(kernel32, SetErrorMode),
     HOOK(ntdll, LdrGetDllHandle),
     HOOK(ntdll, LdrGetProcedureAddress),
@@ -422,6 +433,7 @@ static hook_t g_hooks[] = {
 	HOOK(netapi32, NetGetJoinInformation),
 	HOOK(netapi32, NetUserGetLocalGroups),
 	HOOK(urlmon, URLDownloadToFileW),
+    HOOK(urlmon, URLDownloadToCacheFileW),
 	HOOK(urlmon, ObtainUserAgentString),
 	HOOK(wininet, InternetGetConnectedState),
     HOOK(wininet, InternetOpenA),
@@ -508,6 +520,7 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtSetTimer),
 	HOOK(ntdll, NtSetTimerEx),
 	HOOK(user32, MsgWaitForMultipleObjectsEx),
+	HOOK(kernel32, CreateTimerQueueTimer),
 
 	//
     // Socket Hooks
@@ -635,16 +648,15 @@ VOID CALLBACK DllLoadNotification(
 	_In_opt_ PVOID                       Context)
 {
 	PWCHAR dllname;
-	COPY_UNICODE_STRING(library, NotificationData->Loaded.BaseDllName);
+	COPY_UNICODE_STRING(library, NotificationData->Loaded.FullDllName);
 
 	if (g_config.debug) {
 		int ret = 0;
 		/* Just for debug purposes, gives a stripped fake function name */
 		LOQ_void("system", "sup", "NotificationReason", NotificationReason == 1 ? "load" : "unload", "DllName", library.Buffer, "DllBase", NotificationReason == 1 ? NotificationData->Loaded.DllBase : NotificationData->Unloaded.DllBase);
 	}
-
+        
 	if (NotificationReason == 1) {
-
 		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest))
 			set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
 
@@ -653,6 +665,8 @@ VOID CALLBACK DllLoadNotification(
 
 		dllname = get_dll_basename(&library);
 		set_hooks_dll(dllname);
+
+        DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 	}
 	else {
 		// unload
@@ -776,6 +790,7 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
+
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
@@ -936,6 +951,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
+        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif
@@ -948,7 +964,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		if (!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xff\x25", 4) || !memcmp((PUCHAR)WaitForDebugEvent, "\xff\x25", 2) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xe9", 3) || !memcmp((PUCHAR)WaitForDebugEvent, "\xe9", 1) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\xeb\xf9", 2))
-			goto early_abort;
+			goto abort;
 
 		g_our_dll_base = (ULONG_PTR)hModule;
 		g_our_dll_size = get_image_size(g_our_dll_base);
@@ -973,7 +989,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		g_tls_hook_index = TlsAlloc();
 		if (g_tls_hook_index == TLS_OUT_OF_INDEXES)
-			goto early_abort;
+			goto abort;
 
 		// adds our own DLL range as well, since the hiding is done later
 		add_all_dlls_to_dll_ranges();
@@ -984,12 +1000,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 			;
 #else
 			// if we're not debugging, then failure to read the cuckoomon config should be a critical error
-			goto early_abort;
+			goto abort;
 #endif
 
 		// don't inject into our own binaries run out of the analyzer directory unless they're the first process (intended)
 		if (wcslen(g_config.w_analyzer) && !wcsnicmp(our_process_path, g_config.w_analyzer, wcslen(g_config.w_analyzer)) && !g_config.first_process)
-			goto out;
+			goto abort;
 
 		if (g_config.debug) {
 			AddVectoredExceptionHandler(1, cuckoomon_exception_handler);
@@ -1012,9 +1028,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
         // initialize the log file
         log_init(CUCKOODBG);
-
-        // initialise CAPE
-        init_CAPE();
 
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
@@ -1045,6 +1058,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		// initialize context watchdog
 		//init_watchdog();
 
+        // initialise CAPE
+        init_CAPE();
+
 #ifndef _WIN64
 		if (!g_config.no_stealth) {
 			/* for people too lazy to setup VMs properly */
@@ -1064,13 +1080,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
     }
 
 	g_dll_main_complete = TRUE;
-
-out:
 	set_lasterrors(&lasterror);
 	return TRUE;
-early_abort:
+    
+abort:
 	sprintf(config_fname, "C:\\%u.ini", GetCurrentProcessId());
 	DeleteFileA(config_fname);
 	set_lasterrors(&lasterror);
-	return TRUE;
+	return FALSE;
 }

@@ -104,3 +104,67 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateNamedPipeFile,
         "ShareAccess", ShareAccess);
     return ret;
 }
+
+HOOKDEF(NTSTATUS, WINAPI, NtAddAtom,
+	IN	PWCHAR AtomName,
+	IN	ULONG	AtomNameLength,
+	OUT PRTL_ATOM Atom
+) {
+	NTSTATUS ret = Old_NtAddAtom(AtomName, AtomNameLength, Atom);
+	LOQ_ntstatus("synchronization", "uh", "AtomName", AtomName, "Atom", *Atom);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtDeleteAtom,
+	IN RTL_ATOM Atom
+) {
+	NTSTATUS ret = Old_NtDeleteAtom(Atom);
+	LOQ_ntstatus("synchronization", "h", "Atom", Atom);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtFindAtom,
+	IN	PWCHAR AtomName,
+	IN	ULONG AtomNameLength,
+	OUT PRTL_ATOM Atom OPTIONAL
+) {
+	ENSURE_RTL_ATOM(Atom);
+	NTSTATUS ret = Old_NtFindAtom(AtomName, AtomNameLength, Atom);
+	LOQ_ntstatus("synchronization", "uh", "AtomName", AtomName, "Atom", *Atom);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtAddAtomEx,
+	IN	PWCHAR AtomName,
+	IN	ULONG	AtomNameLength,
+	OUT PRTL_ATOM Atom,
+	IN	PVOID	Unknown
+) {
+	NTSTATUS ret = Old_NtAddAtomEx(AtomName, AtomNameLength, Atom, Unknown);
+	LOQ_ntstatus("synchronization", "uh", "AtomName", AtomName, "Atom", *Atom);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationAtom,
+	IN	RTL_ATOM Atom,
+	IN	ATOM_INFORMATION_CLASS AtomInformationClass,
+    OUT PVOID AtomInformation,
+    IN  ULONG AtomInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+) {
+    WCHAR* AtomName;
+    ULONG AtomNameLength;
+    
+	NTSTATUS ret = Old_NtQueryInformationAtom(Atom, AtomInformationClass, AtomInformation, AtomInformationLength, ReturnLength);
+    
+    if (NT_SUCCESS(ret) && AtomInformationClass == AtomBasicInformation)
+    {
+        AtomNameLength = (ULONG)((PATOM_BASIC_INFORMATION)AtomInformation)->NameLength;
+        AtomName = ((PATOM_BASIC_INFORMATION)AtomInformation)->Name;
+        LOQ_ntstatus("synchronization", "bih", "AtomName", AtomNameLength, AtomName, "Size", AtomNameLength, "Atom", Atom);
+    }
+    else
+        LOQ_ntstatus("synchronization", "h", "Atom", Atom);
+	
+    return ret;
+}
