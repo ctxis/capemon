@@ -395,9 +395,6 @@
     <ClInclude Include="CAPE\Scylla\ImportsHandling.h">
       <Filter>Header Files\CAPE\Scylla</Filter>
     </ClInclude>
-    <ClInclude Include="CAPE\Scylla\multitree.h">
-      <Filter>Header Files\CAPE\Scylla</Filter>
-    </ClInclude>
     <ClInclude Include="CAPE\Scylla\StringConversion.h">
       <Filter>Header Files\CAPE\Scylla</Filter>
     </ClInclude>

@@ -201,7 +201,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
         disable_sleep_skip();
     }
 	
-    if (!called_by_hook()) {
+//    if (!called_by_hook()) {
 		if (dwCreationFlags & EXTENDED_STARTUPINFO_PRESENT && lpStartupInfo->cb == sizeof(STARTUPINFOEXW)) {
 			HANDLE ParentHandle = (HANDLE)-1;
 			unsigned int i;
@@ -227,7 +227,7 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 				"ProcessHandle", lpProcessInformation->hProcess,
 				"ThreadHandle", lpProcessInformation->hThread, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 		}
-    }
+//    }
 
     return ret;
 }
@@ -274,7 +274,7 @@ HOOKDEF(HRESULT, WINAPI, CoCreateInstance,
 	if (!strcmp(idbuf1, "0F87369F-A4E5-4CFC-BD3E-73E6154572DD") || !strcmp(idbuf1, "0F87369F-A4E5-4CFC-BD3E-5529CE8784B0"))
 		pipe("TASKSCHED:");
 	if (!strcmp(idbuf1, "000209FF-0000-0000-C000-000000000046") || !strcmp(idbuf1, "00024500-0000-0000-C000-000000000046") || !strcmp(idbuf1, "91493441-5A91-11CF-8700-00AA0060263B") ||
-		!strcmp(idbuf1, "000246FF-0000-0000-C000-000000000046"))
+		!strcmp(idbuf1, "000246FF-0000-0000-C000-000000000046") || !strcmp(idbuf1, "0002CE02-0000-0000-C000-000000000046"))
 		pipe("INTEROP:");
 
 	set_lasterrors(&lasterror);

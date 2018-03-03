@@ -654,49 +654,46 @@ void DumpSectionViewsForPid(DWORD Pid)
 
     while (CurrentSectionView)
     {
-        if (CurrentSectionView->TargetProcessId == Pid)
+        if (CurrentSectionView->TargetProcessId == Pid && CurrentSectionView->LocalView)
         {
-            DoOutputDebugString("DumpSectionViewsForPid: Shared section view found with pid %d.\n", Pid);
+            DoOutputDebugString("DumpSectionViewsForPid: Shared section view found with pid %d, local address 0x%p.\n", Pid);
             
-            if (CurrentSectionView->LocalView)
+            PEPointer = CurrentSectionView->LocalView;
+            
+            while (ScanForPE(PEPointer, CurrentSectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)CurrentSectionView->LocalView), &PEPointer))
             {
-                PEPointer = CurrentSectionView->LocalView;
-                
-                while (ScanForPE(PEPointer, CurrentSectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)CurrentSectionView->LocalView), &PEPointer))
-                {
-                    DoOutputDebugString("DumpSectionViewsForPid: Dumping PE image from shared section view, local address 0x%x.\n", PEPointer);
+                DoOutputDebugString("DumpSectionViewsForPid: Dumping PE image from shared section view, local address 0x%p.\n", PEPointer);
+    
+                CapeMetaData->DumpType = INJECTION_PE;
+                CapeMetaData->TargetPid = Pid;
+                CapeMetaData->Address = PEPointer;
 
-                    CapeMetaData->DumpType = INJECTION_PE;
-                    CapeMetaData->TargetPid = Pid;
-                    CapeMetaData->Address = PEPointer;
-
-                    if (DumpImageInCurrentProcess(PEPointer))
-                    {
-                        DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
-                        Dumped = TRUE;
-                    }
-                    else
-                        DoOutputDebugString("DumpSectionViewsForPid: Failed to dump PE image from shared section view.\n");
-                        
-                    ((BYTE*)PEPointer)++;
-                }
-                
-                if (Dumped == FALSE)
+                if (DumpImageInCurrentProcess(PEPointer))
                 {
-                    DoOutputDebugString("DumpSectionViewsForPid: no PE file found in shared section view, attempting raw dump.\n");
-                    
-                    CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                    
-                    CapeMetaData->TargetPid = Pid;
-                    
-                    if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
-                    {
-                        DoOutputDebugString("DumpSectionViewsForPid: Dumped shared section view.");
-                        Dumped = TRUE;
-                    }
-                    else
-                        DoOutputDebugString("DumpSectionViewsForPid: Failed to dump shared section view.");                    
+                    DoOutputDebugString("DumpSectionViewsForPid: Dumped PE image from shared section view.\n");
+                    Dumped = TRUE;
                 }
+                else
+                    DoOutputDebugString("DumpSectionViewsForPid: Failed to dump PE image from shared section view.\n");
+                    
+                ((BYTE*)PEPointer)++;
+            }
+            
+            if (Dumped == FALSE)
+            {
+                DoOutputDebugString("DumpSectionViewsForPid: no PE file found in shared section view, attempting raw dump.\n");
+                
+                CapeMetaData->DumpType = INJECTION_SHELLCODE;
+                
+                CapeMetaData->TargetPid = Pid;
+                
+                if (DumpMemory(CurrentSectionView->LocalView, CurrentSectionView->ViewSize))
+                {
+                    DoOutputDebugString("DumpSectionViewsForPid: Dumped shared section view.");
+                    Dumped = TRUE;
+                }
+                else
+                    DoOutputDebugString("DumpSectionViewsForPid: Failed to dump shared section view.");                    
             }
         }
         
@@ -708,6 +705,70 @@ void DumpSectionViewsForPid(DWORD Pid)
     if (Dumped == FALSE)
         DoOutputDebugString("DumpSectionViewsForPid: no shared section views found for pid %d.\n", Pid);   
 
+    return;
+}
+
+//**************************************************************************************
+void DumpSectionViewForPid(PINJECTIONSECTIONVIEW SectionView, DWORD Pid)
+//**************************************************************************************
+{
+	struct InjectionInfo *CurrentInjectionInfo;
+    DWORD BufferSize = MAX_PATH;
+    LPVOID PEPointer = NULL;
+    BOOL Dumped = FALSE;
+    
+    CurrentInjectionInfo = GetInjectionInfo(Pid);
+
+    if (CurrentInjectionInfo == NULL)
+    {
+        DoOutputDebugString("DumpSectionViewForPid: No injection info for pid %d.\n", Pid);
+        return;
+    }
+
+    if (SectionView->TargetProcessId == Pid && SectionView->LocalView)
+    {
+        PEPointer = SectionView->LocalView;
+        
+        while (ScanForPE(PEPointer, SectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)SectionView->LocalView), &PEPointer))
+        {
+            DoOutputDebugString("DumpSectionViewForPid: Dumping PE image from shared section view, local address 0x%p.\n", PEPointer);
+
+            CapeMetaData->DumpType = INJECTION_PE;
+            CapeMetaData->TargetPid = Pid;
+            CapeMetaData->Address = PEPointer;
+
+            if (DumpImageInCurrentProcess(PEPointer))
+            {
+                DoOutputDebugString("DumpSectionViewForPid: Dumped PE image from shared section view.\n");
+                Dumped = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpSectionViewForPid: Failed to dump PE image from shared section view.\n");
+                
+            ((BYTE*)PEPointer)++;
+        }
+        
+        if (Dumped == FALSE)
+        {
+            DoOutputDebugString("DumpSectionViewForPid: no PE file found in shared section view, attempting raw dump.\n");
+            
+            CapeMetaData->DumpType = INJECTION_SHELLCODE;
+            
+            CapeMetaData->TargetPid = Pid;
+            
+            if (DumpMemory(SectionView->LocalView, SectionView->ViewSize))
+            {
+                DoOutputDebugString("DumpSectionViewForPid: Dumped shared section view.");
+                Dumped = TRUE;
+            }
+            else
+                DoOutputDebugString("DumpSectionViewForPid: Failed to dump shared section view.");                    
+        }
+        
+        if (Dumped == TRUE)
+            DropSectionView(SectionView);
+    }
+    
     return;
 }
 

@@ -480,8 +480,8 @@ typedef struct _PEB {
     BOOLEAN ReadImageFileExecOptions;
     BOOLEAN BeingDebugged;
     BOOLEAN Spare;
-	BYTE Reserved2[12];
-    PVOID ImageBaseAddress;
+    HANDLE  Mutant;
+    PVOID   ImageBaseAddress;
 	PPEB_LDR_DATA LoaderData;
 	PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
 	BYTE Reserved3[520];
@@ -496,7 +496,7 @@ typedef struct _PEB {
     BOOLEAN BeingDebugged;
     BOOLEAN Spare;
     HANDLE  Mutant;
-    PVOID ImageBaseAddress;
+    PVOID   ImageBaseAddress;
     PPEB_LDR_DATA LoaderData;
     PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
     PVOID   SubSystemData;
@@ -665,6 +665,23 @@ static inline void __writefsdword(unsigned int index, unsigned int value)
 #endif
 
 typedef unsigned short RTL_ATOM, *PRTL_ATOM;
+
+typedef enum _ATOM_INFORMATION_CLASS {
+    AtomBasicInformation,
+    AtomTableInformation
+} ATOM_INFORMATION_CLASS;
+
+typedef struct _ATOM_BASIC_INFORMATION {
+    USHORT UsageCount;
+    USHORT Flags;
+    USHORT NameLength;
+    WCHAR Name[ 1 ];
+} ATOM_BASIC_INFORMATION, *PATOM_BASIC_INFORMATION;
+
+typedef struct _ATOM_TABLE_INFORMATION {
+    ULONG NumberOfAtoms;
+    RTL_ATOM Atoms[ 1 ];
+} ATOM_TABLE_INFORMATION, *PATOM_TABLE_INFORMATION;
 
 typedef struct _SECTION_IMAGE_INFORMATION {
     VOID*               TransferAddress;

@@ -39,7 +39,6 @@ int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int IsDisguisedPEHeader(LPVOID Buffer);
 int DumpImageInCurrentProcess(LPVOID ImageBase);
-void DumpSectionViewsForPid(DWORD Pid);
 
 SYSTEM_INFO SystemInfo;
 PVOID CallingModule;
@@ -56,6 +55,8 @@ typedef struct InjectionSectionView
 PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
 PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
 BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
+void DumpSectionViewsForPid(DWORD Pid);
+void DumpSectionViewForPid(PINJECTIONSECTIONVIEW SectionView, DWORD Pid);
 
 typedef struct InjectionInfo
 {

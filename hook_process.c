@@ -121,8 +121,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateProcessEx,
     NTSTATUS ret = Old_NtCreateProcessEx(ProcessHandle, DesiredAccess,
         ObjectAttributes, ParentProcess, Flags, SectionHandle, DebugPort,
         ExceptionPort, InJob);
-	LOQ_ntstatus("process", "PphO", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
-        "FileName", ObjectAttributes);
+	LOQ_ntstatus("process", "PphOhh", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
+        "FileName", ObjectAttributes, "Flags", Flags, "SectionHandle", SectionHandle);
     if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
         pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
@@ -515,14 +515,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
     {
         if (CurrentSectionView->LocalView == BaseAddress)
         {
-            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, faking.\n", BaseAddress);
-
-            ret = STATUS_SUCCESS;
-
-            LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-                "RegionSize", map_size);
-                
-            return ret;
+            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, dumping.\n", BaseAddress);
+            DumpSectionViewForPid(CurrentSectionView, pid);
         }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;
@@ -659,7 +653,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     NTSTATUS ret = Old_NtAllocateVirtualMemory(ProcessHandle, BaseAddress,
         ZeroBits, RegionSize, AllocationType, Protect);
 
-	if (ret != STATUS_CONFLICTING_ADDRESSES && (Protect != PAGE_READWRITE || GetCurrentProcessId() != our_getprocessid(ProcessHandle))) {
+	if (ret != STATUS_CONFLICTING_ADDRESSES) {
 		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 	}
@@ -680,10 +674,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadVirtualMemory,
     ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer,
         NumberOfBytesToRead, NumberOfBytesRead);
 
-	if (pid_from_process_handle(ProcessHandle) != GetCurrentProcessId()) {
-		LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesRead, Buffer);
-	}
+    LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "Buffer", NumberOfBytesRead, Buffer);
 
 	return ret;
 }
@@ -695,16 +687,14 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     _In_    SIZE_T nSize,
     _Out_   PSIZE_T lpNumberOfBytesRead
 ) {
-    BOOL ret;
+	BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
     ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
         nSize, lpNumberOfBytesRead);
 
-	if (pid_from_process_handle(hProcess) != GetCurrentProcessId()) {
-		LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-			"Buffer", lpNumberOfBytesRead, lpBuffer);
-	}
+    LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
+        "Buffer", lpNumberOfBytesRead, lpBuffer);
 
     return ret;
 }
@@ -992,10 +982,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtWow64WriteVirtualMemory64,
 
 	pid = pid_from_process_handle(ProcessHandle);
 
-	if (pid != GetCurrentProcessId()) {
-		LOQ_bool("process", "pxbhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesWritten->LowPart, Buffer, "BufferLength", NumberOfBytesWritten->LowPart, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    LOQ_bool("process", "pxbhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "Buffer", NumberOfBytesWritten->LowPart, Buffer, "BufferLength", NumberOfBytesWritten->LowPart, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
+	if (pid != GetCurrentProcessId()) {
 		if (ret) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
@@ -1026,10 +1016,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress,
         NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
 
-	/* Don't log an uninteresting case */
-	//if (OldAccessProtection && *OldAccessProtection == NewAccessProtection)
-	//	return ret;
-
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (NT_SUCCESS(ret)) {
 		lasterror_t lasterrors;
@@ -1038,7 +1024,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 		set_lasterrors(&lasterrors);
 	}
 
-	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
+	if (NewAccessProtection == PAGE_EXECUTE_READWRITE &&
 		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
 		LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
 			"NumberOfBytesProtected", NumberOfBytesToProtect,
@@ -1073,10 +1059,6 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 	ret = Old_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect,
         lpflOldProtect);
 
-	/* Don't log an uninteresting case */
-	//if (lpflOldProtect && *lpflOldProtect == flNewProtect)
-	//	return ret;
-
 	memset(&meminfo, 0, sizeof(meminfo));
 	if (ret) {
 		lasterror_t lasterrors;
@@ -1107,10 +1089,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     NTSTATUS ret = Old_NtFreeVirtualMemory(ProcessHandle, BaseAddress,
         RegionSize, FreeType);
 
-	if (GetCurrentProcessId() != our_getprocessid(ProcessHandle)) {
-		LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", RegionSize, "FreeType", FreeType);
-	}
+    LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "RegionSize", RegionSize, "FreeType", FreeType);
 
 	return ret;
 }

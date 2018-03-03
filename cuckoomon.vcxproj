@@ -413,7 +413,6 @@
     <ClInclude Include="CAPE\Scylla\IATSearch.h" />
     <ClInclude Include="CAPE\Scylla\ImportRebuilder.h" />
     <ClInclude Include="CAPE\Scylla\ImportsHandling.h" />
-    <ClInclude Include="CAPE\Scylla\multitree.h" />
     <ClInclude Include="CAPE\Scylla\NativeWinApi.h" />
     <ClInclude Include="CAPE\Scylla\PeParser.h" />
     <ClInclude Include="CAPE\Scylla\ProcessAccessHelp.h" />

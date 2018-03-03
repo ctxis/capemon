@@ -80,7 +80,7 @@ static hook_t g_hooks[] = {
     //
 
 	HOOK_NOTAIL_ALT(ntdll, LdrLoadDll, 4),
-	//HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
+	HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
     HOOK_SPECIAL(kernel32, CreateProcessInternalW),
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
@@ -125,6 +125,8 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, NtCreateDirectoryObject),
     HOOK(ntdll, NtQueryDirectoryObject),
 
+    HOOK(kernel32, CreateFileTransactedA),
+    HOOK(kernel32, CreateFileTransactedW),
     // CreateDirectoryExA calls CreateDirectoryExW
     // CreateDirectoryW does not call CreateDirectoryExW
     HOOK(kernel32, CreateDirectoryW),
@@ -141,7 +143,7 @@ static hook_t g_hooks[] = {
     // Covered by NtCreateFile() but still grab this information
     HOOK(kernel32, CopyFileA),
     HOOK(kernel32, CopyFileW),
-    HOOK(kernel32, CopyFileExW),
+    HOOK_NOTAIL_ALT(kernel32, CopyFileExW, 6),
 
     // Covered by NtSetInformationFile() but still grab this information
     HOOK(kernel32, DeleteFileA),
@@ -272,6 +274,8 @@ static hook_t g_hooks[] = {
     //HOOK(user32, EnumWindows),
 	HOOK(user32, PostMessageA),
 	HOOK(user32, PostMessageW),
+	//HOOK(user32, SendMessageA),
+	//HOOK(user32, SendMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -289,6 +293,11 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtOpenEvent),
 	HOOK(ntdll, NtCreateNamedPipeFile),
 
+	HOOK(ntdll, NtAddAtom),
+	HOOK(ntdll, NtAddAtomEx),
+	HOOK(ntdll, NtFindAtom),
+	HOOK(ntdll, NtDeleteAtom),
+	HOOK(ntdll, NtQueryInformationAtom),
 	
 	//
     // Process Hooks
@@ -361,7 +370,8 @@ static hook_t g_hooks[] = {
 	HOOK(user32, SetWindowsHookExA),
     HOOK(user32, SetWindowsHookExW),
     HOOK(user32, UnhookWindowsHookEx),
-    HOOK(kernel32, SetUnhandledExceptionFilter),
+    //HOOK(kernel32, SetUnhandledExceptionFilter),
+    HOOK(ntdll, RtlAddVectoredExceptionHandler),
 	HOOK(kernel32, SetErrorMode),
     HOOK(ntdll, LdrGetDllHandle),
     HOOK(ntdll, LdrGetProcedureAddress),
@@ -421,6 +431,7 @@ static hook_t g_hooks[] = {
 	HOOK(netapi32, NetGetJoinInformation),
 	HOOK(netapi32, NetUserGetLocalGroups),
 	HOOK(urlmon, URLDownloadToFileW),
+    HOOK(urlmon, URLDownloadToCacheFileW),
 	HOOK(urlmon, ObtainUserAgentString),
 	HOOK(wininet, InternetGetConnectedState),
     HOOK(wininet, InternetOpenA),
@@ -507,6 +518,7 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtSetTimer),
 	HOOK(ntdll, NtSetTimerEx),
 	HOOK(user32, MsgWaitForMultipleObjectsEx),
+	HOOK(kernel32, CreateTimerQueueTimer),
 
 	//
     // Socket Hooks

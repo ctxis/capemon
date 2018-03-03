@@ -28,8 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "lookup.h"
 #include "config.h"
 
-#define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_GENERIC_WRITE | \
-    FILE_WRITE_DATA | FILE_APPEND_DATA | STANDARD_RIGHTS_WRITE | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
+#define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | FILE_APPEND_DATA | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
 
 // length of a hardcoded unicode string
 #define UNILEN(x) (sizeof(x) / sizeof(wchar_t) - 1)
@@ -47,6 +46,8 @@ typedef struct _file_log_t {
 
 static lookup_t g_files;
 static lookup_t g_file_logs;
+
+static void new_file(const UNICODE_STRING *obj);
 
 void file_init()
 {
@@ -139,17 +140,9 @@ void file_write(HANDLE file_handle)
 	get_lasterrors(&lasterror);
 
 	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
-    if(r != NULL) {
-		UNICODE_STRING str;
-		str.Length = (USHORT)r->length * sizeof(wchar_t);
-		str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
-		str.Buffer = r->filename;
-
-        // we do in fact want to dump this file because it was written to
-        new_file(&str);
-
-        // delete the file record from the list
-        lookup_del(&g_files, (ULONG_PTR)file_handle);
+    if(r == NULL) {
+        r = lookup_add(&g_files, (ULONG_PTR)file_handle, sizeof(file_record_t));
+        memset(r, 0, sizeof(*r));
     }
 
 	set_lasterrors(&lasterror);
@@ -199,7 +192,7 @@ static void handle_new_file(HANDLE file_handle, const OBJECT_ATTRIBUTES *obj)
 			len = lstrlenW(absolutename);
 			// cache this file
 			if (is_ignored_file_unicode(absolutename, len) == 0)
-				cache_file(file_handle, absolutename, len, obj->Attributes);
+                cache_file(file_handle, absolutename, len, obj->Attributes);
 			free(absolutename);
 		}
 		else {
@@ -242,12 +235,33 @@ void handle_duplicate(HANDLE old_handle, HANDLE new_handle)
 void file_close(HANDLE file_handle)
 {
 	lasterror_t lasterror;
+	file_record_t *r;
 
 	get_lasterrors(&lasterror);
-    lookup_del(&g_files, (ULONG_PTR) file_handle);
+
+	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
+    if(r != NULL) {
+        UNICODE_STRING str;
+        str.Length = (USHORT)r->length * sizeof(wchar_t);
+        str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
+        str.Buffer = r->filename;
+
+        new_file(&str);
+
+        lookup_del(&g_files, (ULONG_PTR) file_handle);
+    }
+
 	set_lasterrors(&lasterror);
 }
 
+void handle_terminate()
+{
+	entry_t *p;
+
+    for (p = (entry_t*)&(g_files.root); p != NULL; p = p->next) {
+        file_close((HANDLE)p->id);
+    }
+}
 static BOOLEAN is_protected_objattr(POBJECT_ATTRIBUTES obj)
 {
 	wchar_t path[MAX_PATH_PLUS_TOLERANCE];
@@ -259,8 +273,8 @@ static BOOLEAN is_protected_objattr(POBJECT_ATTRIBUTES obj)
 			lasterror_t lasterror;
 			lasterror.NtstatusError = STATUS_ACCESS_DENIED;
 			lasterror.Win32Error = ERROR_ACCESS_DENIED;
-			set_lasterrors(&lasterror);
 			free(absolutepath);
+			set_lasterrors(&lasterror);
 			return TRUE;
 		}
 		free(absolutepath);
@@ -395,8 +409,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 
 	set_special_api(API_NTREADFILE, deletelast);
 
-	set_lasterrors(&lasterrors);
-
 	if (read_count <= 50) {
 		fname = calloc(32768, sizeof(wchar_t));
 		path_from_handle(FileHandle, fname, 32768);
@@ -410,6 +422,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 
 		free(fname);
 	}
+
+	set_lasterrors(&lasterrors);
 
 	return ret;
 }
@@ -879,6 +893,46 @@ HOOKDEF_ALT(BOOL, WINAPI, MoveFileWithProgressTransactedW,
 	return ret;
 }
 
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedA,
+  __in       LPCSTR                lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hfhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
+}
+
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedW,
+  __in       LPCWSTR               lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hFhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
+}
+
 HOOKDEF(HANDLE, WINAPI, FindFirstFileExA,
     __in        LPCSTR lpFileName,
     __in        FINDEX_INFO_LEVELS fInfoLevelId,
@@ -1049,7 +1103,31 @@ HOOKDEF(BOOL, WINAPI, CopyFileW,
 	return ret;
 }
 
-HOOKDEF(BOOL, WINAPI, CopyFileExW,
+HOOKDEF_NOTAIL(WINAPI, CopyFileExW,
+	_In_      LPWSTR lpExistingFileName,
+	_In_      LPWSTR lpNewFileName,
+	_In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
+	_In_opt_  LPVOID lpData,
+	_In_opt_  LPBOOL pbCancel,
+	_In_      DWORD dwCopyFlags
+) {
+	BOOL ret = TRUE;
+	BOOL file_existed = FALSE;
+
+	if (GetFileAttributesW(lpNewFileName) != INVALID_FILE_ATTRIBUTES)
+		file_existed = TRUE;
+
+	if (lpProgressRoutine) {
+		LOQ_bool("filesystem", "FFis", "ExistingFileName", lpExistingFileName,
+			"NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, "ExistedBefore", file_existed ? "yes" : "no");
+		return 0;
+	}
+
+	return 1;
+}
+
+
+HOOKDEF_ALT(BOOL, WINAPI, CopyFileExW,
     _In_      LPWSTR lpExistingFileName,
     _In_      LPWSTR lpNewFileName,
     _In_opt_  LPPROGRESS_ROUTINE lpProgressRoutine,
@@ -1065,14 +1143,13 @@ HOOKDEF(BOOL, WINAPI, CopyFileExW,
 	ret = Old_CopyFileExW(lpExistingFileName, lpNewFileName,
         lpProgressRoutine, lpData, pbCancel, dwCopyFlags);
 	LOQ_bool("filesystem", "FFis", "ExistingFileName", lpExistingFileName,
-        "NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, file_existed ? "yes" : "no");
+        "NewFileName", lpNewFileName, "CopyFlags", dwCopyFlags, "ExistedBefore", file_existed ? "yes" : "no");
 
 	if (ret)
 		new_file_path_unicode(lpNewFileName);
 
 	return ret;
 }
-
 HOOKDEF(BOOL, WINAPI, DeleteFileA,
     __in  LPCSTR lpFileName
 ) {
@@ -1222,6 +1299,9 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationA,
 			*lpVolumeSerialNumber = 0x46e70ca9;
 			debug_message("Changed Volume Serial Number.");
 		}
+
+
+
 	}	
 #endif	
     return ret;
@@ -1292,7 +1372,7 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationByHandleW,
 	if (ret && lpVolumeSerialNumber && g_config.serial_number)
 		*lpVolumeSerialNumber = g_config.serial_number;
 
-	LOQ_bool("filesystem", "uH", "VolumeName", lpVolumeNameBuffer, "VolumeSerial", lpVolumeSerialNumber);
+	LOQ_bool("filesystem", "puH", "Handle", hFile, "VolumeName", lpVolumeNameBuffer, "VolumeSerial", lpVolumeSerialNumber);
 
 	return ret;
 }
@@ -1324,8 +1404,8 @@ HOOKDEF(HRESULT, WINAPI, SHGetKnownFolderPath,
 	memcpy(&id1, rfid, sizeof(id1));
 	sprintf(idbuf, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 		id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
-	set_lasterrors(&lasterrors);
 	LOQ_hresult("filesystem", "shu", "FolderID", idbuf, "Flags", dwFlags, "Path", ppszPath ? *ppszPath : NULL);
+	set_lasterrors(&lasterrors);
 	return ret;
 }
 
