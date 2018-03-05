@@ -33,7 +33,7 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
 extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
-extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect);
+extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect, ULONG OldProtect);
 extern void FreeHandler(PVOID BaseAddress);
 extern void ProcessTrackedRegion();
 
@@ -720,7 +720,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 
 	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle)) 
     {
-        ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection);
+        ProtectionHandler(*BaseAddress, *NumberOfBytesToProtect, NewAccessProtection, *OldAccessProtection);
         
         if ((TrackedRegion = GetTrackedRegion(*BaseAddress)) && TrackedRegion->Guarded)
             *OldAccessProtection &= (~PAGE_GUARD);
@@ -771,7 +771,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
 
 	if (NT_SUCCESS(ret) && !called_by_hook() && GetCurrentProcessId() == our_getprocessid(hProcess)) 
     {
-        ProtectionHandler(lpAddress, dwSize, flNewProtect);
+        ProtectionHandler(lpAddress, dwSize, flNewProtect, *lpflOldProtect);
         
         if ((TrackedRegion = GetTrackedRegion(lpAddress)) && TrackedRegion->Guarded)
             *lpflOldProtect &= (~PAGE_GUARD);
