@@ -60,7 +60,7 @@ extern int ScyllaDumpPE(DWORD_PTR Buffer);
 extern wchar_t *our_process_path;
 extern ULONG_PTR base_of_dll_of_interest;
 extern ULONG_PTR g_our_dll_base;
-
+extern unsigned int address_is_in_stack(PVOID Address);
 static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
 CHAR s_szDllPath[MAX_PATH];
@@ -68,6 +68,24 @@ CHAR s_szDllPath[MAX_PATH];
 BOOL ProcessDumped;
 extern PVOID CallingModule;
 extern LPVOID GetReturnAddress(PCONTEXT ContextRecord);
+
+static __inline ULONG_PTR get_stack_top(void)
+{
+#ifndef _WIN64
+	return __readfsdword(0x04);
+#else
+	return __readgsqword(0x08);
+#endif
+}
+
+static __inline ULONG_PTR get_stack_bottom(void)
+{
+#ifndef _WIN64
+	return __readfsdword(0x08);
+#else
+	return __readgsqword(0x10);
+#endif
+}
 
 //**************************************************************************************
 void GetHookCallerBase()
@@ -1443,7 +1461,29 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader;
+
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    
+    if (IsDisguisedPEHeader(ModuleBase))
+    {
+        pDosHeader = (PIMAGE_DOS_HEADER)ModuleBase;
+        if (*(WORD*)ModuleBase != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
+        {       
+            DoOutputDebugString("DumpModuleInCurrentProcess: Disguised PE image (bad MZ and/or PE headers) at 0x%x.\n", ModuleBase);
+            
+            // We want to fix the PE header in the dump (for e.g. disassembly etc)
+            PEImage = (BYTE*)malloc(Size - ((DWORD_PTR)ModuleBase - (DWORD_PTR)Buffer));
+            memcpy(PEImage, ModuleBase, Size - ((DWORD_PTR)ModuleBase - (DWORD_PTR)Buffer));
+            pDosHeader = (PIMAGE_DOS_HEADER)PEImage;
+            
+            *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
+            *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+            
+            ModuleBase = PEImage;
+        }
+    }
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
@@ -1453,7 +1493,6 @@ int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 
 	return 0;
 }
-
 //**************************************************************************************
 int DumpImageInCurrentProcess(LPVOID ImageBase)
 //**************************************************************************************
@@ -1614,9 +1653,9 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised: 64-bit Extraction package. Loaded at 0x%p\n", g_our_dll_base);
+    DoOutputDebugString("CAPE initialised: 64-bit Exploit package loaded at 0x%p, process image base 0x%p, stack from 0x%p-0x%p\n", g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #else
-    DoOutputDebugString("CAPE initialised: 32-bit Extraction package. Loaded at 0x%x\n", g_our_dll_base);
+    DoOutputDebugString("CAPE initialised: 32-bit Exploit package loaded at 0x%x, process image base 0x%x, stack from 0x%x-0x%x\n", g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #endif
     
     return;

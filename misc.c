@@ -646,7 +646,22 @@ void add_all_dlls_to_dll_ranges(void)
 		if ((ULONG_PTR)mod->BaseAddress != base_of_dll_of_interest)
 			add_dll_range((ULONG_PTR)mod->BaseAddress, (ULONG_PTR)mod->BaseAddress + mod->SizeOfImage);
 	}
+}
 
+void list_all_dlls(void)
+{
+	LDR_MODULE *mod; PEB *peb = (PEB *)get_peb();
+
+	/* skip the base image */
+	mod = (LDR_MODULE *)peb->LoaderData->InLoadOrderModuleList.Flink;
+	if (mod->BaseAddress == NULL)
+		return;
+	for (mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink;
+		mod->BaseAddress != NULL;
+		mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink) {
+		if (mod->FullDllName.Length && mod->FullDllName.Buffer)
+            DoOutputDebugString("0x%p: %ws\n", mod->BaseAddress, mod->FullDllName.Buffer);
+	}
 }
 
 char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset)

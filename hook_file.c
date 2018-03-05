@@ -48,6 +48,8 @@ typedef struct _file_log_t {
 static lookup_t g_files;
 static lookup_t g_file_logs;
 
+static void new_file(const UNICODE_STRING *obj);
+
 void file_init()
 {
 	specialname_map_init();
@@ -139,17 +141,9 @@ void file_write(HANDLE file_handle)
 	get_lasterrors(&lasterror);
 
 	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
-    if(r != NULL) {
-		UNICODE_STRING str;
-		str.Length = (USHORT)r->length * sizeof(wchar_t);
-		str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
-		str.Buffer = r->filename;
-
-        // we do in fact want to dump this file because it was written to
-        new_file(&str);
-
-        // delete the file record from the list
-        lookup_del(&g_files, (ULONG_PTR)file_handle);
+    if(r == NULL) {
+        r = lookup_add(&g_files, (ULONG_PTR)file_handle, sizeof(file_record_t));
+        memset(r, 0, sizeof(*r));
     }
 
 	set_lasterrors(&lasterror);
@@ -242,12 +236,33 @@ void handle_duplicate(HANDLE old_handle, HANDLE new_handle)
 void file_close(HANDLE file_handle)
 {
 	lasterror_t lasterror;
+	file_record_t *r;
 
 	get_lasterrors(&lasterror);
-    lookup_del(&g_files, (ULONG_PTR) file_handle);
+
+	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
+    if(r != NULL) {
+        UNICODE_STRING str;
+        str.Length = (USHORT)r->length * sizeof(wchar_t);
+        str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
+        str.Buffer = r->filename;
+
+        new_file(&str);
+
+        lookup_del(&g_files, (ULONG_PTR) file_handle);
+    }
+
 	set_lasterrors(&lasterror);
 }
 
+void handle_terminate()
+{
+	entry_t *p;
+
+    for (p = (entry_t*)&(g_files.root); p != NULL; p = p->next) {
+        file_close((HANDLE)p->id);
+    }
+}
 static BOOLEAN is_protected_objattr(POBJECT_ATTRIBUTES obj)
 {
 	wchar_t path[MAX_PATH_PLUS_TOLERANCE];
@@ -259,8 +274,8 @@ static BOOLEAN is_protected_objattr(POBJECT_ATTRIBUTES obj)
 			lasterror_t lasterror;
 			lasterror.NtstatusError = STATUS_ACCESS_DENIED;
 			lasterror.Win32Error = ERROR_ACCESS_DENIED;
-			set_lasterrors(&lasterror);
 			free(absolutepath);
+			set_lasterrors(&lasterror);
 			return TRUE;
 		}
 		free(absolutepath);
@@ -395,8 +410,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 
 	set_special_api(API_NTREADFILE, deletelast);
 
-	set_lasterrors(&lasterrors);
-
 	if (read_count <= 50) {
 		fname = calloc(32768, sizeof(wchar_t));
 		path_from_handle(FileHandle, fname, 32768);
@@ -410,6 +423,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 
 		free(fname);
 	}
+
+	set_lasterrors(&lasterrors);
 
 	return ret;
 }
@@ -877,6 +892,46 @@ HOOKDEF_ALT(BOOL, WINAPI, MoveFileWithProgressTransactedW,
 	}
 
 	return ret;
+}
+
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedA,
+  __in       LPCSTR                lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hfhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
+}
+
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedW,
+  __in       LPCWSTR               lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hFhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
 }
 
 HOOKDEF(HANDLE, WINAPI, FindFirstFileExA,
@@ -1350,8 +1405,8 @@ HOOKDEF(HRESULT, WINAPI, SHGetKnownFolderPath,
 	memcpy(&id1, rfid, sizeof(id1));
 	sprintf(idbuf, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 		id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
-	set_lasterrors(&lasterrors);
 	LOQ_hresult("filesystem", "shu", "FolderID", idbuf, "Flags", dwFlags, "Path", ppszPath ? *ppszPath : NULL);
+	set_lasterrors(&lasterrors);
 	return ret;
 }
 

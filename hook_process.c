@@ -536,8 +536,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     }    
 
     //if (ret != STATUS_CONFLICTING_ADDRESSES) {
-		LOQ_ntstatus("process", "pPPhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"RegionSize", RegionSize, "Protection", Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+		LOQ_ntstatus("process", "pPPh", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+			"RegionSize", RegionSize, "Protection", Protect);
 	//}
 
 	return ret;
@@ -726,21 +726,26 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
             *OldAccessProtection &= (~PAGE_GUARD);
     }
     
-	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
-		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
-		LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"NumberOfBytesProtected", NumberOfBytesToProtect,
-			"MemoryType", meminfo.Type,
-			"NewAccessProtection", NewAccessProtection,
-			"OldAccessProtection", OldAccessProtection, "StackPivoted", is_stack_pivoted() ? "yes" : "no", "IsStack", "yes");
-	}
-	else {
-		LOQ_ntstatus("process", "pPPhhHs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"NumberOfBytesProtected", NumberOfBytesToProtect,
-			"MemoryType", meminfo.Type,
-			"NewAccessProtection", NewAccessProtection,
-			"OldAccessProtection", OldAccessProtection, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-	}
+	//if (NewAccessProtection == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(ProcessHandle) &&
+	//	(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
+	//	LOQ_ntstatus("process", "pPPhhHss", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+	//		"NumberOfBytesProtected", NumberOfBytesToProtect,
+	//		"MemoryType", meminfo.Type,
+	//		"NewAccessProtection", NewAccessProtection,
+	//		"OldAccessProtection", OldAccessProtection, "StackPivoted", is_stack_pivoted() ? "yes" : "no", "IsStack", "yes");
+	//}
+	//else {
+	//	LOQ_ntstatus("process", "pPPhhHs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+	//		"NumberOfBytesProtected", NumberOfBytesToProtect,
+	//		"MemoryType", meminfo.Type,
+	//		"NewAccessProtection", NewAccessProtection,
+	//		"OldAccessProtection", OldAccessProtection, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+	//}
+    LOQ_ntstatus("process", "pPPhhH", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
+        "NumberOfBytesProtected", NumberOfBytesToProtect,
+        "MemoryType", meminfo.Type,
+        "NewAccessProtection", NewAccessProtection,
+        "OldAccessProtection", OldAccessProtection);
     return ret;
 }
 
@@ -777,15 +782,17 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
             *lpflOldProtect &= (~PAGE_GUARD);
     }
 
-	if (flNewProtect == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(hProcess) &&
-		(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
-		LOQ_bool("process", "ppphhHss", "ProcessHandle", hProcess, "Address", lpAddress,
-			"Size", dwSize, "MemType", meminfo.Type, "Protection", flNewProtect, "OldProtection", lpflOldProtect, "StackPivoted", is_stack_pivoted() ? "yes" : "no", "IsStack", "yes");
-	}
-	else {
-		LOQ_bool("process", "ppphhHs", "ProcessHandle", hProcess, "Address", lpAddress,
-			"Size", dwSize, "MemType", meminfo.Type, "Protection", flNewProtect, "OldProtection", lpflOldProtect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-	}
+	//if (flNewProtect == PAGE_EXECUTE_READWRITE && GetCurrentProcessId() == our_getprocessid(hProcess) &&
+	//	(ULONG_PTR)meminfo.AllocationBase >= get_stack_bottom() && (((ULONG_PTR)meminfo.AllocationBase + meminfo.RegionSize) <= get_stack_top())) {
+	//	LOQ_bool("process", "ppphhHss", "ProcessHandle", hProcess, "Address", lpAddress,
+	//		"Size", dwSize, "MemType", meminfo.Type, "Protection", flNewProtect, "OldProtection", lpflOldProtect, "StackPivoted", is_stack_pivoted() ? "yes" : "no", "IsStack", "yes");
+	//}
+	//else {
+	//	LOQ_bool("process", "ppphhHs", "ProcessHandle", hProcess, "Address", lpAddress,
+	//		"Size", dwSize, "MemType", meminfo.Type, "Protection", flNewProtect, "OldProtection", lpflOldProtect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+	//}
+    LOQ_bool("process", "ppphhHs", "ProcessHandle", hProcess, "Address", lpAddress,
+        "Size", dwSize, "MemType", meminfo.Type, "Protection", flNewProtect, "OldProtection", lpflOldProtect);
     return ret;
 }
 

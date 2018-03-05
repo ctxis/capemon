@@ -579,7 +579,7 @@ hook_data_t *alloc_hookdata_near(void *addr)
 	return ret;
 }
 
-static ULONG_PTR get_near_rel_target(unsigned char *buf)
+ULONG_PTR get_near_rel_target(unsigned char *buf)
 {
 	if (buf[0] == 0xe9 || buf[0] == 0xe8)
 		return (ULONG_PTR)buf + 5 + *(int *)&buf[1];
@@ -590,7 +590,7 @@ static ULONG_PTR get_near_rel_target(unsigned char *buf)
 	return 0;
 }
 
-static ULONG_PTR get_short_rel_target(unsigned char *buf)
+ULONG_PTR get_short_rel_target(unsigned char *buf)
 {
 	if (buf[0] == 0xeb || buf[0] == 0xe3 || (buf[0] >= 0x70 && buf[0] < 0x80))
 		return (ULONG_PTR)buf + 2 + *(char *)&buf[1];
