@@ -665,6 +665,8 @@ VOID CALLBACK DllLoadNotification(
 
 		dllname = get_dll_basename(&library);
 		set_hooks_dll(dllname);
+        
+        DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 	}
 	else {
 		// unload
@@ -1025,9 +1027,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
         // initialize the log file
         log_init(CUCKOODBG);
 
-        // initialise CAPE
-        init_CAPE();
-
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
 
@@ -1051,6 +1050,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		// initialize context watchdog
 		//init_watchdog();
+
+        // list loaded dlls
+        list_all_dlls();
+        
+        // initialise CAPE
+        init_CAPE();
 
 #ifndef _WIN64
 		if (!g_config.no_stealth) {

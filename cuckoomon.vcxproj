@@ -79,14 +79,14 @@
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>NewExtraction</TargetName>
+    <TargetName>Exploit</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>true</LinkIncremental>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
     <RunCodeAnalysis>false</RunCodeAnalysis>
-    <TargetName>NewExtraction_x64</TargetName>
+    <TargetName>Exploit_x64</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSdk_71A_IncludePath);C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\WTL91\Include;</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -200,7 +200,7 @@
     <ClCompile Include="alloc.c" />
     <ClCompile Include="CAPE\CAPE.c" />
     <ClCompile Include="CAPE\Debugger.c" />
-    <ClCompile Include="CAPE\Extraction.c" />
+    <ClCompile Include="CAPE\Exploit.c" />
     <ClCompile Include="CAPE\GetThreadId.c" />
     <ClCompile Include="CAPE\Output.c" />
     <ClCompile Include="CAPE\ScyllaHarness.cpp" />

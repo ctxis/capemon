@@ -276,7 +276,7 @@
     <ClCompile Include="CAPE\Scylla\SystemInformation.cpp">
       <Filter>Source Files\CAPE\Scylla</Filter>
     </ClCompile>
-    <ClCompile Include="CAPE\Extraction.c">
+    <ClCompile Include="CAPE\Exploit.c">
       <Filter>Source Files\CAPE</Filter>
     </ClCompile>
   </ItemGroup>
