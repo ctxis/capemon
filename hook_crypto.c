@@ -21,6 +21,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <wincrypt.h>
 #include "hooking.h"
 #include "log.h"
+#include "CAPE\CAPE.h"
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(BOOL, WINAPI, CryptAcquireContextA,
 	_Out_	  HCRYPTPROV *phProv,
@@ -119,6 +122,10 @@ HOOKDEF(BOOL, WINAPI, CryptDecrypt,
 ) {
     BOOL ret = Old_CryptDecrypt(hKey, hHash, Final, dwFlags, pbData,
         pdwDataLen);
+    if (ret) {
+        CapeMetaData->DumpType = HANCITOR_CONFIG;
+        DumpMemory(pbData, *pdwDataLen);
+    }
 	LOQ_bool("crypto", "ppBii", "CryptKey", hKey, "CryptHash", hHash,
         "Buffer", pdwDataLen, pbData, "Length", *pdwDataLen, "Final", Final);
     return ret;

@@ -25,8 +25,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 #include "config.h"
 #include "misc.h"
+#include "CAPE\CAPE.h"
 
 static int did_initial_request;
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL ModuleDumped;
 
 HOOKDEF(DWORD, WINAPI, InternetConfirmZoneCrossingA,
 	_In_ HWND hWnd,
@@ -698,7 +702,27 @@ HOOKDEF(BOOL, WINAPI, InternetCrackUrlA,
 	_In_ DWORD dwFlags,
 	_Inout_ LPURL_COMPONENTSA lpUrlComponents
 ) {
-	BOOL ret = Old_InternetCrackUrlA(lpszUrl, dwUrlLength, dwFlags, lpUrlComponents);
+	BOOL ret;
+    PVOID AllocationBase;
+    hook_info_t *hookinfo = hook_info();
+    if (!ModuleDumped) {
+        if (hookinfo->main_caller_retaddr) 
+            AllocationBase = GetAllocationBase((PVOID)hookinfo->main_caller_retaddr);
+        else if (hookinfo->parent_caller_retaddr)
+            AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
+        if (AllocationBase) {
+            CapeMetaData->Address = AllocationBase;
+            if (DumpModuleInCurrentProcess(AllocationBase)) {
+                ModuleDumped = TRUE;
+                DoOutputDebugString("InternetCrackUrlA hook: Dumped module at 0x%p.\n", AllocationBase);
+            }
+            else
+                DoOutputDebugString("InternetCrackUrlA hook: Failed to dump module at 0x%p.\n", AllocationBase);
+        }
+        else
+            DoOutputDebugString("InternetCrackUrlA hook: Failed to get base of injected module.\n", AllocationBase);
+    }
+    ret = Old_InternetCrackUrlA(lpszUrl, dwUrlLength, dwFlags, lpUrlComponents);
 	LOQ_bool("network", "s", "Url", lpszUrl);
 	return ret;
 }

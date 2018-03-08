@@ -68,7 +68,7 @@ static HMODULE s_hInst = NULL;
 static WCHAR s_wzDllPath[MAX_PATH];
 CHAR s_szDllPath[MAX_PATH];
 
-BOOL ProcessDumped;
+BOOL ProcessDumped, ModuleDumped;
 
 //**************************************************************************************
 BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address)
@@ -1492,7 +1492,7 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    SetCapeMetaData(HANCITOR_PAYLOAD, 0, NULL, (PVOID)ModuleBase);
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
@@ -1640,7 +1640,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
+    CapeMetaData->DumpType = HANCITOR_PAYLOAD;
     ProcessDumped = FALSE;
     
     DumpCount = 0;
@@ -1649,7 +1649,7 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    // g_config.procmemdump = 0;
+    g_config.procdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;
@@ -1663,9 +1663,9 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised: 64-bit base package. Loaded at 0x%p\n", g_our_dll_base);
+    DoOutputDebugString("CAPE initialised: 64-bit Hancitor package. Loaded at 0x%p\n", g_our_dll_base);
 #else
-    DoOutputDebugString("CAPE initialised: 32-bit base package. Loaded at 0x%x\n", g_our_dll_base);
+    DoOutputDebugString("CAPE initialised: 32-bit Hancitor package. Loaded at 0x%x\n", g_our_dll_base);
 #endif
     
     return;

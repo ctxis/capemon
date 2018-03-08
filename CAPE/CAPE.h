@@ -32,6 +32,7 @@ int DumpMemory(LPVOID Buffer, SIZE_T Size);
 int DumpCurrentProcessNewEP(LPVOID NewEP);
 int DumpCurrentProcess();
 int DumpProcess(HANDLE hProcess, LPVOID ImageBase);
+int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 int DumpPE(LPVOID Buffer);
 int ScanForNonZero(LPVOID Buffer, SIZE_T Size);
 int ScanPageForNonZero(LPVOID Address);
@@ -150,7 +151,10 @@ enum {
     URSNIF_PAYLOAD          = 0x25,
 	
     CERBER_CONFIG           = 0x30,
-    CERBER_PAYLOAD          = 0x31
+    CERBER_PAYLOAD          = 0x31,
+	
+    HANCITOR_CONFIG         = 0x34,
+    HANCITOR_PAYLOAD        = 0x35
 };
 
 HANDLE EvilGrabRegHandle;
