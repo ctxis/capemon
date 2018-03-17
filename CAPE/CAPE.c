@@ -18,6 +18,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define _CRT_RAND_S  
 #include <stdlib.h> 
 #include <stdio.h>
+#include <stddef.h>
 #include <tchar.h>
 #include <windows.h>
 #include <Wincrypt.h>
@@ -660,7 +661,7 @@ void DumpSectionViewsForPid(DWORD Pid)
             
             PEPointer = CurrentSectionView->LocalView;
             
-            while (ScanForPE(PEPointer, CurrentSectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)CurrentSectionView->LocalView), &PEPointer))
+            while (ScanForDisguisedPE(PEPointer, CurrentSectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)CurrentSectionView->LocalView), &PEPointer))
             {
                 DoOutputDebugString("DumpSectionViewsForPid: Dumping PE image from shared section view, local address 0x%p.\n", PEPointer);
     
@@ -709,65 +710,48 @@ void DumpSectionViewsForPid(DWORD Pid)
 }
 
 //**************************************************************************************
-void DumpSectionViewForPid(PINJECTIONSECTIONVIEW SectionView, DWORD Pid)
+void DumpSectionView(PINJECTIONSECTIONVIEW SectionView)
 //**************************************************************************************
 {
-	struct InjectionInfo *CurrentInjectionInfo;
     DWORD BufferSize = MAX_PATH;
     LPVOID PEPointer = NULL;
     BOOL Dumped = FALSE;
     
-    CurrentInjectionInfo = GetInjectionInfo(Pid);
-
-    if (CurrentInjectionInfo == NULL)
+    if (!SectionView->LocalView)
     {
-        DoOutputDebugString("DumpSectionViewForPid: No injection info for pid %d.\n", Pid);
+        DoOutputDebugString("DumpSectionView: Section view local view address not set.\n");
         return;
     }
 
-    if (SectionView->TargetProcessId == Pid && SectionView->LocalView)
+    if (!SectionView->TargetProcessId)
     {
-        PEPointer = SectionView->LocalView;
-        
-        while (ScanForPE(PEPointer, SectionView->ViewSize - ((DWORD_PTR)PEPointer - (DWORD_PTR)SectionView->LocalView), &PEPointer))
-        {
-            DoOutputDebugString("DumpSectionViewForPid: Dumping PE image from shared section view, local address 0x%p.\n", PEPointer);
-
-            CapeMetaData->DumpType = INJECTION_PE;
-            CapeMetaData->TargetPid = Pid;
-            CapeMetaData->Address = PEPointer;
-
-            if (DumpImageInCurrentProcess(PEPointer))
-            {
-                DoOutputDebugString("DumpSectionViewForPid: Dumped PE image from shared section view.\n");
-                Dumped = TRUE;
-            }
-            else
-                DoOutputDebugString("DumpSectionViewForPid: Failed to dump PE image from shared section view.\n");
-                
-            ((BYTE*)PEPointer)++;
-        }
-        
-        if (Dumped == FALSE)
-        {
-            DoOutputDebugString("DumpSectionViewForPid: no PE file found in shared section view, attempting raw dump.\n");
-            
-            CapeMetaData->DumpType = INJECTION_SHELLCODE;
-            
-            CapeMetaData->TargetPid = Pid;
-            
-            if (DumpMemory(SectionView->LocalView, SectionView->ViewSize))
-            {
-                DoOutputDebugString("DumpSectionViewForPid: Dumped shared section view.");
-                Dumped = TRUE;
-            }
-            else
-                DoOutputDebugString("DumpSectionViewForPid: Failed to dump shared section view.");                    
-        }
-        
-        if (Dumped == TRUE)
-            DropSectionView(SectionView);
+        DoOutputDebugString("DumpSectionView: Section view has no target process - error.\n");
+        return;
     }
+    
+    Dumped = DumpPEsInRange(SectionView->LocalView, SectionView->ViewSize);
+    
+    if (Dumped)
+        DoOutputDebugString("DumpSectionView: Dumped PE image from shared section view, local address 0x%p.\n", SectionView->LocalView);
+    else
+    {
+        DoOutputDebugString("DumpSectionView: no PE file found in shared section view, attempting raw dump.\n");
+        
+        CapeMetaData->DumpType = INJECTION_SHELLCODE;
+        
+        CapeMetaData->TargetPid = SectionView->TargetProcessId;
+        
+        if (DumpMemory(SectionView->LocalView, SectionView->ViewSize))
+        {
+            DoOutputDebugString("DumpSectionView: Dumped shared section view.");
+            Dumped = TRUE;
+        }
+        else
+            DoOutputDebugString("DumpSectionView: Failed to dump shared section view.");                    
+    }
+    
+    if (Dumped == TRUE)
+        DropSectionView(SectionView);
     
     return;
 }
@@ -924,7 +908,7 @@ char* GetHashFromHandle(HANDLE hFile)
     {
         e_lfanew = *(long*)(Buffer+0x3c);
 
-        if ((unsigned int)e_lfanew>PE_HEADER_LIMIT)
+        if ((unsigned int)e_lfanew > PE_HEADER_LIMIT)
         {
             // This check is possibly not appropriate here
             // As long as we've got what's been compressed
@@ -1197,13 +1181,13 @@ int IsDisguisedPEHeader(LPVOID Buffer)
 //**************************************************************************************
 {
     PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
+    PIMAGE_NT_HEADERS pNtHeader = NULL;
     
     __try  
     {  
         pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
 
-        if (!pDosHeader->e_lfanew || (ULONG)pDosHeader->e_lfanew > PE_HEADER_LIMIT || ((ULONG)pDosHeader->e_lfanew & 3) != 0)
+        if ((ULONG)pDosHeader->e_lfanew > PE_HEADER_LIMIT || ((ULONG)pDosHeader->e_lfanew & 3) != 0)
         {
             //DoOutputDebugString("IsDisguisedPEHeader: e_lfanew bad. (0x%x)", (DWORD_PTR)Buffer);
             return 0;
@@ -1211,7 +1195,22 @@ int IsDisguisedPEHeader(LPVOID Buffer)
         //else
         //    DoOutputDebugString("IsDisguisedPEHeader: e_lfanew ok!: 0x%x (0x%x)", (ULONG)pDosHeader->e_lfanew, (DWORD_PTR)Buffer);
         
-        pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+        if (!pDosHeader->e_lfanew)
+        {
+            // In case the header until and including 'PE' has been zeroed
+            WORD* MachineProbe = (WORD*)&pDosHeader->e_lfanew;
+            while ((PCHAR)MachineProbe < (PCHAR)&pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+            {
+                if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
+                    pNtHeader = (PIMAGE_NT_HEADERS)(&(PCHAR)MachineProbe - 4);
+                MachineProbe += sizeof(WORD);
+            }
+            
+            if (!pNtHeader)
+                return 0;
+        }
+        else
+            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
 
         if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
         {
@@ -1284,7 +1283,7 @@ int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
         return 0;
     }
     
-    for (p=0; p < Size - 0x41; p++) // we want to stop short of the look-ahead to e_lfanew
+    for (p=0; p < Size - PE_HEADER_LIMIT; p++) // we want to stop short of the max look-ahead in IsDisguisedPEHeader
     {
         RetVal = IsDisguisedPEHeader((BYTE*)Buffer+p);
         
@@ -1322,7 +1321,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
     
     DoOutputDebugString("DumpPEsInRange: Scanning range 0x%x - 0x%x.\n", Buffer, (BYTE*)Buffer + Size);
 
-    if (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
+    while (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
@@ -1333,11 +1332,29 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             PEImage = (BYTE*)malloc(Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
             memcpy(PEImage, PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
             pDosHeader = (PIMAGE_DOS_HEADER)PEImage;
+
+            if (!pDosHeader->e_lfanew)
+            {
+                // In case the header until and including 'PE' has been zeroed
+                PIMAGE_NT_HEADERS pNtHeader = NULL;
+                WORD* MachineProbe = (WORD*)&pDosHeader->e_lfanew;
+                while ((PCHAR)MachineProbe < (PCHAR)&pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+                {
+                    if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
+                        pNtHeader = (PIMAGE_NT_HEADERS)(&(PCHAR)MachineProbe - 4);
+                    MachineProbe += sizeof(WORD);
+                }
+                
+                if (!pNtHeader)
+                    return FALSE;
+                    
+                pDosHeader->e_lfanew = (LONG)((PUCHAR)pNtHeader - (PUCHAR)pDosHeader);
+            }
             
             *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
             *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
-            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)PEPointer);
             
             if (DumpImageInCurrentProcess((LPVOID)PEImage))
             {
@@ -1346,10 +1363,13 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             }
             else
                 DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+
+            if (PEImage)
+                free(PEImage);    
         }
         else
         {
-            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)PEPointer);
             
             if (DumpImageInCurrentProcess((LPVOID)PEPointer))
             {
@@ -1360,7 +1380,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
                 DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
         }
         
-        //((BYTE*)PEPointer)++;
+        (BYTE*)PEPointer += PE_HEADER_LIMIT;
     }
     
     return RetVal;
@@ -1553,7 +1573,7 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)ModuleBase);
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
@@ -1653,7 +1673,7 @@ int DumpProcess(HANDLE hProcess, LPVOID ImageBase)
 int DumpPE(LPVOID Buffer)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)Buffer);
+    SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)Buffer);
     
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{

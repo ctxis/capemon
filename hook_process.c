@@ -308,7 +308,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess,
         ObjectAttributes, ClientId);
         
-    if (NT_SUCCESS(ret)){// && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
+    if (NT_SUCCESS(ret) && pid != GetCurrentProcessId()) {// && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
         CurrentInjectionInfo = GetInjectionInfo(pid);
         
         if (CurrentInjectionInfo == NULL)
@@ -513,10 +513,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
 
     while (CurrentSectionView)
     {
-        if (CurrentSectionView->LocalView == BaseAddress)
+        if (CurrentSectionView->TargetProcessId && CurrentSectionView->LocalView == BaseAddress)
         {
             DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, dumping.\n", BaseAddress);
-            DumpSectionViewForPid(CurrentSectionView, pid);
+            DumpSectionView(CurrentSectionView);
         }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;

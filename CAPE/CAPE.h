@@ -56,7 +56,7 @@ PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE
 PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
 BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
 void DumpSectionViewsForPid(DWORD Pid);
-void DumpSectionViewForPid(PINJECTIONSECTIONVIEW SectionView, DWORD Pid);
+void DumpSectionView(PINJECTIONSECTIONVIEW SectionView);
 
 typedef struct InjectionInfo
 {
@@ -110,7 +110,6 @@ struct InjectionSectionView *SectionViewList;
 #define	DLL			        2
 
 #define PLUGX_SIGNATURE		0x5658	// 'XV'
-#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
 
 typedef struct CapeMetadata 
 {
