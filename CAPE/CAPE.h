@@ -39,6 +39,7 @@ int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int IsDisguisedPEHeader(LPVOID Buffer);
 int DumpImageInCurrentProcess(LPVOID ImageBase);
+void DumpSectionViewsForPid(DWORD Pid);
 
 SYSTEM_INFO SystemInfo;
 PVOID CallingModule;

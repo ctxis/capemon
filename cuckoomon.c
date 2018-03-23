@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 volatile int dummy_val;
 
 extern void init_CAPE();
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 void disable_tail_call_optimization(void)
 {
@@ -274,8 +275,8 @@ static hook_t g_hooks[] = {
     //HOOK(user32, EnumWindows),
 	HOOK(user32, PostMessageA),
 	HOOK(user32, PostMessageW),
-	//HOOK(user32, SendMessageA),
-	//HOOK(user32, SendMessageW),
+	HOOK(user32, SendMessageA),
+	HOOK(user32, SendMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -664,6 +665,8 @@ VOID CALLBACK DllLoadNotification(
 
 		dllname = get_dll_basename(&library);
 		set_hooks_dll(dllname);
+
+        DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 	}
 	else {
 		// unload

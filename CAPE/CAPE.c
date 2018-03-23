@@ -1,6 +1,6 @@
 /*
 CAPE - Config And Payload Extraction
-Copyright(C) 2015, 2016 Context Information Security. (kevin.oreilly@contextis.com)
+Copyright(C) 2015 - 2018 Context Information Security. (kevin.oreilly@contextis.com)
 
 This program is free software : you can redistribute it and / or modify
 it under the terms of the GNU General Public License as published by
@@ -16,6 +16,15 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
 #define _CRT_RAND_S  
+#define MD5LEN  			16
+
+#define MAX_PRETRAMP_SIZE 320
+#define MAX_TRAMP_SIZE 128
+
+#define BUFSIZE 			1024	// For hashing
+#define DUMP_MAX            100     
+#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+
 #include <stdlib.h> 
 #include <stdio.h>
 #include <stddef.h>
@@ -37,16 +46,64 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 
 #pragma comment(lib, "Shlwapi.lib")
 
-#define BUFSIZE 			1024	// For hashing
-#define MD5LEN  			16
-#define DUMP_MAX            100     
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
+typedef union _UNWIND_CODE {
+	struct {
+		BYTE CodeOffset;
+		BYTE UnwindOp : 4;
+		BYTE OpInfo : 4;
+	};
+	USHORT FrameOffset;
+} UNWIND_CODE;
+
+typedef struct _UNWIND_INFO {
+	BYTE Version : 3;
+	BYTE Flags : 5;
+	BYTE SizeOfProlog;
+	BYTE CountOfCodes;
+	BYTE FrameRegister : 4;
+	BYTE FrameOffset : 4;
+	UNWIND_CODE UnwindCode[20];
+} UNWIND_INFO;
+
+typedef struct _hook_data_t {
+	unsigned char tramp[MAX_TRAMP_SIZE];
+	unsigned char pre_tramp[MAX_PRETRAMP_SIZE];
+	//unsigned char our_handler[128];
+	unsigned char hook_data[32];
+
+	UNWIND_INFO unwind_info;
+} hook_data_t;
+
+typedef struct _hook_t {
+    const wchar_t *library;
+    const char *funcname;
+    void *addr;
+	void *hook_addr;
+    void *new_func;
+    void **old_func;
+	void *alt_func;
+    int allow_hook_recursion;
+	int fully_emulate;
+	unsigned char numargs;
+	int notail;
+	int is_hooked;
+	hook_data_t *hookdata;
+} hook_t;
+
+typedef struct _hook_info_t {
+	int disable_count;
+	hook_t *last_hook;
+	hook_t *current_hook;
+	ULONG_PTR return_address;
+	ULONG_PTR stack_pointer;
+	ULONG_PTR frame_pointer;
+	ULONG_PTR main_caller_retaddr;
+	ULONG_PTR parent_caller_retaddr;
+} hook_info_t;
 
 static unsigned int DumpCount;
  
 extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buffer_len);
-
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -57,9 +114,11 @@ extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOE
 extern int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP);
 extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOEP);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
+extern BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address);
 
 extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
 extern unsigned int address_is_in_stack(PVOID Address);
+extern hook_info_t *hook_info();
 extern ULONG_PTR base_of_dll_of_interest;
 extern wchar_t *our_process_path;
 extern ULONG_PTR g_our_dll_base;
@@ -86,34 +145,36 @@ BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address)
 }
 
 //**************************************************************************************
-LPVOID GetReturnAddress(PCONTEXT ContextRecord)
+BOOL GetCurrentFrame(LPVOID* ReturnAddress, LPVOID Address)
+//**************************************************************************************
+{
+    *ReturnAddress = Address;
+
+    return TRUE;
+}
+
+//**************************************************************************************
+LPVOID GetReturnAddress(hook_info_t *hookinfo)
 //**************************************************************************************
 {
     LPVOID ReturnAddress = NULL;
-    
+
     __try
     {
 #ifdef _WIN64
-        operate_on_backtrace(0, (ULONG_PTR)ContextRecord->Rip, &ReturnAddress, InsideHook);
+        DoOutputDebugString("GetReturnAddress: operate_on_backtrace call with Rip 0x%p.\n", hookinfo->frame_pointer);
 #else
-        operate_on_backtrace(0, (ULONG_PTR)ContextRecord->Ebp, &ReturnAddress, InsideHook);
+        DoOutputDebugString("GetReturnAddress: operate_on_backtrace call with Ebp 0x%x.\n", hookinfo->frame_pointer);
 #endif
-        
-        if (!ReturnAddress)
-#ifdef _WIN64
-            ReturnAddress = *(LPVOID*)(ContextRecord->Rbp + sizeof(LPVOID));
-#else
-            ReturnAddress = *(LPVOID*)(ContextRecord->Ebp + sizeof(LPVOID));
-#endif
-        
+        operate_on_backtrace(hookinfo->stack_pointer, hookinfo->frame_pointer, &ReturnAddress, GetCurrentFrame);
         return ReturnAddress;
     }
     __except(EXCEPTION_EXECUTE_HANDLER)  
     {  
 #ifdef _WIN64
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with Rip 0x%p and Rbp 0x%p.\n", ContextRecord->Rip, ContextRecord->Rbp);
+        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with Rip 0x%p.\n", hookinfo->frame_pointer);
 #else
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", ContextRecord->Ebp);
+        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", hookinfo->frame_pointer);
 #endif
         return NULL;
     }
@@ -123,27 +184,12 @@ LPVOID GetReturnAddress(PCONTEXT ContextRecord)
 void GetHookCallerBase()
 //**************************************************************************************
 {
-    CONTEXT ContextRecord;
     PVOID ReturnAddress, AllocationBase;
 
     if (CallingModule)
         return;
         
-#ifdef _WIN64
-    RtlCaptureContext(&ContextRecord);
-#else
-    ZeroMemory(&ContextRecord, sizeof(CONTEXT));
-
-    __asm
-    {
-    Label:
-        mov eax, [Label];
-        mov [ContextRecord.Eip], eax;
-        mov [ContextRecord.Ebp], ebp;
-        mov [ContextRecord.Esp], esp;
-    }
-#endif
-    ReturnAddress = GetReturnAddress(&ContextRecord);
+    ReturnAddress = GetReturnAddress(hook_info());    
 
     if (ReturnAddress)
     {
@@ -155,6 +201,7 @@ void GetHookCallerBase()
         if (AllocationBase)
         {
             CallingModule = AllocationBase;
+            // Base-dependent breakpoints can be activated now
         }
     }
     else
@@ -504,14 +551,9 @@ PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
 //**************************************************************************************
 {
     PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
-
-    //TODO remove debug
-    DoOutputDebugString("GetSectionView: Global section view list 0x%x, looking for handle 0x%x\n", CurrentSectionView, SectionHandle);
 	
     while (CurrentSectionView)
 	{
-        //TODO remove debug
-        DoOutputDebugString("GetSectionView: looking at section handle 0x%x.\n", CurrentSectionView->SectionHandle);
         if (CurrentSectionView->SectionHandle == SectionHandle)
         {
             DoOutputDebugString("GetSectionView: returning section view pointer 0x%x.\n", CurrentSectionView);
@@ -1140,7 +1182,7 @@ int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
                     continue;
                 }
                 
-                pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+                pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
                 
                 if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
                 {
@@ -1177,88 +1219,117 @@ int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset)
 }
 
 //**************************************************************************************
-int IsDisguisedPEHeader(LPVOID Buffer)
+BOOL TestPERequirements(PIMAGE_NT_HEADERS pNtHeader)
 //**************************************************************************************
 {
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader = NULL;
-    
     __try  
     {  
-        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
-
-        if ((ULONG)pDosHeader->e_lfanew > PE_HEADER_LIMIT || ((ULONG)pDosHeader->e_lfanew & 3) != 0)
-        {
-            //DoOutputDebugString("IsDisguisedPEHeader: e_lfanew bad. (0x%x)", (DWORD_PTR)Buffer);
-            return 0;
-        }
-        //else
-        //    DoOutputDebugString("IsDisguisedPEHeader: e_lfanew ok!: 0x%x (0x%x)", (ULONG)pDosHeader->e_lfanew, (DWORD_PTR)Buffer);
-        
-        if (!pDosHeader->e_lfanew)
-        {
-            // In case the header until and including 'PE' has been zeroed
-            WORD* MachineProbe = (WORD*)&pDosHeader->e_lfanew;
-            while ((PCHAR)MachineProbe < (PCHAR)&pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
-            {
-                if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
-                    pNtHeader = (PIMAGE_NT_HEADERS)(&(PCHAR)MachineProbe - 4);
-                MachineProbe += sizeof(WORD);
-            }
-            
-            if (!pNtHeader)
-                return 0;
-        }
-        else
-            pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
-
         if ((pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) && (pNtHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC))
         {
-            //DoOutputDebugString("IsDisguisedPEHeader: OptionalHeader.Magic bad. (0x%x)", (DWORD_PTR)Buffer);
-            return 0;
+            //DoOutputDebugString("TestPERequirements: OptionalHeader.Magic bad. (0x%x)", (DWORD_PTR)pNtHeader);    // extremely noisy
+            return FALSE;
         }
         //else
-        //    DoOutputDebugString("IsDisguisedPEHeader: OptionalHeader.Magic ok!: 0x%x (0x%x)", pNtHeader->OptionalHeader.Magic, (DWORD_PTR)Buffer);
+        //    DoOutputDebugString("TestPERequirements: OptionalHeader.Magic ok!: 0x%x (0x%x)", pNtHeader->OptionalHeader.Magic, (DWORD_PTR)pNtHeader);
         
         // Basic requirements
         if 
         (
             pNtHeader->FileHeader.Machine == 0 || 
             pNtHeader->FileHeader.SizeOfOptionalHeader == 0 || 
-            pNtHeader->OptionalHeader.SizeOfHeaders == 0 ||
-            pNtHeader->OptionalHeader.FileAlignment == 0
+            pNtHeader->OptionalHeader.SizeOfHeaders == 0 //||
+            //pNtHeader->OptionalHeader.FileAlignment == 0
         ) 
         {
-            DoOutputDebugString("IsDisguisedPEHeader: Basic requirements failure (Base 0x%x).\n", (DWORD_PTR)Buffer);
-            return 0;
+            //DoOutputDebugString("TestPERequirements: Basic requirements failure (0x%x).\n", (DWORD_PTR)pNtHeader);  // very noisy    
+            return FALSE;
         }
 
         if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
         {
-            DoOutputDebugString("IsDisguisedPEHeader: Characteristics bad. (0x%x)", (DWORD_PTR)Buffer);
-            return 0;
+            DoOutputDebugString("TestPERequirements: Characteristics bad. (0x%x)", (DWORD_PTR)pNtHeader);
+            return FALSE;
         }
 
         if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
         {
-            DoOutputDebugString("IsDisguisedPEHeader: SizeOfOptionalHeader bad. (0x%x)", (DWORD_PTR)Buffer);
-            return 0;
+            DoOutputDebugString("TestPERequirements: SizeOfOptionalHeader bad. (0x%x)", (DWORD_PTR)pNtHeader);
+            return FALSE;
         }
         
         if (((pNtHeader->OptionalHeader.FileAlignment-1) & pNtHeader->OptionalHeader.FileAlignment) != 0) 
         {
-            DoOutputDebugString("IsDisguisedPEHeader: FileAlignment invalid. (0x%x)", (DWORD_PTR)Buffer);
-            return 0;
+            DoOutputDebugString("TestPERequirements: FileAlignment invalid. (0x%x)", (DWORD_PTR)pNtHeader);
+            return FALSE;
         }
         
         if (pNtHeader->OptionalHeader.SectionAlignment < pNtHeader->OptionalHeader.FileAlignment) 
         {																
-            DoOutputDebugString("IsDisguisedPEHeader: FileAlignment greater than SectionAlignment.\n (0x%x)", (DWORD_PTR)Buffer);
-            return 0;                  
+            DoOutputDebugString("TestPERequirements: FileAlignment greater than SectionAlignment.\n (0x%x)", (DWORD_PTR)pNtHeader);
+            return FALSE;                  
         }  
 
         // To pass the above tests it should now be safe to assume it's a PE image
-        return (ULONG)pDosHeader->e_lfanew;
+        return TRUE;
+    }  
+    __except(EXCEPTION_EXECUTE_HANDLER)  
+    {  
+        DoOutputDebugString("TestPERequirements: Exception occured reading region at 0x%x\n", (DWORD_PTR)(pNtHeader));
+        return FALSE;
+    }
+}
+
+//**************************************************************************************
+int IsDisguisedPEHeader(LPVOID Buffer)
+//**************************************************************************************
+{
+    PIMAGE_DOS_HEADER pDosHeader;
+    PIMAGE_NT_HEADERS pNtHeader = NULL;
+    WORD* MachineProbe;
+    
+    __try  
+    {  
+        pDosHeader = (PIMAGE_DOS_HEADER)Buffer;
+
+        if (pDosHeader->e_lfanew && (ULONG)pDosHeader->e_lfanew < PE_HEADER_LIMIT && ((ULONG)pDosHeader->e_lfanew & 3) == 0)
+            pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+        
+        if (!pDosHeader->e_lfanew)
+        {
+            // In case the header until and including 'PE' has been zeroed
+            MachineProbe = (WORD*)&pDosHeader->e_lfanew;
+            while ((PUCHAR)MachineProbe < (PUCHAR)&pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+            {
+                if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
+                {
+                    pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)MachineProbe - 4);
+                    break;
+                }
+                MachineProbe += sizeof(WORD);
+            }            
+        }
+
+        if (pNtHeader && TestPERequirements(pNtHeader))
+            return 1;
+
+        // In case the header until and including 'PE' is missing
+        MachineProbe = (WORD*)Buffer;
+        pNtHeader = NULL;
+        while ((PUCHAR)MachineProbe < (PUCHAR)pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+        {
+            if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
+            {
+                if ((PUCHAR)MachineProbe >= (PUCHAR)pDosHeader + 4)
+                {
+                    pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)MachineProbe - 4);
+                    break;
+                }
+            }
+            MachineProbe += sizeof(WORD);
+        }            
+
+        if (pNtHeader && TestPERequirements(pNtHeader))
+            return 1;            
     }  
     __except(EXCEPTION_EXECUTE_HANDLER)  
     {  
@@ -1267,7 +1338,7 @@ int IsDisguisedPEHeader(LPVOID Buffer)
     }
     
     //DoOutputDebugString("IsDisguisedPEHeader: No PE image located\n (0x%x)", (DWORD_PTR)Buffer);
-    //return 0;
+    return 0;
 }
 
 //**************************************************************************************
@@ -1315,7 +1386,8 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
 {
     PBYTE PEImage;
     PIMAGE_DOS_HEADER pDosHeader;
-
+    PIMAGE_NT_HEADERS pNtHeader = NULL;
+    
     BOOL RetVal = FALSE;
     LPVOID PEPointer = Buffer;
     
@@ -1324,45 +1396,76 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
     while (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
+        
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
         {       
             DoOutputDebugString("DumpPEsInRange: Disguised PE image (bad MZ and/or PE headers) at 0x%x.\n", PEPointer);
             
             // We want to fix the PE header in the dump (for e.g. disassembly etc)
-            PEImage = (BYTE*)malloc(Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
+            PEImage = (BYTE*)calloc(Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), sizeof(PUCHAR));
             memcpy(PEImage, PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer));
-            pDosHeader = (PIMAGE_DOS_HEADER)PEImage;
+            pDosHeader = (PIMAGE_DOS_HEADER)(PEImage);
 
             if (!pDosHeader->e_lfanew)
             {
                 // In case the header until and including 'PE' has been zeroed
-                PIMAGE_NT_HEADERS pNtHeader = NULL;
                 WORD* MachineProbe = (WORD*)&pDosHeader->e_lfanew;
-                while ((PCHAR)MachineProbe < (PCHAR)&pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+                while ((PUCHAR)MachineProbe < (PUCHAR)pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
                 {
                     if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
-                        pNtHeader = (PIMAGE_NT_HEADERS)(&(PCHAR)MachineProbe - 4);
+                    {
+                        if ((PUCHAR)MachineProbe > (PUCHAR)pDosHeader + 3)
+                            pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)MachineProbe - 4);
+                    }
                     MachineProbe += sizeof(WORD);
                 }
                 
-                if (!pNtHeader)
-                    return FALSE;
+                if (pNtHeader)
+                    pDosHeader->e_lfanew = (LONG)((PUCHAR)pNtHeader - (PUCHAR)pDosHeader);
+            }
+
+            if (!pDosHeader->e_lfanew)
+            {
+                // In case the header until and including 'PE' is missing
+                pNtHeader = NULL;
+                WORD* MachineProbe = (WORD*)pDosHeader;
+                while ((PUCHAR)MachineProbe < (PUCHAR)pDosHeader + (PE_HEADER_LIMIT - offsetof(IMAGE_DOS_HEADER, e_lfanew)))
+                {
+                    if (*MachineProbe == IMAGE_FILE_MACHINE_I386 || *MachineProbe == IMAGE_FILE_MACHINE_AMD64)
+                    {
+                        if ((PUCHAR)MachineProbe >= (PUCHAR)pDosHeader + 4)
+                        {
+                            pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)MachineProbe - 4);
+                            //break;
+                        }
+                    }
+                    MachineProbe += sizeof(WORD);
                     
-                pDosHeader->e_lfanew = (LONG)((PUCHAR)pNtHeader - (PUCHAR)pDosHeader);
+                    if (pNtHeader && (PUCHAR)pNtHeader == (PUCHAR)pDosHeader && pNtHeader->OptionalHeader.SizeOfHeaders)
+                    {
+                        SIZE_T HeaderShift = sizeof(IMAGE_DOS_HEADER);
+                        memmove(PEImage + HeaderShift, PEImage, pNtHeader->OptionalHeader.SizeOfHeaders - HeaderShift);
+                        memset(PEImage, 0, HeaderShift);
+                        pDosHeader = (PIMAGE_DOS_HEADER)PEImage;
+                        pNtHeader = (PIMAGE_NT_HEADERS)(PEImage + HeaderShift);
+                        pDosHeader->e_lfanew = (LONG)((PUCHAR)pNtHeader - (PUCHAR)pDosHeader);
+                        DoOutputDebugString("DumpPEsInRange: pNtHeader moved from 0x%x to 0x%x, e_lfanew 0x%x\n", pDosHeader, pNtHeader, pDosHeader->e_lfanew);
+                    }
+                }            
             }
             
-            *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
-            *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
+            *(WORD*)pDosHeader = IMAGE_DOS_SIGNATURE;
+            *(DWORD*)((PUCHAR)pDosHeader + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
-            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)PEPointer);
+            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)pDosHeader);
             
-            if (DumpImageInCurrentProcess((LPVOID)PEImage))
+            if (DumpImageInCurrentProcess((LPVOID)pDosHeader))
             {
-                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", PEPointer);
+                DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", pDosHeader);
                 RetVal = TRUE;
             }
             else
-                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", PEPointer);
+                DoOutputDebugString("DumpPEsInRange: Failed to dump PE image from 0x%x.\n", pDosHeader);
 
             if (PEImage)
                 free(PEImage);    
@@ -1611,7 +1714,7 @@ int DumpImageInCurrentProcess(LPVOID ImageBase)
         return 0;    
     }
  
-    pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+    pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
     
     if (pNtHeader->Signature != IMAGE_NT_SIGNATURE) 
     {
