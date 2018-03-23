@@ -16,12 +16,15 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
 #include "..\hooking.h"
+#include "..\misc.h"
 #include <distorm.h>
 #include "Debugger.h"
 #include "CAPE.h"
 
 #define MAX_INSTRUCTIONS 32
-#define SINGLE_STEP_LIMIT 0x20
+#define SINGLE_STEP_LIMIT 0x40
+#define MAX_CONFIG_OFFSET 0x1000
+#define MAX_CONFIG_SECTIONS 0x100
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
@@ -31,7 +34,7 @@ extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 BOOL BreakpointSet;
 unsigned int DumpCount, Correction, StepCount;
-PVOID ModuleBase, DumpAddress;
+PVOID DumpAddress;
 SIZE_T DumpSize;
 BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
 
@@ -51,21 +54,21 @@ BOOL DumpCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* E
 
 	DoOutputDebugString("DumpCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
     
-    DoOutputDebugString("DumpCallback: single-step limit reached, dumping module.");
+    DoOutputDebugString("DumpCallback: Break on return from copy, dumping module.\n");
     
     if (!PayloadDumped)
     {
         PayloadDumped = TRUE;   // set this to prevent a second dump
                                 // from another thread before the
                                 // first is complete
-        PayloadDumped = DumpModuleInCurrentProcess(ModuleBase);
+        PayloadDumped = DumpModuleInCurrentProcess(CallingModule);
         
         if (PayloadDumped)
         {
-            DoOutputDebugString("DumpCallback: Succssfully dumped module.");
+            DoOutputDebugString("DumpCallback: Succssfully dumped module.\n");
         }
         else
-            DoOutputDebugString("DumpCallback: Module dump failed.");
+            DoOutputDebugString("DumpCallback: Module dump failed.\n");
     }
 
     ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);
@@ -95,7 +98,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     
     if (StepCount > SINGLE_STEP_LIMIT)
     {
-        DoOutputDebugString("Trace: single-step limit reached, releasing.");
+        DoOutputDebugString("Trace: single-step limit reached, releasing.\n");
         
         return TRUE;
     }
@@ -119,24 +122,30 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
             DoOutputDebugString("Trace: Comparison detected: RCX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rcx, Constant);
-            //ExceptionInfo->ContextRecord->Rcx = Constant;
+            SetZeroFlag(ExceptionInfo->ContextRecord);
         }
         else if (!strncmp(DecodedInstruction.operands.p, "R11", 3))
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
             DoOutputDebugString("Trace: Comparison detected: R11 (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->R11, Constant);
-            //ExceptionInfo->ContextRecord->R11 = Constant;
+            SetZeroFlag(ExceptionInfo->ContextRecord);
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EAX", 3))
         {
             DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 1);
             DoOutputDebugString("Trace: Comparison detected: RAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rax, Constant);
-            //ExceptionInfo->ContextRecord->Rax = Constant;
+            SetZeroFlag(ExceptionInfo->ContextRecord);
+        }
+        else if (!strncmp(DecodedInstruction.operands.p, "EDX", 3))
+        {
+            DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Rip + 2);
+            DoOutputDebugString("Trace: Comparison detected: RDX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Rdx, Constant);
+            SetZeroFlag(ExceptionInfo->ContextRecord);
         }
 #else
         DWORD Constant = *(DWORD*)((unsigned char*)ExceptionInfo->ContextRecord->Eip + 1);
         DoOutputDebugString("Trace: Comparison detected, EAX (0x%x) vs 0x%x.", ExceptionInfo->ContextRecord->Eax, Constant);
-        //ExceptionInfo->ContextRecord->Eax = Constant;
+        SetZeroFlag(ExceptionInfo->ContextRecord);
 #endif
     }
     
@@ -213,7 +222,7 @@ BOOL ConfigCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS*
 	DoOutputDebugString("ConfigCallback: Breakpoint %i Size=0x%x and Address=0x%p.\n", pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address);
 
 #ifdef _WIN64    
-    DumpAddress = (PVOID)ExceptionInfo->ContextRecord->Rcx;
+    DumpAddress = (PVOID)ExceptionInfo->ContextRecord->Rdx;
 #else
     DumpAddress = (PVOID)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Ebp+8);
 #endif
@@ -224,16 +233,21 @@ BOOL ConfigCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS*
     
     EntryOffset = 8 + ((NumOfSections - 1)* 24);
     
-    DumpSize = EntryOffset + *(DWORD*)((PUCHAR)DumpAddress + EntryOffset + 8);
-    
-    if (DumpMemory(DumpAddress, DumpSize))
+    if (EntryOffset < MAX_CONFIG_OFFSET && NumOfSections < MAX_CONFIG_SECTIONS)
     {
-        DoOutputDebugString("ConfigCallback: Dumped config region at 0x%p size 0x%x.\n", DumpAddress, DumpSize);
+        DumpSize = EntryOffset + *(DWORD*)((PUCHAR)DumpAddress + EntryOffset + 8);
+        
+        if (DumpMemory(DumpAddress, DumpSize))
+        {
+            DoOutputDebugString("ConfigCallback: Dumped config region at 0x%p size 0x%x.\n", DumpAddress, DumpSize);
+        }
+        else
+        {
+            DoOutputDebugString("ConfigCallback: Failed to dump config region at 0x%p.\n", DumpAddress);
+        }
     }
     else
-    {
-        DoOutputDebugString("ConfigCallback: Failed to dump config region at 0x%p.\n", DumpAddress);
-    }
+        DoOutputDebugString("ConfigCallback: Bad config offset and/or number of sections: 0x%x, 0x%x.\n", EntryOffset, NumOfSections);
     
     ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);    
     
@@ -259,9 +273,9 @@ BOOL SetInitialBreakpoint()
 		return FALSE;
 	}
         
-	if (!bp0 && !bp1 && !bp2)
+	if (!bp0 && !bp1)
 	{
-		DoOutputDebugString("SetInitialBreakpoint: Error - No address specified for Ursnif breakpoints.\n");
+		DoOutputDebugString("SetInitialBreakpoint: Error - No addresses specified for Ursnif breakpoints - please submit with auto or Injection package, or supply manually in options.\n");
 		return FALSE;
 	}
 
@@ -287,9 +301,10 @@ BOOL SetInitialBreakpoint()
     if (bp0)
     {
         FileOffset = (DWORD_PTR)bp0;
-        BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
-        ChunkSize = 0x10;
+        BreakpointVA = FileOffsetToVA((DWORD_PTR)CallingModule, (DWORD_PTR)FileOffset);
+        DoOutputDebugString("SetInitialBreakpoint: FileOffsetToVA gives VA 0x%p for bp0.\n", BreakpointVA);
         
+        ChunkSize = 0x10;
         memset(&DecodedInstructions, 0, sizeof(DecodedInstructions));
         
 #ifdef _WIN64
@@ -319,17 +334,25 @@ BOOL SetInitialBreakpoint()
             return FALSE;
         }
     }
+    else
+    {
+        DoOutputDebugString("SetInitialBreakpoint: No address supplied for config breakpoint - config extraction not possible.\n");
+    }
     
     if (!bp1)
+    {
+        DoOutputDebugString("SetInitialBreakpoint: No address supplied for payload breakpoint - payload extraction not possible.\n");
         return TRUE;
+    }
 
     if (bp1)
     {
         Register = 2;
         FileOffset = (DWORD_PTR)bp1;
-        BreakpointVA = FileOffsetToVA((DWORD_PTR)ModuleBase, (DWORD_PTR)FileOffset);
-        ChunkSize = 0x40;    // Size of code to disassemble
+        BreakpointVA = FileOffsetToVA((DWORD_PTR)CallingModule, (DWORD_PTR)FileOffset);
+        DoOutputDebugString("SetInitialBreakpoint: FileOffsetToVA gives VA 0x%p for bp1.\n", BreakpointVA);
         
+        ChunkSize = 0x80;    // Size of code to disassemble
         memset(&DecodedInstructions, 0, sizeof(DecodedInstructions));
         
 #ifdef _WIN64
@@ -362,7 +385,7 @@ BOOL SetInitialBreakpoint()
         }
     }
     
-    return FALSE;
+    return TRUE;
 }
 
 HOOKDEF(LPSTR, WINAPI, lstrcpynA,
@@ -385,4 +408,65 @@ HOOKDEF(LPSTR, WINAPI, lstrcpynA,
     }
 
     return ret; 
+}
+
+// from hook_misc.c
+typedef int (WINAPI * __GetSystemMetrics)(__in int nIndex);
+
+__GetSystemMetrics _GetSystemMetrics;
+
+DWORD WINAPI our_GetSystemMetrics(
+	__in int nIndex
+) {
+	if (!_GetSystemMetrics) {
+		_GetSystemMetrics = (__GetSystemMetrics)GetProcAddress(LoadLibraryA("user32"), "GetSystemMetrics");
+	}
+	return _GetSystemMetrics(nIndex);
+}
+
+static LARGE_INTEGER last_skipped;
+static int num_to_spoof;
+static int num_spoofed;
+static int lastx;
+static int lasty;
+
+HOOKDEF(BOOL, WINAPI, GetCursorPos, _Out_ LPPOINT lpPoint) 
+{
+    BOOL ret = Old_GetCursorPos(lpPoint);
+
+	/* work around the fact that skipping sleeps prevents the human module from making the system look active */
+	if (lpPoint && time_skipped.QuadPart != last_skipped.QuadPart) {
+		int xres, yres;
+		xres = our_GetSystemMetrics(0);
+		yres = our_GetSystemMetrics(1);
+		if (!num_to_spoof)
+			num_to_spoof = (random() % 20) + 10;
+		if (num_spoofed < num_to_spoof) {
+			lpPoint->x = random() % xres;
+			lpPoint->y = random() % yres;
+			num_spoofed++;
+		}
+		else {
+			lpPoint->x = lastx;
+			lpPoint->y = lasty;
+			lastx = lpPoint->x;
+			lasty = lpPoint->y;
+		}
+		last_skipped.QuadPart = time_skipped.QuadPart;
+	}
+	else if (last_skipped.QuadPart == 0) {
+		last_skipped.QuadPart = time_skipped.QuadPart;
+	}
+
+	//LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
+    //    "y", lpPoint != NULL ? lpPoint->y : 0);
+	
+    if (!PayloadMarker)
+    {
+        DoOutputDebugString("GetCursorPos hook: Ursnif payload marker detected - calling GetHookCallerBase.\n");
+        PayloadMarker = TRUE;
+        GetHookCallerBase();    
+    }
+
+	return ret;
 }

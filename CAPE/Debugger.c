@@ -28,6 +28,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define PIPEBUFSIZE 512
 
 // eflags register
+#define FL_ZF           0x00000040      // Zero Flag
 #define FL_TF           0x00000100      // Trap flag
 #define FL_RF           0x00010000      // Resume flag
 
@@ -88,6 +89,7 @@ extern BOOLEAN is_address_in_ntdll(ULONG_PTR address);
 extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset);
 extern LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
 
+extern BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern PVOID GetPageAddress(PVOID Address);
 extern unsigned int address_is_in_stack(DWORD Address);
 extern BOOL WoW64fix(void);
@@ -126,48 +128,6 @@ BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
     DoOutputDebugString("CountDepth: Address 0x%p, depthcount = %i.\n", Address, DepthCount);
 
     return FALSE;
-}
-
-//**************************************************************************************
-LPVOID GetReturnAddress(PCONTEXT ContextRecord)
-//**************************************************************************************
-{
-    LPVOID ReturnAddress = NULL;
-    DepthCount = 0;    
-    
-    if (!ContextRecord)
-	{
-        DoOutputDebugString("GetReturnAddress: Null context record passed as argument - error.\n");
-        return FALSE;
-	}
-    
-    __try
-    {
-#ifdef _WIN64
-        DoOutputDebugString("GetReturnAddress: Rsp 0x%p, Rip 0x%p.\n", ContextRecord->Rsp, ContextRecord->Rip);
-        operate_on_backtrace((ULONG_PTR)ContextRecord->Rsp, (ULONG_PTR)ContextRecord->Rip, &ReturnAddress, CountDepth);
-#else
-        DoOutputDebugString("GetReturnAddress: Esp 0x%p, Ebp 0x%p.\n", ContextRecord->Esp, ContextRecord->Ebp);
-        operate_on_backtrace((ULONG_PTR)ContextRecord->Esp, (ULONG_PTR)ContextRecord->Ebp, &ReturnAddress, CountDepth);
-#endif
-        
-        if (!ReturnAddress)
-        {
-            DoOutputDebugString("GetReturnAddress: Failed to get return address.\n");
-            return NULL;
-        }
-        
-        return ReturnAddress;
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER)  
-    {  
-#ifdef _WIN64
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with Rip 0x%p and Rbp 0x%p.\n", ContextRecord->Rip, ContextRecord->Rbp);
-#else
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", ContextRecord->Ebp);
-#endif
-        return NULL;
-    }
 }
 
 //**************************************************************************************
@@ -1401,11 +1361,11 @@ BOOL SetDebugRegister
 	DWORD	Length;
     CONTEXT	Context;
 
-    PDWORD_PTR  Dr0 = &Context.Dr0;
-    PDWORD_PTR  Dr1 = &Context.Dr1;
-    PDWORD_PTR  Dr2 = &Context.Dr2;
-    PDWORD_PTR  Dr3 = &Context.Dr3;
-    PDR7    Dr7 = (PDR7)&(Context.Dr7);
+    PDWORD_PTR Dr0 = &Context.Dr0;
+    PDWORD_PTR Dr1 = &Context.Dr1;
+    PDWORD_PTR Dr2 = &Context.Dr2;
+    PDWORD_PTR Dr3 = &Context.Dr3;
+    PDR7 Dr7 = (PDR7)&(Context.Dr7);
 
     if ((unsigned int)Type > 3)
     {
@@ -1491,7 +1451,7 @@ BOOL SetDebugRegister
         DoOutputErrorString("SetDebugRegister: SetThreadContext failed");
         return FALSE;
     }
-        
+    
 	return TRUE;
 }
 
@@ -1808,6 +1768,18 @@ BOOL SetResumeFlag(PCONTEXT Context)
         return FALSE;
 	
     Context->EFlags |= FL_RF;
+    
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL SetZeroFlag(PCONTEXT Context)
+//**************************************************************************************
+{
+    if (Context == NULL)
+        return FALSE;
+	
+    Context->EFlags |= FL_ZF;
     
     return TRUE;
 }
@@ -2640,7 +2612,7 @@ BOOL SetThreadBreakpoint
         
         return RetVal;
     }
-
+    
     // We wait for the thread to complete - if this hasn't happened
     // in under a second, we bail and set without creating a thread
     RetVal = WaitForSingleObject(hSetBreakpointThread, 1000);
@@ -2709,6 +2681,8 @@ BOOL SetBreakpoint
         ThreadBreakpoints->BreakpointInfo[Register].Address       = Address;
         ThreadBreakpoints->BreakpointInfo[Register].Type          = Type;
         ThreadBreakpoints->BreakpointInfo[Register].Callback      = Callback;
+        
+		DoOutputDebugString("SetBreakpoint: About to call SetThreadBreakpoint for thread %d.\n", ThreadBreakpoints->ThreadId);
         
         SetThreadBreakpoint(ThreadBreakpoints->ThreadId, Register, Size, Address, Type, Callback);
         
@@ -2899,7 +2873,7 @@ BOOL InitialiseDebugger(void)
 		return FALSE;        
     }
     
-    // Initialise any global variables
+    // Initialise global variables
     ChildProcessId = 0;
     SingleStepHandler = NULL;
     SampleVectoredHandler = NULL;
@@ -2978,7 +2952,7 @@ __declspec (naked dllexport) void DebuggerInit(void)
 #else
 #pragma optimize("", off)
 //**************************************************************************************
-void DebuggerInit(void)
+__declspec(dllexport) void DebuggerInit(void)
 //**************************************************************************************
 {   
     DWORD_PTR StackPointer;
@@ -3004,11 +2978,8 @@ BOOL SendDebuggerMessage(PVOID Input)
 { 
     BOOL fSuccess;
 	DWORD cbReplyBytes, cbWritten; 
-    //struct DEBUGGER_DATA DebuggerData;
-   
-    //memset(&DebuggerData, 0, sizeof(struct DEBUGGER_DATA));
 
-    cbReplyBytes = sizeof(DWORD_PTR);
+    cbReplyBytes = sizeof(PVOID);
     
     if (hCapePipe == NULL)
     {   
