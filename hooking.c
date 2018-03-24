@@ -29,9 +29,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern DWORD g_tls_hook_index;
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
 extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 extern PVOID GetAllocationBase(PVOID Address);
 extern SIZE_T GetAllocationSize(PVOID Address);
+extern BOOL ModuleDumped;
 
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
@@ -73,31 +75,18 @@ void dump_on_api(hook_t *h)
         PVOID AllocationBase;
 		if (!g_config.dump_on_apinames[i])
 			break;
-		if (!stricmp(h->funcname, g_config.dump_on_apinames[i])) {
+		if (!ModuleDumped && !stricmp(h->funcname, g_config.dump_on_apinames[i])) {
             if (hookinfo->main_caller_retaddr) {
                 AllocationBase = GetAllocationBase((PVOID)hookinfo->main_caller_retaddr);
+                if (!AllocationBase)
+                    AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
                 if (AllocationBase) {
                     if (DumpModuleInCurrentProcess(AllocationBase)) {
-                        DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                    else if (DumpMemory(AllocationBase, GetAllocationSize((PVOID)hookinfo->main_caller_retaddr))) {
-                        DoOutputDebugString("Dump-on-API: Dumped memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                    else {
-                        DoOutputDebugString("Dump-on-API: Failed to dump memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                }
-                else
-                    DoOutputDebugString("Dump-on-API: Failed to obtain current module base address.\n");
-                
-            }
-            else if (hookinfo->parent_caller_retaddr) {
-                AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
-                if (AllocationBase) {
-                    if (DumpModuleInCurrentProcess(AllocationBase)) {
+                        ModuleDumped = TRUE;
                         DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
                     }
                     else if (DumpMemory(AllocationBase, GetAllocationSize((PVOID)hookinfo->parent_caller_retaddr))) {
+                        ModuleDumped = TRUE;
                         DoOutputDebugString("Dump-on-API: Dumped memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
                     }
                     else {
