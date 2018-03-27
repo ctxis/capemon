@@ -1276,7 +1276,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             *(WORD*)PEImage = IMAGE_DOS_SIGNATURE;
             *(DWORD*)(PEImage + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
-            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            SetCapeMetaData(COMPRESSION, 0, NULL, (PVOID)PEPointer);
             
             if (DumpImageInCurrentProcess((LPVOID)PEImage))
             {
@@ -1288,7 +1288,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
         }
         else
         {
-            SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)PEPointer);
+            SetCapeMetaData(COMPRESSION, 0, NULL, (PVOID)PEPointer);
             
             if (DumpImageInCurrentProcess((LPVOID)PEPointer))
             {
@@ -1492,7 +1492,7 @@ int DumpCurrentProcess()
 int DumpModuleInCurrentProcess(LPVOID ModuleBase)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    SetCapeMetaData(COMPRESSION, 0, NULL, (PVOID)ModuleBase);
 
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
 	{
@@ -1592,7 +1592,7 @@ int DumpProcess(HANDLE hProcess, LPVOID ImageBase)
 int DumpPE(LPVOID Buffer)
 //**************************************************************************************
 {
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)Buffer);
+    SetCapeMetaData(COMPRESSION, 0, NULL, (PVOID)Buffer);
     
     if (DumpCount < DUMP_MAX && ScyllaDumpPE((DWORD_PTR)Buffer))
 	{
@@ -1640,7 +1640,7 @@ void init_CAPE()
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
     
     // This is package (and technique) dependent:
-    CapeMetaData->DumpType = PROCDUMP;
+    CapeMetaData->DumpType = COMPRESSION;
     ProcessDumped = FALSE;
     
     DumpCount = 0;
