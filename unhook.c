@@ -29,7 +29,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNHOOK_BUFSIZE 32
 
 extern void handle_terminate();
-extern int RoutineProcessDump();
 
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
 
@@ -255,8 +254,6 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
 	while (1) {
 		WaitForSingleObject(g_terminate_event_handle, INFINITE);
         handle_terminate();
-        if (g_config.procdump)
-            RoutineProcessDump();
 		log_flush();
 	}
 
