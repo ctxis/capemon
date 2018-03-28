@@ -60,11 +60,6 @@ typedef struct _DR7
     DWORD LEN3 : 2;    //Length bp3
 } DR7, *PDR7;
 
-#define NUMBER_OF_DEBUG_REGISTERS       4
-#define MAX_DEBUG_REGISTER_DATA_SIZE    4
-#define DEBUG_REGISTER_DATA_SIZES       {1, 2, 4}
-#define DEBUG_REGISTER_LENGTH_MASKS     {0xFFFFFFFF, 0, 1, 0xFFFFFFFF, 3}
-
 typedef struct _LSA_UNICODE_STRING {
 	USHORT Length;
 	USHORT MaximumLength;
@@ -95,6 +90,7 @@ extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int
 extern LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *ExceptionInfo);
 extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
 
+extern BOOL ExtractionGuardPageHandler(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern PVOID GetPageAddress(PVOID Address);
 extern unsigned int address_is_in_stack(PVOID Address);
 extern BOOL WoW64fix(void);
@@ -109,6 +105,9 @@ void DebugOutputThreadBreakpoints();
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL ClearSingleStepMode(PCONTEXT Context);
 unsigned int TrapIndex;
+
+unsigned int DepthCount;
+extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
 
 //**************************************************************************************
 BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
@@ -133,355 +132,314 @@ BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
 }
 
 //**************************************************************************************
-LPVOID GetReturnAddress(PCONTEXT ContextRecord)
+BOOL IsInTrackedRegions(PVOID Address)
 //**************************************************************************************
 {
-    LPVOID ReturnAddress = NULL;
-    DepthCount = 0;    
+    PTRACKEDREGION CurrentTrackedRegion = TrackedRegionList;
     
-    if (!ContextRecord)
-	{
-        DoOutputDebugString("GetReturnAddress: Null context record passed as argument - error.\n");
-        return FALSE;
-	}
-    
-    __try
-    {
-#ifdef _WIN64
-        DoOutputDebugString("GetReturnAddress: Rsp 0x%p, Rip 0x%p.\n", ContextRecord->Rsp, ContextRecord->Rip);
-        operate_on_backtrace((ULONG_PTR)ContextRecord->Rsp, (ULONG_PTR)ContextRecord->Rip, &ReturnAddress, CountDepth);
-#else
-        DoOutputDebugString("GetReturnAddress: Esp 0x%p, Ebp 0x%p.\n", ContextRecord->Esp, ContextRecord->Ebp);
-        operate_on_backtrace((ULONG_PTR)ContextRecord->Esp, (ULONG_PTR)ContextRecord->Ebp, &ReturnAddress, CountDepth);
-#endif
-        
-        if (!ReturnAddress)
-        {
-            DoOutputDebugString("GetReturnAddress: Failed to get return address.\n");
-            return NULL;
-        }
-        
-        return ReturnAddress;
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER)  
-    {  
-#ifdef _WIN64
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with Rip 0x%p and Rbp 0x%p.\n", ContextRecord->Rip, ContextRecord->Rbp);
-#else
-        DoOutputDebugString("GetReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", ContextRecord->Ebp);
-#endif
-        return NULL;
-    }
-}
-
-//**************************************************************************************
-BOOL IsInTrackedPages(PVOID Address)
-//**************************************************************************************
-{
-    PTRACKEDPAGES CurrentTrackedPages = TrackedPageList;
-    
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
         return FALSE;
 
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedPages->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedPages->BaseAddress + (DWORD_PTR)CurrentTrackedPages->RegionSize))
+        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedRegion->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedRegion->BaseAddress + (DWORD_PTR)CurrentTrackedRegion->RegionSize))
             return TRUE;
         
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
     
 	return FALSE;
 }
 
 //**************************************************************************************
-PTRACKEDPAGES GetTrackedPages(PVOID Address)
+PTRACKEDREGION GetTrackedRegion(PVOID Address)
 //**************************************************************************************
 {
-    PTRACKEDPAGES CurrentTrackedPages = TrackedPageList;
+    PTRACKEDREGION CurrentTrackedRegion = TrackedRegionList;
     
     if (Address == NULL)
 	{
-        DoOutputDebugString("GetTrackedPages: NULL passed as argument - error.\n");
+        DoOutputDebugString("GetTrackedRegion: NULL passed as argument - error.\n");
         return FALSE;
 	}
 
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
     {
-        //DoOutputDebugString("GetTrackedPages: failed to obtain initial tracked page list.\n");
+        //DoOutputDebugString("GetTrackedRegion: failed to obtain initial tracked region list.\n");
         return FALSE;
     }
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedPages->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedPages->BaseAddress + (DWORD_PTR)CurrentTrackedPages->RegionSize))
+        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedRegion->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedRegion->BaseAddress + (DWORD_PTR)CurrentTrackedRegion->RegionSize))
         {
-            //DoOutputDebugString("GetTrackedPages: found 0x%x in tracked pages at 0x%x.\n", Address, CurrentTrackedPages->BaseAddress);
-            return CurrentTrackedPages;
+            //DoOutputDebugString("GetTrackedRegion: found 0x%x in tracked region at 0x%x.\n", Address, CurrentTrackedRegion->BaseAddress);
+            return CurrentTrackedRegion;
         }
 
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
     
-	//DoOutputDebugString("GetTrackedPages: failed to find tracked pages in list for address 0x%x.\n", Address);
+	//DoOutputDebugString("GetTrackedRegion: failed to find tracked region in list for address 0x%x.\n", Address);
     
     return NULL;
 }
 
 //**************************************************************************************
-PTRACKEDPAGES CreateTrackedPages()
+PTRACKEDREGION CreateTrackedRegion()
 //**************************************************************************************
 {    
-	if (TrackedPageList == NULL)
+	if (TrackedRegionList == NULL)
 	{
-		TrackedPageList = ((struct TrackedPages*)malloc(sizeof(struct TrackedPages)));
+		TrackedRegionList = ((struct TrackedRegion*)malloc(sizeof(struct TrackedRegion)));
 		
-        if (TrackedPageList == NULL)
+        if (TrackedRegionList == NULL)
         {
-            DoOutputDebugString("CreateTrackedPages: failed to allocate memory for initial tracked page list.\n");
+            DoOutputDebugString("CreateTrackedRegion: failed to allocate memory for initial tracked region list.\n");
             return NULL;
         }
 
-        memset(TrackedPageList, 0, sizeof(struct TrackedPages));
+        memset(TrackedRegionList, 0, sizeof(struct TrackedRegion));
 	}
 
-	return TrackedPageList;    
+	return TrackedRegionList;    
 }
 
 //**************************************************************************************
-PTRACKEDPAGES AddTrackedPages(PVOID Address, SIZE_T RegionSize, ULONG Protect)
+PTRACKEDREGION AddTrackedRegion(PVOID Address, SIZE_T RegionSize, ULONG Protect)
 //**************************************************************************************
 {    
     BOOL PageAlreadyTracked;
-    PTRACKEDPAGES CurrentTrackedPages, PreviousTrackedPages;
+    PTRACKEDREGION CurrentTrackedRegion, PreviousTrackedRegion;
     unsigned int NumberOfTrackedRegions;
     
     NumberOfTrackedRegions = 0;
-    PreviousTrackedPages = NULL;
+    PreviousTrackedRegion = NULL;
     
-    if (TrackedPageList == NULL)
-        CreateTrackedPages();
+    if (TrackedRegionList == NULL)
+        CreateTrackedRegion();
         
-    CurrentTrackedPages = TrackedPageList;
+    CurrentTrackedRegion = TrackedRegionList;
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedPages->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedPages->BaseAddress + (DWORD_PTR)CurrentTrackedPages->RegionSize))
+        if ((DWORD_PTR)Address >= (DWORD_PTR)CurrentTrackedRegion->BaseAddress && (DWORD_PTR)Address < ((DWORD_PTR)CurrentTrackedRegion->BaseAddress + (DWORD_PTR)CurrentTrackedRegion->RegionSize))
             PageAlreadyTracked = TRUE;
 		else
             PageAlreadyTracked = FALSE;
         
         NumberOfTrackedRegions++;
         
-        PreviousTrackedPages = CurrentTrackedPages;
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        PreviousTrackedRegion = CurrentTrackedRegion;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}    	
     
 	if (NumberOfTrackedRegions > 10)
-        DoOutputDebugString("AddTrackedPages: DEBUG Warning - number of tracked regions %d.\n", NumberOfTrackedRegions);
+        DoOutputDebugString("AddTrackedRegion: DEBUG Warning - number of tracked regions %d.\n", NumberOfTrackedRegions);
 	
-	if (GetPageAddress(Address) == GetPageAddress(TrackedPageList))
+	if (GetPageAddress(Address) == GetPageAddress(TrackedRegionList))
 	{
-        DoOutputDebugString("AddTrackedPages: Warning - attempting to track the page (0x%x) containing the tracked page list at 0x%x.\n", Address, TrackedPageList);
+        DoOutputDebugString("AddTrackedRegion: Warning - attempting to track the page (0x%p) containing the tracked region list at 0x%p.\n", Address, TrackedRegionList);
 		
 		return NULL;
 	}
     
-	if (PageAlreadyTracked == FALSE)
-	{
-        // We haven't found it in the linked list, so create a new one
-        CurrentTrackedPages = PreviousTrackedPages;
-        
-        CurrentTrackedPages->NextTrackedPages = ((struct TrackedPages*)malloc(sizeof(struct TrackedPages)));
-	
-        if (CurrentTrackedPages->NextTrackedPages == NULL)
-		{
-			DoOutputDebugString("AddTrackedPages: Failed to allocate new tracked page struct.\n");
-			return NULL;
-		}
-        
-        memset(CurrentTrackedPages->NextTrackedPages, 0, sizeof(struct TrackedPages));
-        
-        if (!VirtualQuery(Address, &CurrentTrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
-        {
-            DoOutputErrorString("AddTrackedPages: unable to query memory region 0x%x", Address);
-            return NULL;
-        }
-        
-        CurrentTrackedPages->BaseAddress = CurrentTrackedPages->MemInfo.BaseAddress;
-        
-        if (Address != CurrentTrackedPages->BaseAddress)
-            CurrentTrackedPages->ProtectAddress = Address;
-        
-        if ((BYTE*)Address + RegionSize > (BYTE*)CurrentTrackedPages->BaseAddress + CurrentTrackedPages->MemInfo.RegionSize)
-            CurrentTrackedPages->RegionSize = RegionSize;
-        else
-            CurrentTrackedPages->RegionSize = CurrentTrackedPages->MemInfo.RegionSize;
-        
-        CurrentTrackedPages->Protect = Protect;
-        
-        DoOutputDebugString("AddTrackedPages: DEBUG - added region 0x%x to list at 0x%x - 0x%x.\n", Address, TrackedPageList, (BYTE*)TrackedPageList + NumberOfTrackedRegions*sizeof(TRACKEDPAGES));
-	}
-    else
-        DoOutputDebugString("AddTrackedPages: DEBUG - region 0x%x already in list.\n", Address);
+	if (PageAlreadyTracked)
+    {
+        DoOutputDebugString("AddTrackedRegion: Region at 0x%p already in list.\n", Address);
+        return NULL;
+    }
+
+    // We haven't found it in the linked list, so create a new one
+    CurrentTrackedRegion = PreviousTrackedRegion;
     
-    return CurrentTrackedPages;
+    CurrentTrackedRegion->NextTrackedRegion = ((struct TrackedRegion*)malloc(sizeof(struct TrackedRegion)));
+
+    if (CurrentTrackedRegion->NextTrackedRegion == NULL)
+    {
+        DoOutputDebugString("AddTrackedRegion: Failed to allocate new tracked region struct.\n");
+        return NULL;
+    }
+    
+    memset(CurrentTrackedRegion->NextTrackedRegion, 0, sizeof(struct TrackedRegion));
+    
+    if (!VirtualQuery(Address, &CurrentTrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("AddTrackedRegion: unable to query memory region 0x%p", Address);
+        return NULL;
+    }
+    
+    CurrentTrackedRegion->BaseAddress = CurrentTrackedRegion->MemInfo.BaseAddress;
+    
+    if (Address != CurrentTrackedRegion->BaseAddress)
+        CurrentTrackedRegion->ProtectAddress = Address;
+    
+    if ((BYTE*)Address + RegionSize > (BYTE*)CurrentTrackedRegion->BaseAddress + CurrentTrackedRegion->MemInfo.RegionSize)
+        CurrentTrackedRegion->RegionSize = RegionSize;
+    else
+        CurrentTrackedRegion->RegionSize = CurrentTrackedRegion->MemInfo.RegionSize;
+    
+    CurrentTrackedRegion->Protect = Protect;
+    
+    //DoOutputDebugString("AddTrackedRegion: DEBUG - added region 0x%p to list at 0x%p - 0x%p.\n", Address, TrackedRegionList, (BYTE*)TrackedRegionList + NumberOfTrackedRegions*sizeof(TRACKEDREGION));
+     
+    return CurrentTrackedRegion;
 }
 
 //**************************************************************************************
-BOOL DropTrackedPages(PTRACKEDPAGES TrackedPages)
+BOOL DropTrackedRegion(PTRACKEDREGION TrackedRegion)
 //**************************************************************************************
 {    
-    PTRACKEDPAGES CurrentTrackedPages, PreviousTrackedPages;
+    PTRACKEDREGION CurrentTrackedRegion, PreviousTrackedRegion;
     
-    if (TrackedPages == NULL)
+    if (TrackedRegion == NULL)
 	{
-        DoOutputDebugString("DropTrackedPages: NULL passed as argument - error.\n");
+        DoOutputDebugString("DropTrackedRegion: NULL passed as argument - error.\n");
         return FALSE;
 	}
 
-    PreviousTrackedPages = NULL;
+    PreviousTrackedRegion = NULL;
     
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
 	{
-        DoOutputDebugString("DropTrackedPages: failed to obtain initial tracked page list.\n");
+        DoOutputDebugString("DropTrackedRegion: failed to obtain initial tracked region list.\n");
         return FALSE;
 	}
 
-    CurrentTrackedPages = TrackedPageList;
+    CurrentTrackedRegion = TrackedRegionList;
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        DoOutputDebugString("DropTrackedPages: CurrentTrackedPages 0x%x, BaseAddress 0x%x.\n", CurrentTrackedPages, CurrentTrackedPages->BaseAddress);
+        DoOutputDebugString("DropTrackedRegion: CurrentTrackedRegion 0x%x, BaseAddress 0x%x.\n", CurrentTrackedRegion, CurrentTrackedRegion->BaseAddress);
         
-        if (CurrentTrackedPages == TrackedPages)
+        if (CurrentTrackedRegion == TrackedRegion)
         {
             // Clear any breakpoints in this region
-            ClearBreakpointsInRange(GetCurrentThreadId(), TrackedPages->BaseAddress, TrackedPages->RegionSize);
+            ClearBreakpointsInRange(GetCurrentThreadId(), TrackedRegion->BaseAddress, TrackedRegion->RegionSize);
             
-            DoOutputDebugString("DropTrackedPages: About to unlink.\n");
+            DoOutputDebugString("DropTrackedRegion: About to unlink.\n");
             // Unlink this from the list and free the memory
-            if (PreviousTrackedPages && CurrentTrackedPages->NextTrackedPages)
+            if (PreviousTrackedRegion && CurrentTrackedRegion->NextTrackedRegion)
             {
-                DoOutputDebugString("DropTrackedPages: removed pages 0x%x-0x%x from tracked page list.\n", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
-                PreviousTrackedPages->NextTrackedPages = CurrentTrackedPages->NextTrackedPages;
+                DoOutputDebugString("DropTrackedRegion: removed pages 0x%x-0x%x from tracked region list.\n", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
+                PreviousTrackedRegion->NextTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
             }
-            else if (PreviousTrackedPages && CurrentTrackedPages->NextTrackedPages == NULL)
+            else if (PreviousTrackedRegion && CurrentTrackedRegion->NextTrackedRegion == NULL)
             {
-                DoOutputDebugString("DropTrackedPages: removed pages 0x%x-0x%x from the end of the tracked page list.\n", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
-                PreviousTrackedPages->NextTrackedPages = NULL;
+                DoOutputDebugString("DropTrackedRegion: removed pages 0x%x-0x%x from the end of the tracked region list.\n", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
+                PreviousTrackedRegion->NextTrackedRegion = NULL;
             }
-            else if (!PreviousTrackedPages)
+            else if (!PreviousTrackedRegion)
             {
-                DoOutputDebugString("DropTrackedPages: removed pages 0x%x-0x%x from the head of the tracked page list.\n", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
-                TrackedPageList = NULL;
+                DoOutputDebugString("DropTrackedRegion: removed pages 0x%x-0x%x from the head of the tracked region list.\n", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
+                TrackedRegionList = NULL;
             }
             
-            DoOutputDebugString("DropTrackedPages: about to free the memory!\n");
-            free(CurrentTrackedPages);
+            DoOutputDebugString("DropTrackedRegion: about to free the memory!\n");
+            free(CurrentTrackedRegion);
             
             return TRUE;            
         }
         
-		PreviousTrackedPages = CurrentTrackedPages;
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+		PreviousTrackedRegion = CurrentTrackedRegion;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
     
-    DoOutputDebugString("DropTrackedPages: failed to find tracked pages in list.\n");
+    DoOutputDebugString("DropTrackedRegion: failed to find tracked region in list.\n");
     
     return FALSE;
 }
 
 //**************************************************************************************
-BOOL ActivateGuardPages(PTRACKEDPAGES TrackedPages)
+BOOL ActivateGuardPages(PTRACKEDREGION TrackedRegion)
 //**************************************************************************************
 {
     DWORD OldProtect;
-    BOOL TrackedPagesFound = FALSE;
-    PTRACKEDPAGES CurrentTrackedPages;
+    BOOL TrackedRegionFound = FALSE;
+    PTRACKEDREGION CurrentTrackedRegion;
     PVOID TestAddress;
     
     SIZE_T MatchingRegionSize;
 
-    if (TrackedPages == NULL)
+    if (TrackedRegion == NULL)
 	{
         DoOutputDebugString("ActivateGuardPages: NULL passed as argument - error.\n");
         return FALSE;
 	}    
     
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
     {
-        DoOutputDebugString("ActivateGuardPages: Error - no tracked page list.\n");
+        DoOutputDebugString("ActivateGuardPages: Error - no tracked region list.\n");
         return FALSE;
     }
 
-    CurrentTrackedPages = TrackedPageList;
+    CurrentTrackedRegion = TrackedRegionList;
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        //DoOutputDebugString("TrackedPages->BaseAddress 0x%x, CurrentTrackedPages->BaseAddress 0x%x.\n", TrackedPages->BaseAddress, CurrentTrackedPages->BaseAddress);
+        //DoOutputDebugString("TrackedRegion->BaseAddress 0x%x, CurrentTrackedRegion->BaseAddress 0x%x.\n", TrackedRegion->BaseAddress, CurrentTrackedRegion->BaseAddress);
         
          __try
         {
-            TestAddress = CurrentTrackedPages->BaseAddress;
+            TestAddress = CurrentTrackedRegion->BaseAddress;
         }
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("ActivateGuardPages: Exception trying to access BaseAddres from tracked pages at 0x%x", CurrentTrackedPages);
+            DoOutputErrorString("ActivateGuardPages: Exception trying to access BaseAddres from tracked region at 0x%x", CurrentTrackedRegion);
             return FALSE;
         }       
         
-        if (TrackedPages->BaseAddress == CurrentTrackedPages->BaseAddress)
-            TrackedPagesFound = TRUE;
+        if (TrackedRegion->BaseAddress == CurrentTrackedRegion->BaseAddress)
+            TrackedRegionFound = TRUE;
 
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
    
-    if (TrackedPagesFound == FALSE)
+    if (!TrackedRegionFound)
     {
-        DoOutputDebugString("ActivateGuardPages: failed to locate tracked page(s) in tracked page list.\n");
+        DoOutputDebugString("ActivateGuardPages: failed to locate tracked region(s) in tracked region list.\n");
         return FALSE;
     }
 
-    MatchingRegionSize = VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION));
+    MatchingRegionSize = VirtualQuery(TrackedRegion->BaseAddress, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION));
     
     if (!MatchingRegionSize)
     {
-        DoOutputErrorString("ActivateGuardPages: failed to query tracked page(s) status in region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        DoOutputErrorString("ActivateGuardPages: failed to query tracked region(s) status in region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
         return FALSE;
     }
 
-    //DoOutputDebugString("ActivateGuardPages: BaseAddress 0x%x, AllocationBase 0x%x, AllocationProtect 0x%x, RegionSize 0x%x, State 0x%x, Protect 0x%x, Type 0x%x\n", TrackedPages->MemInfo.BaseAddress, TrackedPages->MemInfo.AllocationBase, TrackedPages->MemInfo.AllocationProtect, TrackedPages->MemInfo.RegionSize, TrackedPages->MemInfo.State, TrackedPages->MemInfo.Protect, TrackedPages->MemInfo.Type);
+    //DoOutputDebugString("ActivateGuardPages: BaseAddress 0x%x, AllocationBase 0x%x, AllocationProtect 0x%x, RegionSize 0x%x, State 0x%x, Protect 0x%x, Type 0x%x\n", TrackedRegion->MemInfo.BaseAddress, TrackedRegion->MemInfo.AllocationBase, TrackedRegion->MemInfo.AllocationProtect, TrackedRegion->MemInfo.RegionSize, TrackedRegion->MemInfo.State, TrackedRegion->MemInfo.Protect, TrackedRegion->MemInfo.Type);
     
-    if (MatchingRegionSize == TrackedPages->RegionSize && TrackedPages->MemInfo.Protect & PAGE_GUARD)
+    if (MatchingRegionSize == TrackedRegion->RegionSize && TrackedRegion->MemInfo.Protect & PAGE_GUARD)
     {
-        DoOutputDebugString("ActivateGuardPages: guard page(s) already set in region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        DoOutputDebugString("ActivateGuardPages: guard page(s) already set in region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
         return FALSE;
     }
     
-    if (!VirtualProtect(TrackedPages->BaseAddress, TrackedPages->RegionSize, TrackedPages->Protect | PAGE_GUARD, &OldProtect))
+    if (!VirtualProtect(TrackedRegion->BaseAddress, TrackedRegion->RegionSize, TrackedRegion->Protect | PAGE_GUARD, &OldProtect))
     {
-        DoOutputErrorString("ActivateGuardPages: failed to activate guard page(s) on region 0x%x size 0x%x", TrackedPages->BaseAddress, TrackedPages->RegionSize);
+        DoOutputErrorString("ActivateGuardPages: failed to activate guard page(s) on region 0x%x size 0x%x", TrackedRegion->BaseAddress, TrackedRegion->RegionSize);
         return FALSE;
     }
     
-    //DoOutputDebugString("ActivateGuardPages: Activated guard page(s) on region 0x%x size 0x%x", TrackedPages->BaseAddress, TrackedPages->RegionSize);
+    //DoOutputDebugString("ActivateGuardPages: Activated guard page(s) on region 0x%x size 0x%x", TrackedRegion->BaseAddress, TrackedRegion->RegionSize);
     
     return TRUE;
 }
 
 //**************************************************************************************
-BOOL ActivateGuardPagesOnProtectedRange(PTRACKEDPAGES TrackedPages)
+BOOL ActivateGuardPagesOnProtectedRange(PTRACKEDREGION TrackedRegion)
 //**************************************************************************************
 {
     DWORD OldProtect;
-    BOOL TrackedPagesFound = FALSE;
-    PTRACKEDPAGES CurrentTrackedPages;
+    BOOL TrackedRegionFound = FALSE;
+    PTRACKEDREGION CurrentTrackedRegion;
     DWORD_PTR AddressOfPage;
     SIZE_T Size;
     PVOID TestAddress;
     
-    if (TrackedPages == NULL)
+    if (TrackedRegion == NULL)
 	{
         DoOutputDebugString("ActivateGuardPagesOnProtectedRange: NULL passed as argument - error.\n");
         return FALSE;
@@ -496,57 +454,57 @@ BOOL ActivateGuardPagesOnProtectedRange(PTRACKEDPAGES TrackedPages)
         return 0;
     }
 
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
     {
-        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: Error - no tracked page list.\n");
+        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: Error - no tracked region list.\n");
         return FALSE;
     }
 
-    CurrentTrackedPages = TrackedPageList;
+    CurrentTrackedRegion = TrackedRegionList;
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
-        //DoOutputDebugString("TrackedPages->BaseAddress 0x%x, CurrentTrackedPages->BaseAddress 0x%x.\n", TrackedPages->BaseAddress, CurrentTrackedPages->BaseAddress);
+        //DoOutputDebugString("TrackedRegion->BaseAddress 0x%x, CurrentTrackedRegion->BaseAddress 0x%x.\n", TrackedRegion->BaseAddress, CurrentTrackedRegion->BaseAddress);
         
         __try
         {
-            TestAddress = CurrentTrackedPages->BaseAddress;
+            TestAddress = CurrentTrackedRegion->BaseAddress;
         }
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("ActivateGuardPagesOnProtectedRange: Exception trying to access BaseAddress from tracked pages at 0x%x", CurrentTrackedPages);
+            DoOutputErrorString("ActivateGuardPagesOnProtectedRange: Exception trying to access BaseAddress from tracked region at 0x%x", CurrentTrackedRegion);
             return FALSE;
         }       
 
-        if (TrackedPages->BaseAddress == CurrentTrackedPages->BaseAddress)
-            TrackedPagesFound = TRUE;
+        if (TrackedRegion->BaseAddress == CurrentTrackedRegion->BaseAddress)
+            TrackedRegionFound = TRUE;
 
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
    
-    if (TrackedPagesFound == FALSE)
+    if (!TrackedRegionFound)
     {
-        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: failed to locate tracked page(s) in tracked page list.\n");
+        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: failed to locate tracked region(s) in tracked region list.\n");
         return FALSE;
     }
 
-    if (!TrackedPages->ProtectAddress || !TrackedPages->RegionSize)
+    if (!TrackedRegion->ProtectAddress || !TrackedRegion->RegionSize)
     {
-        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: Protect address or size zero: 0x%x, 0x%x.\n", TrackedPages->ProtectAddress, TrackedPages->RegionSize);
+        DoOutputDebugString("ActivateGuardPagesOnProtectedRange: Protect address or size zero: 0x%x, 0x%x.\n", TrackedRegion->ProtectAddress, TrackedRegion->RegionSize);
         return FALSE;
     }
 
-    if (!VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    if (!VirtualQuery(TrackedRegion->BaseAddress, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
-        DoOutputErrorString("ActivateGuardPagesOnProtectedRange: unable to query memory region 0x%x", TrackedPages->BaseAddress);
+        DoOutputErrorString("ActivateGuardPagesOnProtectedRange: unable to query memory region 0x%x", TrackedRegion->BaseAddress);
         return FALSE;
     }
     
-    AddressOfPage = ((DWORD_PTR)TrackedPages->ProtectAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize; 
+    AddressOfPage = ((DWORD_PTR)TrackedRegion->ProtectAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize; 
     
-    Size = (BYTE*)TrackedPages->ProtectAddress + TrackedPages->RegionSize - (BYTE*)AddressOfPage;
+    Size = (BYTE*)TrackedRegion->ProtectAddress + TrackedRegion->RegionSize - (BYTE*)AddressOfPage;
     
-    if (!VirtualProtect((LPVOID)AddressOfPage, Size, TrackedPages->Protect | PAGE_GUARD, &OldProtect))
+    if (!VirtualProtect((LPVOID)AddressOfPage, Size, TrackedRegion->Protect | PAGE_GUARD, &OldProtect))
     {
         DoOutputErrorString("ActivateGuardPagesOnProtectedRange: failed to activate guard page(s) on region 0x%x size 0x%x", AddressOfPage, Size);
         return FALSE;
@@ -556,91 +514,91 @@ BOOL ActivateGuardPagesOnProtectedRange(PTRACKEDPAGES TrackedPages)
 }
 
 //**************************************************************************************
-BOOL DeactivateGuardPages(PTRACKEDPAGES TrackedPages)
+BOOL DeactivateGuardPages(PTRACKEDREGION TrackedRegion)
 //**************************************************************************************
 {
     DWORD OldProtect;
     SIZE_T MatchingRegionSize;
-    BOOL TrackedPagesFound = FALSE;
-    PTRACKEDPAGES CurrentTrackedPages = TrackedPageList;
+    BOOL TrackedRegionFound = FALSE;
+    PTRACKEDREGION CurrentTrackedRegion = TrackedRegionList;
     PVOID TestAddress;
     
-    if (TrackedPages == NULL)
+    if (TrackedRegion == NULL)
 	{
         DoOutputDebugString("DeactivateGuardPages: NULL passed as argument - error.\n");
         return FALSE;
 	}   
 
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
     {
-        DoOutputDebugString("DeactivateGuardPages: Error - no tracked page list.\n");
+        DoOutputDebugString("DeactivateGuardPages: Error - no tracked region list.\n");
         return FALSE;
     }
     
-    DoOutputDebugString("DeactivateGuardPages: DEBUG - tracked page list 0x%x, BaseAddress 0x%x.\n", CurrentTrackedPages, CurrentTrackedPages->BaseAddress);
+    //DoOutputDebugString("DeactivateGuardPages: DEBUG - tracked region list 0x%x, BaseAddress 0x%x.\n", CurrentTrackedRegion, CurrentTrackedRegion->BaseAddress);
 
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
         __try
         {
-            TestAddress = CurrentTrackedPages->BaseAddress;
+            TestAddress = CurrentTrackedRegion->BaseAddress;
         }
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("DeactivateGuardPages: Exception trying to access BaseAddres from tracked pages at 0x%x", CurrentTrackedPages);
+            DoOutputErrorString("DeactivateGuardPages: Exception trying to access BaseAddres from tracked region at 0x%x", CurrentTrackedRegion);
             return FALSE;
         }       
 
-        if (TrackedPages->BaseAddress == CurrentTrackedPages->BaseAddress)
-            TrackedPagesFound = TRUE;
+        if (TrackedRegion->BaseAddress == CurrentTrackedRegion->BaseAddress)
+            TrackedRegionFound = TRUE;
 
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
    
-    if (TrackedPagesFound == FALSE)
+    if (!TrackedRegionFound)
     {
-        DoOutputDebugString("DeactivateGuardPages: failed to locate tracked page(s) in tracked page list.\n");
+        DoOutputDebugString("DeactivateGuardPages: failed to locate tracked region(s) in tracked region list.\n");
         return FALSE;
     }
 
-    MatchingRegionSize = VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION));
+    MatchingRegionSize = VirtualQuery(TrackedRegion->BaseAddress, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION));
     
     if (!MatchingRegionSize)
     {
-        DoOutputErrorString("DeactivateGuardPages: failed to query tracked page(s) status in region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        DoOutputErrorString("DeactivateGuardPages: failed to query tracked region(s) status in region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
         return FALSE;
     }
     
-    if (MatchingRegionSize == TrackedPages->RegionSize && !(TrackedPages->MemInfo.Protect & PAGE_GUARD))
+    if (MatchingRegionSize == TrackedRegion->RegionSize && !(TrackedRegion->MemInfo.Protect & PAGE_GUARD))
     {
-        DoOutputDebugString("DeactivateGuardPages: guard page(s) not set in region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        DoOutputDebugString("DeactivateGuardPages: guard page(s) not set in region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
         return FALSE;
     }
 
-    if (!VirtualProtect(TrackedPages->BaseAddress, TrackedPages->RegionSize, TrackedPages->Protect, &OldProtect))
+    if (!VirtualProtect(TrackedRegion->BaseAddress, TrackedRegion->RegionSize, TrackedRegion->Protect, &OldProtect))
     {
-        DoOutputErrorString("DeactivateGuardPages: failed to deactivate guard page(s) on region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+        DoOutputErrorString("DeactivateGuardPages: failed to deactivate guard page(s) on region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
         return FALSE;
     }
     
-    DoOutputDebugString("DeactivateGuardPages: DEBUG: Deactivated guard page(s) on region 0x%x-0x%x", TrackedPages->BaseAddress, (DWORD_PTR)TrackedPages->BaseAddress + TrackedPages->RegionSize);
+    DoOutputDebugString("DeactivateGuardPages: DEBUG: Deactivated guard page(s) on region 0x%x-0x%x", TrackedRegion->BaseAddress, (DWORD_PTR)TrackedRegion->BaseAddress + TrackedRegion->RegionSize);
     
     return TRUE;
 }
 
 //**************************************************************************************
-BOOL ActivateSurroundingGuardPages(PTRACKEDPAGES TrackedPages)
+BOOL ActivateSurroundingGuardPages(PTRACKEDREGION TrackedRegion)
 //**************************************************************************************
 {
     DWORD OldProtect, RetVal;
 	DWORD_PTR AddressOfPage, PagePointer;
-    BOOL TrackedPagesFound = FALSE;
-    PTRACKEDPAGES CurrentTrackedPages = TrackedPageList;
+    BOOL TrackedRegionFound = FALSE;
+    PTRACKEDREGION CurrentTrackedRegion = TrackedRegionList;
     PVOID TestAddress;
     
-    if (TrackedPageList == NULL)
+    if (TrackedRegionList == NULL)
     {  
-        DoOutputDebugString("ActivateSurroundingGuardPages: Error - TrackedPageList NULL.\n");
+        DoOutputDebugString("ActivateSurroundingGuardPages: Error - TrackedRegionList NULL.\n");
         return 0;
     }
     
@@ -653,68 +611,68 @@ BOOL ActivateSurroundingGuardPages(PTRACKEDPAGES TrackedPages)
         return 0;
     }
     
-	while (CurrentTrackedPages)
+	while (CurrentTrackedRegion)
 	{
         __try
         {
-            TestAddress = CurrentTrackedPages->BaseAddress;
+            TestAddress = CurrentTrackedRegion->BaseAddress;
         }
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("ActivateSurroundingGuardPages: Exception trying to access BaseAddres from tracked pages at 0x%x", CurrentTrackedPages);
+            DoOutputErrorString("ActivateSurroundingGuardPages: Exception trying to access BaseAddres from tracked region at 0x%x", CurrentTrackedRegion);
             return FALSE;
         }       
 
-        if (TrackedPages->BaseAddress == CurrentTrackedPages->BaseAddress)
-            TrackedPagesFound = TRUE;
+        if (TrackedRegion->BaseAddress == CurrentTrackedRegion->BaseAddress)
+            TrackedRegionFound = TRUE;
 
-        CurrentTrackedPages = CurrentTrackedPages->NextTrackedPages;
+        CurrentTrackedRegion = CurrentTrackedRegion->NextTrackedRegion;
 	}
    
-    if (TrackedPagesFound == FALSE)
+    if (!TrackedRegionFound)
     {
-        DoOutputDebugString("ActivateSurroundingGuardPages: Failed to locate tracked page(s) in tracked page list.\n");
+        DoOutputDebugString("ActivateSurroundingGuardPages: Failed to locate tracked region(s) in tracked region list.\n");
         return FALSE;
     }
 
-    if (!TrackedPages->LastAccessAddress)
+    if (!TrackedRegion->LastAccessAddress)
     {  
         DoOutputDebugString("ActivateSurroundingGuardPages: Error - Last access address not set.\n");
         return 0;
     }
 
-    if ((DWORD_PTR)TrackedPages->LastAccessAddress < (DWORD_PTR)TrackedPages->BaseAddress || (DWORD_PTR)TrackedPages->LastAccessAddress >= ((DWORD_PTR)TrackedPages->BaseAddress + (DWORD_PTR)TrackedPages->RegionSize))
+    if ((DWORD_PTR)TrackedRegion->LastAccessAddress < (DWORD_PTR)TrackedRegion->BaseAddress || (DWORD_PTR)TrackedRegion->LastAccessAddress >= ((DWORD_PTR)TrackedRegion->BaseAddress + (DWORD_PTR)TrackedRegion->RegionSize))
     {
-        DoOutputDebugString("ActivateSurroundingGuardPages: Last access address 0x%x not within tracked pages at 0x%x.\n", TrackedPages->LastAccessAddress, TrackedPages->BaseAddress);
+        DoOutputDebugString("ActivateSurroundingGuardPages: Last access address 0x%x not within tracked region at 0x%x.\n", TrackedRegion->LastAccessAddress, TrackedRegion->BaseAddress);
         return FALSE;
     }
     
-    AddressOfPage = ((DWORD_PTR)TrackedPages->LastAccessAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;        
+    AddressOfPage = ((DWORD_PTR)TrackedRegion->LastAccessAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize;        
     
-    if (!VirtualQuery(TrackedPages->BaseAddress, &TrackedPages->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    if (!VirtualQuery(TrackedRegion->BaseAddress, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
     {
-        DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%x", TrackedPages->BaseAddress);
+        DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%x", TrackedRegion->BaseAddress);
         return FALSE;
     }
     
     for 
     (
-        PagePointer = ((DWORD_PTR)TrackedPages->BaseAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize; 
-        (BYTE*)PagePointer + SystemInfo.dwPageSize < (BYTE*)TrackedPages->BaseAddress + TrackedPages->RegionSize;
+        PagePointer = ((DWORD_PTR)TrackedRegion->BaseAddress/SystemInfo.dwPageSize)*SystemInfo.dwPageSize; 
+        (BYTE*)PagePointer + SystemInfo.dwPageSize < (BYTE*)TrackedRegion->BaseAddress + TrackedRegion->RegionSize;
         PagePointer += SystemInfo.dwPageSize
     )
     {
         // We skip the initial page if a switch to breakpoints has occured
-        if (PagePointer == (DWORD_PTR)TrackedPages->BaseAddress && TrackedPages->BreakpointsSet)
+        if (PagePointer == (DWORD_PTR)TrackedRegion->BaseAddress && TrackedRegion->BreakpointsSet)
             PagePointer += SystemInfo.dwPageSize;
         
         if (PagePointer != AddressOfPage)
         {
-            RetVal = VirtualProtect((LPVOID)PagePointer, SystemInfo.dwPageSize, TrackedPages->Protect | PAGE_GUARD, &OldProtect);
+            RetVal = VirtualProtect((LPVOID)PagePointer, SystemInfo.dwPageSize, TrackedRegion->Protect | PAGE_GUARD, &OldProtect);
             
             if (!RetVal)
             {
-                DoOutputDebugString("ActivateSurroundingGuardPages: Failed to activate page guard on tracked page at 0x%x.\n", PagePointer);
+                DoOutputDebugString("ActivateSurroundingGuardPages: Failed to activate page guard on tracked region at 0x%x.\n", PagePointer);
                 return FALSE;
             }
         }
@@ -737,6 +695,27 @@ PTHREADBREAKPOINTS GetThreadBreakpoints(DWORD ThreadId)
         
         if (CurrentThreadId == ThreadId)
             return CurrentThreadBreakpoint;
+		else
+            CurrentThreadBreakpoint = CurrentThreadBreakpoint->NextThreadBreakpoints;
+	}
+    
+	return NULL;
+}
+
+//**************************************************************************************
+HANDLE GetThreadHandle(DWORD ThreadId)
+//**************************************************************************************
+{
+    DWORD CurrentThreadId;  
+	
+    PTHREADBREAKPOINTS CurrentThreadBreakpoint = MainThreadBreakpointList;
+
+	while (CurrentThreadBreakpoint)
+	{
+		CurrentThreadId = MyGetThreadId(CurrentThreadBreakpoint->ThreadHandle);
+        
+        if (CurrentThreadId == ThreadId)
+            return CurrentThreadBreakpoint->ThreadHandle;
 		else
             CurrentThreadBreakpoint = CurrentThreadBreakpoint->NextThreadBreakpoints;
 	}
@@ -840,6 +819,54 @@ PTHREADBREAKPOINTS CreateThreadBreakpoints(DWORD ThreadId)
 }
 
 //**************************************************************************************
+BOOL InitNewThreadBreakpoints(DWORD ThreadId)
+//**************************************************************************************
+{
+    //DoOutputDebugString("InitNewThreadBreakpoints: Initialising breakpoints for thread %d.\n", ThreadId);
+    //return TRUE;
+    PTHREADBREAKPOINTS NewThreadBreakpoints;
+    
+    if (MainThreadBreakpointList == NULL)
+    {
+		DoOutputDebugString("InitNewThreadBreakpoints: Failed to create thread breakpoints struct.\n");
+		return FALSE;        
+    }
+    
+    NewThreadBreakpoints = CreateThreadBreakpoints(ThreadId);
+    
+	if (NewThreadBreakpoints == NULL)
+	{
+		DoOutputDebugString("InitNewThreadBreakpoints: Cannot create new thread breakpoints.\n");
+		return FALSE;
+	}
+    
+    if (NewThreadBreakpoints->ThreadHandle == NULL)
+    {
+		DoOutputDebugString("InitNewThreadBreakpoints error: main thread handle not set.\n");
+		return FALSE;        
+    }
+        
+    for (unsigned int Register = 0; Register < NUMBER_OF_DEBUG_REGISTERS; Register++)
+    {
+        if (!MainThreadBreakpointList->BreakpointInfo[Register].Address)
+            continue;
+    
+        NewThreadBreakpoints->BreakpointInfo[Register] = MainThreadBreakpointList->BreakpointInfo[Register];
+        
+        if (!NewThreadBreakpoints->BreakpointInfo[Register].Address)
+            DoOutputDebugString("InitNewThreadBreakpoints error: failed to copy the bleeding breakpoint struct!\n");
+
+        if (NewThreadBreakpoints->BreakpointInfo[Register].Address && !SetThreadBreakpoint(ThreadId, Register, NewThreadBreakpoints->BreakpointInfo[Register].Size, NewThreadBreakpoints->BreakpointInfo[Register].Address, NewThreadBreakpoints->BreakpointInfo[Register].Type, NewThreadBreakpoints->BreakpointInfo[Register].Callback))
+        {
+            DoOutputDebugString("InitNewThreadBreakpoints error: failed to set breakpoint %d for new thread %d.\n", Register, ThreadId);
+            return FALSE;
+        }
+    }
+    
+    return TRUE;
+}
+
+//**************************************************************************************
 BOOL GetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register)
 //**************************************************************************************
 {
@@ -887,7 +914,7 @@ BOOL ContextGetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register)
  
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("ContextGetNextAvailableBreakpoint: Creating new thread breakpoints for thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextGetNextAvailableBreakpoint: Creating new thread breakpoints for thread %d.\n", GetCurrentThreadId());
 		CurrentThreadBreakpoint = CreateThreadBreakpoints(GetCurrentThreadId());
 	}
 	
@@ -954,10 +981,10 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
 	BREAKPOINT_HANDLER Handler;
 	unsigned int bp;
-    char* DllName;
-    unsigned int DllRVA;
-	PTRACKEDPAGES TrackedPages;
+	PTRACKEDREGION TrackedRegion;
     DWORD OldProtect;
+    //char* DllName;
+    //unsigned int DllRVA;
 	
     // Hardware breakpoints generate EXCEPTION_SINGLE_STEP rather than EXCEPTION_BREAKPOINT
     if (ExceptionInfo->ExceptionRecord->ExceptionCode==EXCEPTION_SINGLE_STEP)
@@ -973,8 +1000,8 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
 			DoOutputDebugString("CAPEExceptionFilter: Can't get thread breakpoints - FATAL.\n");
 			return EXCEPTION_CONTINUE_SEARCH;
 		}		
-        // Test Dr6 to see if this is a breakpoint
 
+        // Test Dr6 to see if this is a breakpoint
         BreakpointFlag = FALSE;
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
 		{
@@ -985,7 +1012,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
         }
         
         // If not it's a single-step
-        if (BreakpointFlag == FALSE)
+        if (!BreakpointFlag)
         {            
             if (SingleStepHandler)
                 SingleStepHandler(ExceptionInfo);
@@ -1012,7 +1039,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
             DoOutputDebugString("CAPEExceptionFilter: Anomaly detected: Trap index set on non-single-step: %d\n", TrapIndex);
         }
         
-        DoOutputDebugString("Entering CAPEExceptionFilter: breakpoint hit: 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
+        DoOutputDebugString("CAPEExceptionFilter: breakpoint hit by instruction at 0x%p\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
         
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
 		{
@@ -1046,7 +1073,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
                         {
                             DoOutputDebugString("CAPEExceptionFilter: Reinstated BP_READWRITE on breakpoint %d (WoW64 workaround)\n", pBreakpointInfo->Register);
                             
-                            ContextSetBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
+                            ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
                         }
                         else
                         {
@@ -1060,7 +1087,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
                         {
                             DoOutputDebugString("CAPEExceptionFilter: Reinstated BP_READWRITE on breakpoint %d (WoW64 workaround)\n", pBreakpointInfo->Register);
                             
-                            ContextSetBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
+                            ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
                         }
                         else
                         {
@@ -1074,7 +1101,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
                         {
                             DoOutputDebugString("CAPEExceptionFilter: Reinstated BP_READWRITE on stack breakpoint %d (WoW64 workaround)\n", pBreakpointInfo->Register);
                             
-                            ContextSetBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
+                            ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
                         }
                         else
                         {
@@ -1088,7 +1115,7 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
                         {
                             DoOutputDebugString("CAPEExceptionFilter: Reinstated BP_READWRITE on breakpoint %d (WoW64 workaround)\n", pBreakpointInfo->Register);
                             
-                            ContextSetBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
+                            ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, pBreakpointInfo->Size, (BYTE*)pBreakpointInfo->Address, pBreakpointInfo->Type, pBreakpointInfo->Callback);
                         }
                         else
                         {
@@ -1125,13 +1152,13 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
 		
 		//DoOutputDebugString("Entering CAPEExceptionFilter: guarded page access at 0x%x by 0x%x\n", ExceptionInfo->ExceptionRecord->ExceptionInformation[1], ExceptionInfo->ExceptionRecord->ExceptionAddress);
         
-		if (TrackedPages = GetTrackedPages((PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1]))
+		if (TrackedRegion = GetTrackedRegion((PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1]))
         {
 			if (is_address_in_ntdll((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress))
 			{
-				if (!VirtualProtect((PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1], 1, TrackedPages->Protect | PAGE_GUARD, &OldProtect))
+				if (!VirtualProtect((PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[1], 1, TrackedRegion->Protect | PAGE_GUARD, &OldProtect))
 				{
-					DoOutputDebugString("CAPEExceptionFilter: Failed to re-activate page guard on tracked page around 0x%x touched by ntdll.\n", ExceptionInfo->ExceptionRecord->ExceptionInformation[1]);
+					DoOutputDebugString("CAPEExceptionFilter: Failed to re-activate page guard on tracked region around 0x%x touched by ntdll.\n", ExceptionInfo->ExceptionRecord->ExceptionInformation[1]);
 				}
             
 				return EXCEPTION_CONTINUE_EXECUTION;
@@ -1179,25 +1206,25 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
     else if (VECTORED_HANDLER && SampleVectoredHandler)
     {        
         // As it's not a bp and the sample has registered its own handler
-        DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's vectored handler.\n");
+        //DoOutputDebugString("CAPEExceptionFilter: Non-breakpoint exception caught, passing to sample's vectored handler.\n");
         SampleVectoredHandler(ExceptionInfo);
     }
     
     if ((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size))
     {
         // This is a CAPE (or Cuckoo) exception
-        DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at RVA 0x%x in cuckoomon caught accessing 0x%x (expected in memory scans), passing to next handler.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, (BYTE*)ExceptionInfo->ExceptionRecord->ExceptionAddress - g_our_dll_base, ExceptionInfo->ExceptionRecord->ExceptionInformation[1]);
+        DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at RVA 0x%x in capemon caught accessing 0x%x (expected in memory scans), passing to next handler.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, (BYTE*)ExceptionInfo->ExceptionRecord->ExceptionAddress - g_our_dll_base, ExceptionInfo->ExceptionRecord->ExceptionInformation[1]);
         return EXCEPTION_CONTINUE_SEARCH;
     }
     
     // Some other exception occurred. Pass it to next handler.
-    DllRVA = 0;
-    if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
-        DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
-    else
-        DllName = "unknown";
-        
-    DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
+    //DllRVA = 0;
+    //if (ExceptionInfo->ExceptionRecord->ExceptionAddress)
+    //    DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress, &DllRVA);
+    //else
+    //    DllName = "unknown";
+    //    
+    //DoOutputDebugString("CAPEExceptionFilter: Exception 0x%x caught at 0x%x accessing 0x%x (RVA 0x%x in %s) passing.\n", ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress, ExceptionInfo->ExceptionRecord->ExceptionInformation[1], DllRVA, DllName);
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -1297,13 +1324,13 @@ BOOL ContextSetDebugRegister
  
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("ContextSetDebugRegister: No breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextSetDebugRegister: No breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
 	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ContextSetDebugRegister: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextSetDebugRegister: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -1335,11 +1362,11 @@ BOOL SetDebugRegister
 	DWORD	Length;
     CONTEXT	Context;
 
-    PDWORD_PTR  Dr0 = &Context.Dr0;
-    PDWORD_PTR  Dr1 = &Context.Dr1;
-    PDWORD_PTR  Dr2 = &Context.Dr2;
-    PDWORD_PTR  Dr3 = &Context.Dr3;
-    PDR7    Dr7 = (PDR7)&(Context.Dr7);
+    PDWORD_PTR Dr0 = &Context.Dr0;
+    PDWORD_PTR Dr1 = &Context.Dr1;
+    PDWORD_PTR Dr2 = &Context.Dr2;
+    PDWORD_PTR Dr3 = &Context.Dr3;
+    PDR7 Dr7 = (PDR7)&(Context.Dr7);
 
     if ((unsigned int)Type > 3)
     {
@@ -1371,7 +1398,7 @@ BOOL SetDebugRegister
     
     if (!GetThreadContext(hThread, &Context))
     {
-        DoOutputErrorString("SetDebugRegister: GetThreadContext failed");
+        DoOutputErrorString("SetDebugRegister: GetThreadContext failed (thread handle 0x%x)", hThread);
         return FALSE;
     }
 
@@ -1425,7 +1452,7 @@ BOOL SetDebugRegister
         DoOutputErrorString("SetDebugRegister: SetThreadContext failed");
         return FALSE;
     }
-        
+    
 	return TRUE;
 }
 
@@ -1466,7 +1493,7 @@ BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext)
     
     if (!hThread && !pContext)
     {
-        DoOutputDebugString("CheckDebugRegisters - reqruied arguments missing.\n");
+        DoOutputDebugString("CheckDebugRegisters - required arguments missing.\n");
         return FALSE;
     }
 
@@ -1505,7 +1532,7 @@ BOOL ContextClearAllBreakpoints(PCONTEXT Context)
 
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("ContextClearAllBreakpoints: No breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextClearAllBreakpoints: No breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
     
@@ -1528,7 +1555,7 @@ BOOL ContextClearAllBreakpoints(PCONTEXT Context)
 #ifdef _WIN64    
 	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ContextClearAllBreakpoints: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextClearAllBreakpoints: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -1547,59 +1574,63 @@ BOOL ContextClearAllBreakpoints(PCONTEXT Context)
 }
 
 //**************************************************************************************
-BOOL ClearAllBreakpoints(DWORD ThreadId)
+BOOL ClearAllBreakpoints()
 //**************************************************************************************
 {
     CONTEXT	Context;
 	PTHREADBREAKPOINTS CurrentThreadBreakpoint;    
-    unsigned int Register;
-    DWORD CurrentThreadId;  
+    unsigned int Register;  
 
     CurrentThreadBreakpoint = MainThreadBreakpointList;
 
 	while (CurrentThreadBreakpoint)
 	{
-		CurrentThreadId = MyGetThreadId(CurrentThreadBreakpoint->ThreadHandle);
-        
-        if (CurrentThreadId == ThreadId)
+        if (!CurrentThreadBreakpoint->ThreadId)
         {
-            for (Register = 0; Register < NUMBER_OF_DEBUG_REGISTERS; Register++)
-            {
-                CurrentThreadBreakpoint->BreakpointInfo[Register].Register = 0;
-                CurrentThreadBreakpoint->BreakpointInfo[Register].Size = 0;
-                CurrentThreadBreakpoint->BreakpointInfo[Register].Address = NULL;
-                CurrentThreadBreakpoint->BreakpointInfo[Register].Type = 0;
-                CurrentThreadBreakpoint->BreakpointInfo[Register].Callback = NULL;
-            }
-
-            Context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-
-            if (!GetThreadContext(CurrentThreadBreakpoint->ThreadHandle, &Context))
-            {
-            	DoOutputDebugString("ClearAllBreakpoints: Error getting thread context (thread %d).\n", CurrentThreadId);
-                return FALSE;
-            }
-
-            Context.Dr0 = 0;
-            Context.Dr1 = 0;
-            Context.Dr2 = 0;
-            Context.Dr3 = 0;
-            Context.Dr6 = 0;
-            Context.Dr7 = 0;
-            
-            if (!SetThreadContext(CurrentThreadBreakpoint->ThreadHandle, &Context))
-            {
-            	DoOutputDebugString("ClearAllBreakpoints: Error setting thread context (thread %d).\n", CurrentThreadId);
-                return FALSE;
-            }
-            
-            return TRUE;
+            DoOutputDebugString("ClearAllBreakpoints: Error: no thread id for thread breakpoints 0x%x.\n", CurrentThreadBreakpoint);
+            return FALSE;
         }
-		else
-            CurrentThreadBreakpoint = CurrentThreadBreakpoint->NextThreadBreakpoints;
+
+        if (!CurrentThreadBreakpoint->ThreadHandle)
+        {
+            DoOutputDebugString("ClearAllBreakpoints: Error no thread handle for thread %d.\n", CurrentThreadBreakpoint->ThreadId);
+            return FALSE;
+        }
+
+        for (Register = 0; Register < NUMBER_OF_DEBUG_REGISTERS; Register++)
+        {
+            CurrentThreadBreakpoint->BreakpointInfo[Register].Register = 0;
+            CurrentThreadBreakpoint->BreakpointInfo[Register].Size = 0;
+            CurrentThreadBreakpoint->BreakpointInfo[Register].Address = NULL;
+            CurrentThreadBreakpoint->BreakpointInfo[Register].Type = 0;
+            CurrentThreadBreakpoint->BreakpointInfo[Register].Callback = NULL;
+        }
+
+        Context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+
+        if (!GetThreadContext(CurrentThreadBreakpoint->ThreadHandle, &Context))
+        {
+            DoOutputDebugString("ClearAllBreakpoints: Error getting thread context (thread %d).\n", CurrentThreadBreakpoint->ThreadId);
+            return FALSE;
+        }
+
+        Context.Dr0 = 0;
+        Context.Dr1 = 0;
+        Context.Dr2 = 0;
+        Context.Dr3 = 0;
+        Context.Dr6 = 0;
+        Context.Dr7 = 0;
+        
+        if (!SetThreadContext(CurrentThreadBreakpoint->ThreadHandle, &Context))
+        {
+            DoOutputDebugString("ClearAllBreakpoints: Error setting thread context (thread %d).\n", CurrentThreadBreakpoint->ThreadId);
+            return FALSE;
+        }
+        
+        CurrentThreadBreakpoint = CurrentThreadBreakpoint->NextThreadBreakpoints;
 	}
     
-	return FALSE;
+	return TRUE;
 }
 
 //**************************************************************************************
@@ -1618,7 +1649,7 @@ BOOL ContextClearBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo)
     Dr3 = &(Context->Dr3);
     Dr7 = (PDR7)&(Context->Dr7);
     
-	DoOutputDebugString("ContextClearBreakpoint: Clearing Context breakpoint %i\n", pBreakpointInfo->Register);
+	DoOutputDebugString("ContextClearBreakpoint: Clearing breakpoint %i\n", pBreakpointInfo->Register);
 	
     if (pBreakpointInfo->Register == 0)
     {
@@ -1659,7 +1690,7 @@ BOOL ContextClearBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointInfo)
 #ifdef _WIN64    
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ContextClearBreakpoint: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextClearBreakpoint: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -1764,9 +1795,11 @@ BOOL ClearSingleStepMode(PCONTEXT Context)
 	if (Context == NULL)
         return FALSE;
 
-    // Clear the trap flag
+    // Clear the trap flag & index
     Context->EFlags &= ~FL_TF;
 
+    TrapIndex = 0;
+    
     SingleStepHandler = NULL;
     
     return TRUE;
@@ -1812,7 +1845,7 @@ BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointIn
 #ifdef _WIN64    
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("StepOverExecutionBreakpoint: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("StepOverExecutionBreakpoint: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -1869,7 +1902,7 @@ BOOL ResumeAfterExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpoin
 #ifdef _WIN64    
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ResumeAfterExecutionBreakpoint: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ResumeAfterExecutionBreakpoint: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -2045,8 +2078,55 @@ int CheckDebugRegister(HANDLE hThread, int Register)
 	return -1;
 }
 
+
 //**************************************************************************************
-BOOL ContextSetBreakpoint
+BOOL ContextSetBreakpoint(PTHREADBREAKPOINTS ReferenceThreadBreakpoint)
+//**************************************************************************************
+{
+    PTHREADBREAKPOINTS CurrentThreadBreakpoint;
+    
+    if (ReferenceThreadBreakpoint == NULL)
+    {
+		DoOutputDebugString("ContextSetBreakpoint: ReferenceThreadBreakpoint NULL.\n");
+		return FALSE;        
+    }
+	
+    if (MainThreadBreakpointList == NULL)
+    {
+		DoOutputDebugString("ContextSetBreakpoint: MainThreadBreakpointList NULL.\n");
+		return FALSE;        
+    }
+	
+    CurrentThreadBreakpoint = MainThreadBreakpointList;
+
+	while (CurrentThreadBreakpoint)
+	{
+        if (CurrentThreadBreakpoint != ReferenceThreadBreakpoint)
+        {
+            for (unsigned int i = 0; i < NUMBER_OF_DEBUG_REGISTERS; i++)
+            {
+                if (CurrentThreadBreakpoint->ThreadHandle)
+                    CurrentThreadBreakpoint->BreakpointInfo[i].ThreadHandle  = CurrentThreadBreakpoint->ThreadHandle;
+                CurrentThreadBreakpoint->BreakpointInfo[i].Register      = ReferenceThreadBreakpoint->BreakpointInfo[i].Register;
+                CurrentThreadBreakpoint->BreakpointInfo[i].Size          = ReferenceThreadBreakpoint->BreakpointInfo[i].Size;
+                CurrentThreadBreakpoint->BreakpointInfo[i].Address       = ReferenceThreadBreakpoint->BreakpointInfo[i].Address;
+                CurrentThreadBreakpoint->BreakpointInfo[i].Type          = ReferenceThreadBreakpoint->BreakpointInfo[i].Type;
+                CurrentThreadBreakpoint->BreakpointInfo[i].Callback      = ReferenceThreadBreakpoint->BreakpointInfo[i].Callback;
+                
+                if (CurrentThreadBreakpoint->BreakpointInfo[i].Address)
+                    SetThreadBreakpoint(CurrentThreadBreakpoint->ThreadId, CurrentThreadBreakpoint->BreakpointInfo[i].Register, CurrentThreadBreakpoint->BreakpointInfo[i].Size, CurrentThreadBreakpoint->BreakpointInfo[i].Address, CurrentThreadBreakpoint->BreakpointInfo[i].Type, CurrentThreadBreakpoint->BreakpointInfo[i].Callback);
+            }
+        }
+        
+        CurrentThreadBreakpoint = CurrentThreadBreakpoint->NextThreadBreakpoints;
+	}
+    
+	return TRUE;
+}
+
+
+//**************************************************************************************
+BOOL ContextSetThreadBreakpoint
 //**************************************************************************************
 (
     PCONTEXT	Context,
@@ -2061,23 +2141,23 @@ BOOL ContextSetBreakpoint
     
     if (Register > 3 || Register < 0)
     {
-        DoOutputDebugString("ContextSetBreakpoint: Error - register value %d, can only have value 0-3.\n", Register);
+        DoOutputDebugString("ContextSetThreadBreakpoint: Error - register value %d, can only have value 0-3.\n", Register);
         return FALSE;
     }
     
-    if (ContextSetDebugRegister(Context, Register, Size, Address, Type) == FALSE)
+    if (!ContextSetDebugRegister(Context, Register, Size, Address, Type))
 	{
-		DoOutputDebugString("ContextSetBreakpoint: Call to ContextSetDebugRegister failed.\n");
+		DoOutputDebugString("ContextSetThreadBreakpoint: Call to ContextSetDebugRegister failed.\n");
 	}
 	else
 	{
-		DoOutputDebugString("ContextSetBreakpoint: Call to ContextSetDebugRegister succeeded.\n");
+		DoOutputDebugString("ContextSetThreadBreakpoint: Call to ContextSetDebugRegister succeeded.\n");
           
         CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
         
         if (CurrentThreadBreakpoint == NULL)
         {
-            DoOutputDebugString("ContextSetBreakpoint: Error - Failed to acquire thread breakpoints.\n");
+            DoOutputDebugString("ContextSetThreadBreakpoint: Error - Failed to acquire thread breakpoints.\n");
             return FALSE;
         }
         
@@ -2092,7 +2172,7 @@ BOOL ContextSetBreakpoint
 #ifdef _WIN64    
 	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("ContextSetBreakpoint: No thread handle found in breakpoints found for current thread 0x%x.\n", GetCurrentThreadId());
+		DoOutputDebugString("ContextSetThreadBreakpoint: No thread handle found in breakpoints found for current thread %d.\n", GetCurrentThreadId());
 		return FALSE;
 	}
 
@@ -2100,10 +2180,16 @@ BOOL ContextSetBreakpoint
     
     if (!SetThreadContext(CurrentThreadBreakpoint->ThreadHandle, Context))
     {
-        DoOutputErrorString("ContextSetBreakpoint: SetThreadContext failed");
+        DoOutputErrorString("ContextSetThreadBreakpoint: SetThreadContext failed");
         return FALSE;
     }
 #endif
+
+    //if (!ContextSetBreakpoint(CurrentThreadBreakpoint))
+    //{
+    //    DoOutputErrorString("ContextSetThreadBreakpoint: ContextSetBreakpoint failed");
+    //    return FALSE;
+    //}
 
     return TRUE;
 }
@@ -2120,13 +2206,28 @@ BOOL ContextSetNextAvailableBreakpoint
 	PVOID	        Callback
 )
 {
-    if (ContextGetNextAvailableBreakpoint(Context, Register) == FALSE)
+    if (Register)
     {
-        DoOutputDebugString("ContextSetNextAvailableBreakpoint: ContextGetNextAvailableBreakpoint failed\n");
-        return FALSE;
-    }
+        if (!ContextGetNextAvailableBreakpoint(Context, Register))
+        {
+            DoOutputDebugString("ContextSetNextAvailableBreakpoint: ContextGetNextAvailableBreakpoint failed\n");
+            return FALSE;
+        }
 
-    return ContextSetBreakpoint(Context, *Register, Size, Address, Type, Callback);
+        return ContextSetThreadBreakpoint(Context, *Register, Size, Address, Type, Callback);
+    }
+    else
+    {
+        unsigned int TempRegister;
+        
+        if (!ContextGetNextAvailableBreakpoint(Context, &TempRegister))
+        {
+            DoOutputDebugString("ContextSetNextAvailableBreakpoint: ContextGetNextAvailableBreakpoint failed\n");
+            return FALSE;
+        }
+
+        return ContextSetThreadBreakpoint(Context, TempRegister, Size, Address, Type, Callback);
+    }
 }
 
 //**************************************************************************************
@@ -2168,22 +2269,22 @@ BOOL ContextUpdateCurrentBreakpoint
             {
                 if (bp == 0 && ((DWORD_PTR)pBreakpointInfo->Address == Context->Dr0) && ((DWORD)pBreakpointInfo->Type == ((PDR7)&(Context->Dr7))->RWE0))
                 {
-                    return ContextSetBreakpoint(Context, 0, Size, Address, Type, Callback); 
+                    return ContextSetThreadBreakpoint(Context, 0, Size, Address, Type, Callback); 
                 }                    
 
                 if (bp == 1 && ((DWORD_PTR)pBreakpointInfo->Address == Context->Dr1) && ((DWORD)pBreakpointInfo->Type == ((PDR7)&(Context->Dr7))->RWE1))
                 {
-                    return ContextSetBreakpoint(Context, 1, Size, Address, Type, Callback); 
+                    return ContextSetThreadBreakpoint(Context, 1, Size, Address, Type, Callback); 
                 }                    
 
                 if (bp == 2 && ((DWORD_PTR)pBreakpointInfo->Address == Context->Dr2) && ((DWORD)pBreakpointInfo->Type == ((PDR7)&(Context->Dr7))->RWE2))
                 {
-                    return ContextSetBreakpoint(Context, 2, Size, Address, Type, Callback); 
+                    return ContextSetThreadBreakpoint(Context, 2, Size, Address, Type, Callback); 
                 }                    
 
                 if (bp == 3 && ((DWORD_PTR)pBreakpointInfo->Address == Context->Dr3) && ((DWORD)pBreakpointInfo->Type == ((PDR7)&(Context->Dr7))->RWE3))
                 {
-                    return ContextSetBreakpoint(Context, 3, Size, Address, Type, Callback); 
+                    return ContextSetThreadBreakpoint(Context, 3, Size, Address, Type, Callback); 
                 }                    
             }
         }
@@ -2201,7 +2302,6 @@ BOOL ContextClearCurrentBreakpoint(PCONTEXT Context)
     unsigned int bp;
 
     CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
-
     if (CurrentThreadBreakpoint == NULL)
     {
         DoOutputDebugString("ContextUpdateCurrentBreakpoint: Error - Failed to acquire thread breakpoints.\n");
@@ -2235,28 +2335,21 @@ DWORD WINAPI SetBreakpointThread(LPVOID lpParam)
     DWORD RetVal;
     
     PBREAKPOINTINFO pBreakpointInfo = (PBREAKPOINTINFO)lpParam;
-	 
+	
 	if (SuspendThread(pBreakpointInfo->ThreadHandle) == 0xFFFFFFFF)
-		DoOutputErrorString("SetBreakpointThread: Call to SuspendThread failed");
+		DoOutputErrorString("SetBreakpointThread: Call to SuspendThread failed for thread handle 0x%x", pBreakpointInfo->ThreadHandle);
     
-	if (SetDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
-	{
-		DoOutputErrorString("SetBreakpointThread: Call to SetDebugRegister failed");
-	}
+	if (!SetDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type))
+		DoOutputErrorString("SetBreakpointThread: Call to SetDebugRegister failed for thread handle 0x%x", pBreakpointInfo->ThreadHandle);
 
     RetVal = ResumeThread(pBreakpointInfo->ThreadHandle);
+    
     if (RetVal == -1)
-    {
-        DoOutputErrorString("SetBreakpointThread: ResumeThread failed.\n");
-    }
+        DoOutputErrorString("SetBreakpointThread: ResumeThread failed for thread handle 0x%x", pBreakpointInfo->ThreadHandle);
     else if (RetVal == 0)
-    {
-        DoOutputDebugString("SetBreakpointThread: Error - Sample thread was not suspended.\n");
-    }
+        DoOutputDebugString("SetBreakpointThread: Error - thread with handle 0x%x was not suspended.\n", pBreakpointInfo->ThreadHandle);
     else if (g_config.debug)
-    {
-        DoOutputDebugString("SetBreakpointThread: Sample thread was suspended, now resumed.\n");
-    }
+        DoOutputDebugString("SetBreakpointThread: Sample thread with handle 0x%x was suspended, now resumed.\n", pBreakpointInfo->ThreadHandle);
 
     return 1; 
 } 
@@ -2271,7 +2364,7 @@ DWORD WINAPI ClearBreakpointThread(LPVOID lpParam)
 	if (SuspendThread(pBreakpointInfo->ThreadHandle) == 0xFFFFFFFF)
 		DoOutputErrorString("ClearBreakpointThread: Call to SuspendThread failed");
 	
-	if (ClearDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
+	if (!ClearDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type))
 	{
 		DoOutputDebugString("ClearBreakpointThread: Call to ClearDebugRegister failed.\n");
 	}
@@ -2312,7 +2405,7 @@ BOOL ClearBreakpointWithoutThread(DWORD ThreadId, int Register)
 
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("ClearBreakpointWithoutThread: Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		DoOutputDebugString("ClearBreakpointWithoutThread: Creating new thread breakpoints for thread %d.\n", ThreadId);
 		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
 	}
 	
@@ -2330,7 +2423,7 @@ BOOL ClearBreakpointWithoutThread(DWORD ThreadId, int Register)
 		return FALSE;
 	}
 
-    if (ClearDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type) == FALSE)
+    if (!ClearDebugRegister(pBreakpointInfo->ThreadHandle, pBreakpointInfo->Register, pBreakpointInfo->Size, pBreakpointInfo->Address, pBreakpointInfo->Type))
 	{
 		DoOutputDebugString("ClearBreakpointWithoutThread: Call to ClearDebugRegister failed.\n");
         return FALSE;
@@ -2371,7 +2464,7 @@ BOOL SetBreakpointWithoutThread
     
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("SetBreakpointWithoutThread: Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		DoOutputDebugString("SetBreakpointWithoutThread: Creating new thread breakpoints for thread %d.\n", ThreadId);
 		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
 	}
 	
@@ -2398,7 +2491,7 @@ BOOL SetBreakpointWithoutThread
 	
     __try
     {
-        RetVal = (SetDebugRegister(pBreakpointInfo->ThreadHandle, Register, Size, Address, Type));
+        RetVal = SetDebugRegister(pBreakpointInfo->ThreadHandle, Register, Size, Address, Type);
     }
     __except(EXCEPTION_EXECUTE_HANDLER)  
     {  
@@ -2413,7 +2506,7 @@ BOOL SetBreakpointWithoutThread
 }
 
 //**************************************************************************************
-BOOL SetBreakpoint
+BOOL SetThreadBreakpoint
 //**************************************************************************************
 (
     DWORD	ThreadId,
@@ -2435,7 +2528,7 @@ BOOL SetBreakpoint
     
     if (Register > 3 || Register < 0)
     {
-        DoOutputDebugString("SetBreakpoint: Error - register value %d, can only have value 0-3.\n", Register);
+        DoOutputDebugString("SetThreadBreakpoint: Error - register value %d, can only have value 0-3.\n", Register);
         return FALSE;
     }  
 	
@@ -2443,13 +2536,13 @@ BOOL SetBreakpoint
 
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("SetBreakpoint: Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		DoOutputDebugString("SetThreadBreakpoint: Creating new thread breakpoints for thread %d.\n", ThreadId);
 		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
 	}
 	
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("SetBreakpoint: Cannot create new thread breakpoints - error.\n");
+		DoOutputDebugString("SetThreadBreakpoint: Cannot create new thread breakpoints - error.\n");
 		return FALSE;
 	}
 
@@ -2457,7 +2550,7 @@ BOOL SetBreakpoint
 	
 	if (CurrentThreadBreakpoint->ThreadHandle == NULL)
 	{
-		DoOutputDebugString("SetBreakpoint: There is no thread handle in the thread breakpoint - Error.\n");
+		DoOutputDebugString("SetThreadBreakpoint: There is no thread handle in the thread breakpoint - Error.\n");
 		return FALSE;
 	}
     	
@@ -2479,76 +2572,136 @@ BOOL SetBreakpoint
         CAPEExceptionFilterHandle = NULL;
     }
 
-    __try  
-    {  
-        hSetBreakpointThread = CreateThread( 
-            NULL,               
-            0,                  
-            SetBreakpointThread,
-            pBreakpointInfo,    
-            0,                  
-            &SetBreakpointThreadId);          
-    }  
+    __try
+    {
+        hSetBreakpointThread = CreateThread(NULL, 0, SetBreakpointThread, pBreakpointInfo, 0, &SetBreakpointThreadId);          
+    }
     __except(EXCEPTION_EXECUTE_HANDLER)  
-    {  
-        DoOutputErrorString("SetBreakpoint: Unable to create SetBreakpointThread thread");
+    {
+        DoOutputErrorString("SetThreadBreakpoint: An exception was raised creating SetBreakpointThread thread");
     }
 
-	if (hSetBreakpointThread) 
+	if (!hSetBreakpointThread)
     {
-        // If this hasn't happened in under a second, we bail
-        // and set without creating a thread
-        RetVal = WaitForSingleObject(hSetBreakpointThread, 1000);
+        DoOutputDebugString("SetThreadBreakpoint: Failed to create SetBreakpointThread thread, falling back to SetBreakpointWithoutThread.\n");
         
-        if (RetVal != WAIT_OBJECT_0)
-        {
-            TerminateThread(hSetBreakpointThread, 0);
-			DoOutputDebugString("SetBreakpoint: SetBreakpointThread timeout, thread killed.\n");
-            
-            RetVal = ResumeThread(CurrentThreadBreakpoint->ThreadHandle);
-            if (RetVal == -1)
-            {
-                DoOutputErrorString("SetBreakpoint: ResumeThread failed. About to set breakpoint without thread.\n");
-            }
-            else if (RetVal == 0)
-            {
-                DoOutputDebugString("SetBreakpoint: Sample thread was not suspended. About to set breakpoint without thread.\n");
-            }
-            else
-            {
-                DoOutputDebugString("SetBreakpoint: Sample thread was suspended, now resumed. About to set breakpoint without thread.\n");
-            }
-            
-            return SetBreakpointWithoutThread(ThreadId, Register, Size, Address, Type, Callback);
-        }   
-        
-        DoOutputDebugString("SetBreakpoint: Set bp %d type %d at address 0x%p, size %d with Callback 0x%x, ThreadHandle = 0x%x.\n", 
-            pBreakpointInfo->Register, 
-            pBreakpointInfo->Type,
-            pBreakpointInfo->Address, 
-            pBreakpointInfo->Size, 
-            pBreakpointInfo->Callback, 
-            pBreakpointInfo->ThreadHandle
-            );
-
-        CloseHandle(hSetBreakpointThread);
-        
-        return TRUE;
-    }
-	else
-    {
         __try
         {
             RetVal = SetBreakpointWithoutThread(ThreadId, Register, Size, Address, Type, Callback);
         }
         __except(EXCEPTION_EXECUTE_HANDLER)  
         {  
-            DoOutputErrorString("SetBreakpoint: Error calling SetBreakpointWithoutThread");
+            DoOutputErrorString("SetThreadBreakpoint: Error calling SetBreakpointWithoutThread");
             return FALSE;
         }
         
         return RetVal;
     }
+    
+    // We wait for the thread to complete - if this hasn't happened
+    // in under a second, we bail and set without creating a thread
+    RetVal = WaitForSingleObject(hSetBreakpointThread, 1000);
+    
+    if (RetVal != WAIT_OBJECT_0)
+    {
+        TerminateThread(hSetBreakpointThread, 0);
+        DoOutputDebugString("SetThreadBreakpoint: SetBreakpointThread timeout, thread killed.\n");
+        
+        RetVal = ResumeThread(CurrentThreadBreakpoint->ThreadHandle);
+        if (RetVal == -1)
+        {
+            DoOutputErrorString("SetThreadBreakpoint: ResumeThread failed. About to set breakpoint without thread.\n");
+        }
+        else if (RetVal == 0)
+        {
+            DoOutputDebugString("SetThreadBreakpoint: Sample thread was not suspended. About to set breakpoint without thread.\n");
+        }
+        else
+        {
+            DoOutputDebugString("SetThreadBreakpoint: Sample thread was suspended, now resumed. About to set breakpoint without thread.\n");
+        }
+        
+        return SetBreakpointWithoutThread(ThreadId, Register, Size, Address, Type, Callback);
+    }   
+    
+    DoOutputDebugString("SetThreadBreakpoint: Set bp %d thread id %d type %d at address 0x%p, size %d with Callback 0x%x.\n", 
+        Register, 
+        ThreadId,
+        Type,
+        Address, 
+        Size, 
+        Callback
+        );
+
+    CloseHandle(hSetBreakpointThread);
+    
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL SetBreakpoint
+//**************************************************************************************
+(
+    int		Register,
+    int		Size,
+    LPVOID	Address,
+    DWORD	Type,
+	PVOID	Callback
+)
+{
+    if (MainThreadBreakpointList == NULL)
+    {
+		DoOutputDebugString("SetBreakpoint: MainThreadBreakpointList NULL.\n");
+		return FALSE;        
+    }
+	
+    PTHREADBREAKPOINTS ThreadBreakpoints = MainThreadBreakpointList;
+
+	while (ThreadBreakpoints)
+	{
+        if (ThreadBreakpoints->ThreadHandle)
+            ThreadBreakpoints->BreakpointInfo[Register].ThreadHandle  = ThreadBreakpoints->ThreadHandle;
+        ThreadBreakpoints->BreakpointInfo[Register].Register      = Register;
+        ThreadBreakpoints->BreakpointInfo[Register].Size          = Size;
+        ThreadBreakpoints->BreakpointInfo[Register].Address       = Address;
+        ThreadBreakpoints->BreakpointInfo[Register].Type          = Type;
+        ThreadBreakpoints->BreakpointInfo[Register].Callback      = Callback;
+        
+		DoOutputDebugString("SetBreakpoint: About to call SetThreadBreakpoint for thread %d.\n", ThreadBreakpoints->ThreadId);
+        
+        SetThreadBreakpoint(ThreadBreakpoints->ThreadId, Register, Size, Address, Type, Callback);
+        
+        ThreadBreakpoints = ThreadBreakpoints->NextThreadBreakpoints;
+	}
+    
+	return TRUE;
+}
+
+//**************************************************************************************
+BOOL SetThreadBreakpoints(PTHREADBREAKPOINTS ThreadBreakpoints)
+//**************************************************************************************
+{
+    if (!ThreadBreakpoints->ThreadId)
+    {
+        DoOutputErrorString("SetThreadBreakpoints: Error - Thread ID missing from ThreadBreakpoints.\n");
+        return FALSE;    
+    }
+
+    for (unsigned int Register = 0; Register < NUMBER_OF_DEBUG_REGISTERS; Register++)
+    {
+        if (!SetThreadBreakpoint
+        (
+            ThreadBreakpoints->ThreadId,
+            ThreadBreakpoints->BreakpointInfo[Register].Register,
+            ThreadBreakpoints->BreakpointInfo[Register].Size,
+            ThreadBreakpoints->BreakpointInfo[Register].Address,
+            ThreadBreakpoints->BreakpointInfo[Register].Type,
+            ThreadBreakpoints->BreakpointInfo[Register].Callback
+        ))        
+            return FALSE;
+    }
+    
+    return TRUE;
 }
 
 //**************************************************************************************
@@ -2658,7 +2811,7 @@ BOOL SetNextAvailableBreakpoint
 
 	if (CurrentThreadBreakpoint == NULL)
 	{
-		DoOutputDebugString("SetNextAvailableBreakpoint: Creating new thread breakpoints for thread 0x%x.\n", ThreadId);
+		DoOutputDebugString("SetNextAvailableBreakpoint: Creating new thread breakpoints for thread %d.\n", ThreadId);
 		CurrentThreadBreakpoint = CreateThreadBreakpoints(ThreadId);
 	}
 	
@@ -2668,13 +2821,13 @@ BOOL SetNextAvailableBreakpoint
 		return FALSE;
 	}
 
-    if (GetNextAvailableBreakpoint(ThreadId, Register) == FALSE)
+    if (!GetNextAvailableBreakpoint(ThreadId, Register))
     {
-        DoOutputDebugString("SetNextAvailableBreakpoint: GetNextAvailableBreakpoint failed\n");
+        DoOutputDebugString("SetNextAvailableBreakpoint: GetNextAvailableBreakpoint failed (breakpoints possibly full).\n");
         return FALSE;
     }
 
-    return SetBreakpoint(ThreadId, *Register, Size, Address, Type, Callback);
+    return SetThreadBreakpoint(ThreadId, *Register, Size, Address, Type, Callback);
 }
 
 //**************************************************************************************
@@ -2705,7 +2858,7 @@ BOOL InitialiseDebugger(void)
 		return FALSE;        
     }
     
-    // Initialise any global variables
+    // Initialise global variables
     ChildProcessId = 0;
     SingleStepHandler = NULL;
     SampleVectoredHandler = NULL;
@@ -2728,6 +2881,9 @@ BOOL InitialiseDebugger(void)
         OriginalExceptionHandler = SetUnhandledExceptionFilter(CAPEExceptionFilter);
         CAPEExceptionFilterHandle = NULL;
     }
+    
+    // Global switch for guard pages
+    GuardPagesDisabled = TRUE;
     
     return TRUE;
 }
@@ -2764,7 +2920,7 @@ __declspec (naked dllexport) void DebuggerInit(void)
 		pushad
         }
 	
-	if (InitialiseDebugger() == FALSE)
+	if (!InitialiseDebugger())
         DoOutputDebugString("Debugger initialisation failure!\n");
 	
 
@@ -2783,14 +2939,14 @@ __declspec (naked dllexport) void DebuggerInit(void)
 #else
 #pragma optimize("", off)
 //**************************************************************************************
-__declspec(dllexport) void DebuggerInit(void)
+void DebuggerInit(void)
 //**************************************************************************************
 {   
     DWORD_PTR StackPointer;
 
     StackPointer = GetNestedStackPointer() - 8; // this offset has been determined experimentally - TODO: tidy
     
-	if (InitialiseDebugger() == FALSE)
+	if (!InitialiseDebugger())
         DoOutputDebugString("Debugger initialisation failure!\n");
 	else
         DoOutputDebugString("Debugger initialised, ESP = 0x%x\n", StackPointer);
@@ -2804,15 +2960,12 @@ __declspec(dllexport) void DebuggerInit(void)
 #pragma optimize("", on)
 #endif
 
-BOOL SendDebuggerMessage(DWORD Input)
+BOOL SendDebuggerMessage(PVOID Input)
 { 
     BOOL fSuccess;
 	DWORD cbReplyBytes, cbWritten; 
-    //struct DEBUGGER_DATA DebuggerData;
-   
-    //memset(&DebuggerData, 0, sizeof(struct DEBUGGER_DATA));
 
-    cbReplyBytes = sizeof(DWORD_PTR);
+    cbReplyBytes = sizeof(PVOID);
     
     if (hCapePipe == NULL)
     {   
