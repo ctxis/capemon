@@ -124,7 +124,7 @@ HOOKDEF_NOTAIL(WINAPI, LdrUnloadDll,
         RoutineProcessDump();
     }
 
-    DoOutputDebugString("DLL unloaded from 0x%p.\n", DllImageBase);
+    //DoOutputDebugString("DLL unloaded from 0x%p.\n", DllImageBase);
 
     return 0;
 }

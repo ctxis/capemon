@@ -28,6 +28,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern DWORD g_tls_hook_index;
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern PVOID GetAllocationBase(PVOID Address);
+extern SIZE_T GetAllocationSize(PVOID Address);
+extern PVOID GetHookCallerBase();
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+BOOL BreakpointsSet;
+
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
 #define TLS_LAST_NTSTATUS_ERROR 0x1250
@@ -57,6 +64,43 @@ static int set_caller_info(void *unused, ULONG_PTR addr)
 		}
 	}
 	return 0;
+}
+
+void base_on_api(hook_t *h)
+{
+	unsigned int i;
+	hook_info_t *hookinfo = hook_info();
+
+	for (i = 0; i < ARRAYSIZE(g_config.base_on_apiname); i++) {
+		if (!g_config.base_on_apiname[i])
+			break;
+		if (!BreakpointsSet && !stricmp(h->funcname, g_config.base_on_apiname[i])) {
+            if (hookinfo->main_caller_retaddr) {
+                BreakpointsSet = SetInitialBreakpoints((PVOID)hookinfo->main_caller_retaddr);
+                if (BreakpointsSet) {
+					DoOutputDebugString("Base-on-API: Breakpoints set.\n");
+                }
+                else
+                    DoOutputDebugString("Base-on-API: Failed to set breakpoints.\n");
+            }
+			else
+				DoOutputDebugString("Base-on-API: No main_caller_retaddr to get caller base.\n");
+            PVOID ImageBase = GetHookCallerBase();
+			if (ImageBase) {
+                BreakpointsSet = SetInitialBreakpoints((PVOID)ImageBase);
+                if (BreakpointsSet) {
+					DoOutputDebugString("Base-on-API: GetHookCallerBase success 0x%p - Breakpoints set.\n", ImageBase);
+                }
+                else
+                    DoOutputDebugString("Base-on-API: Failed to set breakpoints on 0x%p.\n", ImageBase);
+            }
+			else
+				DoOutputDebugString("Base-on-API: GetHookCallerBase fail.\n");
+            return;
+        }
+	}
+
+	return;
 }
 
 int hook_is_excluded(hook_t *h)
@@ -144,6 +188,8 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
+		base_on_api(h);
+        
 		return 1;
 	}
 

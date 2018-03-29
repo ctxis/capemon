@@ -205,13 +205,13 @@ LPVOID GetReturnAddress(hook_info_t *hookinfo)
 }
 
 //**************************************************************************************
-void GetHookCallerBase()
+PVOID GetHookCallerBase()
 //**************************************************************************************
 {
     PVOID ReturnAddress, AllocationBase;
 
     if (CallingModule)
-        return;
+        return NULL;
         
     ReturnAddress = GetReturnAddress(hook_info());    
 
@@ -225,13 +225,13 @@ void GetHookCallerBase()
         if (AllocationBase)
         {
             CallingModule = AllocationBase;
-            // Base-dependent breakpoints can be activated now
+            return CallingModule;
         }
     }
     else
         DoOutputDebugString("GetHookCallerBase: failed to get return address.\n");
 
-    return;
+    return NULL;
 }
 
 //**************************************************************************************
@@ -1886,7 +1886,7 @@ void init_CAPE()
     // made at the end of a process' lifetime.
     // It is normally only set in the base packages,
     // or upon submission. (This overrides submission.)
-    // g_config.procmemdump = 0;
+    g_config.procdump = 0;
 
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;
@@ -1900,9 +1900,9 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised: 64-bit base package loaded at 0x%p, process image base 0x%p\n", g_our_dll_base, GetModuleHandle(NULL));
+    DoOutputDebugString("CAPE initialised: 64-bit Trace package loaded at 0x%p, process image base 0x%p\n", g_our_dll_base, GetModuleHandle(NULL));
 #else
-    DoOutputDebugString("CAPE initialised: 32-bit base package loaded at 0x%p, process image base 0x%p\n", g_our_dll_base, GetModuleHandle(NULL));
+    DoOutputDebugString("CAPE initialised: 32-bit Trace package loaded at 0x%p, process image base 0x%p\n", g_our_dll_base, GetModuleHandle(NULL));
 #endif
     
     return;
