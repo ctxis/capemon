@@ -74,9 +74,10 @@ void base_on_api(hook_t *h)
 	for (i = 0; i < ARRAYSIZE(g_config.base_on_apiname); i++) {
 		if (!g_config.base_on_apiname[i])
 			break;
-		if (!BreakpointsSet && !stricmp(h->funcname, g_config.base_on_apiname[i])) {
+		if (!BreakpointsSet && !called_by_hook() && !stricmp(h->funcname, g_config.base_on_apiname[i])) {
             if (hookinfo->main_caller_retaddr) {
-                BreakpointsSet = SetInitialBreakpoints((PVOID)hookinfo->main_caller_retaddr);
+                if (!BreakpointsSet)
+                    BreakpointsSet = SetInitialBreakpoints(GetAllocationBase((PVOID)hookinfo->main_caller_retaddr));
                 if (BreakpointsSet) {
 					DoOutputDebugString("Base-on-API: Breakpoints set.\n");
                 }
@@ -87,7 +88,8 @@ void base_on_api(hook_t *h)
 				DoOutputDebugString("Base-on-API: No main_caller_retaddr to get caller base.\n");
             PVOID ImageBase = GetHookCallerBase();
 			if (ImageBase) {
-                BreakpointsSet = SetInitialBreakpoints((PVOID)ImageBase);
+                if (!BreakpointsSet)
+                    BreakpointsSet = SetInitialBreakpoints((PVOID)ImageBase);
                 if (BreakpointsSet) {
 					DoOutputDebugString("Base-on-API: GetHookCallerBase success 0x%p - Breakpoints set.\n", ImageBase);
                 }

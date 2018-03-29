@@ -45,12 +45,6 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     _DecodedInst DecodedInstruction;
     unsigned int DecodedInstructionsCount = 0;
 
-#ifdef _WIN64
-    _DecodeType DecodeType = Decode64Bits;
-#else
-    _DecodeType DecodeType = Decode32Bits;
-#endif
-
     StepCount++;
     
     if (StepCount > SINGLE_STEP_LIMIT)
@@ -61,19 +55,14 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
 #ifdef _WIN64
+    _DecodeType DecodeType = Decode64Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
+    DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
+    _DecodeType DecodeType = Decode32Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-#endif
-
-    //DoOutputDebugString("%0*I64x ", 8, ExceptionInfo->ContextRecord->Eip);
-    //DoOutputDebugString("(%02d) ", DecodedInstruction.size);
-    //DoOutputDebugString("%-24s ", (char*)DecodedInstruction.instructionHex.p);
-    //DoOutputDebugString("%s", (char*)DecodedInstruction.mnemonic.p);
-    //DoOutputDebugString("%s", DecodedInstruction.operands.length != 0 ? " " : "");
-    //DoOutputDebugString("%s\n", (char*)DecodedInstruction.operands.p);
-
     DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+#endif
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
     
@@ -121,11 +110,12 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp0)
     {
         Register = 0;
+        if (!ImageBase) ImageBase = GetModuleHandle(NULL);
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp0;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
         {
-            DoOutputDebugString("SetInitialBreakpoints: Breakpoint %d set on address 0x%p\n", Register, BreakpointVA);
+            DoOutputDebugString("SetInitialBreakpoints: Breakpoint %d set on address 0x%p (image base 0x%p, RVA 0x%x)\n", Register, BreakpointVA, ImageBase, bp0);
             BreakpointSet = TRUE;
         }
         else
@@ -139,6 +129,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp1)
     {
         Register = 1;
+        if (!ImageBase) ImageBase = GetModuleHandle(NULL);
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp1;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -157,6 +148,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp2)
     {
         Register = 2;
+        if (!ImageBase) ImageBase = GetModuleHandle(NULL);
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp2;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -175,6 +167,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp3)
     {
         Register = 3;
+        if (!ImageBase) ImageBase = GetModuleHandle(NULL);
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp3;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
