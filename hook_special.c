@@ -29,6 +29,8 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int RoutineProcessDump();
 extern ULONG_PTR base_of_dll_of_interest;
 
+PVOID LastDllUnload;
+
 HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in_opt    PWCHAR PathToFile,
     __in_opt    PULONG Flags,
@@ -108,8 +110,6 @@ HOOKDEF_ALT(NTSTATUS, WINAPI, LdrLoadDll,
 	ret = Old_LdrLoadDll(PathToFile, Flags, ModuleFileName, ModuleHandle);
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
-    //DoOutputDebugString("LdrLoadDll hook2: ModuleBase 0x%p: %ws.\n", *ModuleHandle, library.Buffer);
-
 	disable_tail_call_optimization();
 	return ret;
 }
@@ -119,12 +119,14 @@ extern void revalidate_all_hooks(void);
 HOOKDEF_NOTAIL(WINAPI, LdrUnloadDll,
 	PVOID DllImageBase
 ) {
-    if (DllImageBase && DllImageBase == (PVOID)base_of_dll_of_interest) {
-        //DoOutputDebugString("LdrUnloadDll hook: Dumping DLL-of-interest prior to unloading.\n");
+    if (DllImageBase && DllImageBase == (PVOID)base_of_dll_of_interest)
         RoutineProcessDump();
-    }
 
-    //DoOutputDebugString("DLL unloaded from 0x%p.\n", DllImageBase);
+    if (DllImageBase && DllImageBase != LastDllUnload)
+    {
+        DoOutputDebugString("DLL unloaded from 0x%p.\n", DllImageBase);
+        LastDllUnload = DllImageBase;
+    }
 
     return 0;
 }

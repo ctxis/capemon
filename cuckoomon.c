@@ -36,6 +36,8 @@ volatile int dummy_val;
 extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+extern ULONG_PTR base_of_dll_of_interest;
 
 void disable_tail_call_optimization(void)
 {
@@ -657,16 +659,22 @@ VOID CALLBACK DllLoadNotification(
 	}
         
 	if (NotificationReason == 1) {
-		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest))
-			set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest)) {
+            if (base_of_dll_of_interest)
+                DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+			else
+                set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+        }
+        else {
+            // unoptimized, but easy
+            add_all_dlls_to_dll_ranges();
 
-		// unoptimized, but easy
-		add_all_dlls_to_dll_ranges();
+            dllname = get_dll_basename(&library);
+            set_hooks_dll(dllname);
 
-		dllname = get_dll_basename(&library);
-		set_hooks_dll(dllname);
-
-        DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+            DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+        }
 	}
 	else {
 		// unload
@@ -679,8 +687,6 @@ VOID CALLBACK DllLoadNotification(
 }
 
 extern _LdrRegisterDllNotification pLdrRegisterDllNotification;
-
-CRITICAL_SECTION g_tmp_hookinfo_lock;
 
 void set_hooks()
 {
@@ -698,13 +704,13 @@ void set_hooks()
 	// the hooks contain executable code as well, so they have to be RWX
 	DWORD old_protect;
 
-	InitializeCriticalSection(&g_tmp_hookinfo_lock);
-
 	VirtualProtect(g_hooks, sizeof(g_hooks), PAGE_EXECUTE_READWRITE,
 		&old_protect);
 
 	memset(&threadInfo, 0, sizeof(threadInfo));
 	threadInfo.dwSize = sizeof(threadInfo);
+
+	hook_init();
 
 	hook_disable();
 
@@ -790,7 +796,6 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
-
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
