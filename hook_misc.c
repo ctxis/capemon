@@ -1044,3 +1044,42 @@ HOOKDEF(void, WINAPIV, srand,
 
 	LOQ_void("misc", "h", "seed", seed);
 }
+
+HOOKDEF(BOOL, WINAPI, FlsAlloc,
+	_In_ PFLS_CALLBACK_FUNCTION lpCallback
+) {
+	BOOL ret = Old_FlsAlloc(lpCallback);
+
+	LOQ_bool("misc", "p", "Callback", lpCallback);
+
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsSetValue,
+	_In_     DWORD dwFlsIndex,
+	_In_opt_ PVOID lpFlsData
+) {
+	BOOL ret = Old_FlsSetValue(dwFlsIndex, lpFlsData);
+
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex, "Data", lpFlsData);
+	
+	return ret;
+}
+
+HOOKDEF(PVOID, WINAPI, LocalAlloc,
+	_In_ UINT uFlags,
+	_In_ SIZE_T uBytes)
+{
+	PVOID ret = Old_LocalAlloc(uFlags, uBytes);
+	LOQ_nonnull("misc", "ii", "Flags", uFlags, "Bytes", uBytes);
+	return ret;
+}
+
+HOOKDEF(VOID, WINAPI, LocalFree,
+	HLOCAL hMem)
+{
+	int ret = 0;	// seems this is needed for LOQ_void. TODO: fix this lameness
+
+	Old_LocalFree(hMem);
+	LOQ_void("misc", "p", "SourceBuffer", hMem);
+}

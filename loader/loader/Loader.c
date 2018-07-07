@@ -480,7 +480,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         PPLUGXPAYLOAD Payload;
 
-        hInputFile = CreateFile(__argv[2], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        hInputFile = CreateFileA(__argv[2], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
         if (!hInputFile || hInputFile == INVALID_HANDLE_VALUE)
         {
@@ -536,7 +536,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (__argc == 4 && !strncmp(__argv[2], "-u", 2))
             UnregisterServer = TRUE;
 
-        hDerusbi = LoadLibrary(__argv[__argc-1]);
+        hDerusbi = LoadLibraryA(__argv[__argc-1]);
 
         if (hDerusbi != NULL)
         {
@@ -609,7 +609,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         fConnected = FALSE; 
         hPipe = INVALID_HANDLE_VALUE;
 
-        hPipe = CreateNamedPipe
+        hPipe = CreateNamedPipeA
         ( 
             lpszPipename,             	// pipe name 
             PIPE_ACCESS_DUPLEX,       	// read/write access 
@@ -814,7 +814,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         memset(lpszPipename, 0, MAX_PATH*sizeof(CHAR));
         sprintf_s(lpszPipename, MAX_PATH, "\\\\.\\pipe\\CAPEpipe_%x", pi.dwProcessId);
 
-        hPipe = CreateNamedPipe
+        hPipe = CreateNamedPipeA
         ( 
             lpszPipename,             	// pipe name 
             PIPE_ACCESS_DUPLEX,       	// read/write access 
