@@ -34,6 +34,8 @@ FUNCTIONPTRS sFunctions = { 0 };
 * X64Call Part of WOW64Ext Library
 * See internals.h
 */
+#pragma warning(push )
+#pragma warning(disable : 4409)
 extern unsigned __int64 X64Call(DWORD64 func, int argC, ...)
 {
     va_list args;
