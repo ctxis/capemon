@@ -1151,6 +1151,28 @@ HOOKDEF(BOOL, WINAPI, FlsSetValue,
 	return ret;
 }
 
+
+HOOKDEF(PVOID, WINAPI, FlsGetValue,
+	_In_     DWORD dwFlsIndex
+) {
+	PVOID ret = Old_FlsGetValue(dwFlsIndex);
+
+	LOQ_nonnull("misc", "ip", "Index", dwFlsIndex, "ReturnValue", ret);
+
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsFree,
+	_In_     DWORD dwFlsIndex
+) {
+	BOOL ret = Old_FlsFree(dwFlsIndex);
+
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex);
+
+	return ret;
+}
+
+
 HOOKDEF(PVOID, WINAPI, LocalAlloc,
 	_In_ UINT uFlags,
 	_In_ SIZE_T uBytes)
