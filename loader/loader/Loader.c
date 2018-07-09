@@ -836,7 +836,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         int RetVal;
         HANDLE hProcess, hThread; 
         
-
         if (__argc != 7)
             return ERROR_ARGCOUNT;
         ProcessId = atoi(__argv[2]);
