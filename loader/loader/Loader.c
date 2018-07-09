@@ -776,7 +776,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         PSHELLCODE Payload;
 
-        hInputFile = CreateFileA(__argv[2], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        hInputFile = CreateFile(__argv[2], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
         if (!hInputFile || hInputFile == INVALID_HANDLE_VALUE)
         {
@@ -906,7 +906,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         fConnected = FALSE; 
         hPipe = INVALID_HANDLE_VALUE;
 
-        hPipe = CreateNamedPipeA
+        hPipe = CreateNamedPipe
         ( 
             lpszPipename,             	// pipe name 
             PIPE_ACCESS_DUPLEX,       	// read/write access 
@@ -1065,7 +1065,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         memset(lpszPipename, 0, MAX_PATH*sizeof(CHAR));
         sprintf_s(lpszPipename, MAX_PATH, "\\\\.\\pipe\\CAPEpipe_%x", pi.dwProcessId);
 
-        hPipe = CreateNamedPipeA
+        hPipe = CreateNamedPipe
         ( 
             lpszPipename,             	// pipe name 
             PIPE_ACCESS_DUPLEX,       	// read/write access 
