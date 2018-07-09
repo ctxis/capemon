@@ -1001,7 +1001,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 	LONG e_lfanew;
     DWORD NT_Signature;
     unsigned int i, j, k;
-	BYTE* DecryptedBuffer;
+	BYTE* DecryptedBuffer=NULL;
 
     for (i=0; i<=0xFF; i++)
 	{
@@ -1069,7 +1069,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 	}
 	
     // We free can free DecryptedBuffer as it's no longer needed
-    free(DecryptedBuffer);
+	if(DecryptedBuffer)
+		free(DecryptedBuffer);
     
     return FALSE;
 }
