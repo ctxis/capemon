@@ -819,9 +819,9 @@ HOOKDEF(LPVOID, WINAPI, VirtualProtect,
 {
 	LPVOID ret = Old_VirtualProtect(lpAddress, dwSize, flNewProtect, lpflOldProtect);
 	if (lpflOldProtect && *lpflOldProtect)
-		LOQ_nonnull("misc", "piii", "Address", lpAddress, "Size", dwSize, "NewProtection", flNewProtect, "OldProtection", *lpflOldProtect);
+		LOQ_nonnull("misc", "piii", "Address", lpAddress, "Size", dwSize, "Protection", flNewProtect, "OldProtection", *lpflOldProtect);
 	else
-		LOQ_nonnull("misc", "piii", "Address", lpAddress, "Size", dwSize, "NewProtection", flNewProtect, "OldProtection", 0);
+		LOQ_nonnull("misc", "piii", "Address", lpAddress, "Size", dwSize, "Protection", flNewProtect, "OldProtection", 0);
 
 	return ret;
 }
@@ -835,9 +835,9 @@ HOOKDEF(LPVOID, WINAPI, VirtualProtectFromApp,
 {
 	LPVOID ret = Old_VirtualProtectFromApp(Address, Size, NewProtection, OldProtection);
 	if (OldProtection && *OldProtection)
-		LOQ_nonnull("misc", "piii", "Address", Address, "Size", Size, "NewProtection", NewProtection, "OldProtection", *OldProtection);
+		LOQ_nonnull("misc", "piii", "Address", Address, "Size", Size, "Protection", NewProtection, "OldProtection", *OldProtection);
 	else
-		LOQ_nonnull("misc", "piii", "Address", Address, "Size", Size, "NewProtection", NewProtection, "OldProtection", 0);
+		LOQ_nonnull("misc", "piii", "Address", Address, "Size", Size, "Protection", NewProtection, "OldProtection", 0);
 
 	return ret;
 }
