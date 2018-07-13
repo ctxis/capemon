@@ -122,6 +122,7 @@ extern int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOE
 extern int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP);
 extern int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR modBase, DWORD_PTR NewOEP);
 extern int ScyllaDumpPE(DWORD_PTR Buffer);
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
 extern BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address);
 extern SIZE_T GetPESize(PVOID Buffer);
 extern LPVOID GetReturnAddress(hook_info_t *hookinfo);
@@ -1899,6 +1900,8 @@ void init_CAPE()
 #else
     DoOutputDebugString("CAPE initialised: 32-bit Trace package loaded at 0x%x, process image base 0x%x, stack from 0x%x-0x%x\n", g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #endif
-    
+
+    SetInitialBreakpoints(GetModuleHandle(NULL));
+
     return;
 }
