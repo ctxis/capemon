@@ -1,6 +1,6 @@
 /*
 CAPE - Config And Payload Extraction
-Copyright(C) 2015, 2016 Context Information Security. (kevin.oreilly@contextis.com)
+Copyright(C) 2015 - 2018 Context Information Security. (kevin.oreilly@contextis.com)
 
 This program is free software : you can redistribute it and / or modify
 it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define PIPEBUFSIZE 512
 
 // eflags register
+#define FL_ZF           0x00000040      // Zero Flag
 #define FL_TF           0x00000100      // Trap flag
 #define FL_RF           0x00010000      // Resume flag
 
@@ -1772,6 +1773,30 @@ BOOL SetResumeFlag(PCONTEXT Context)
 }
 
 //**************************************************************************************
+BOOL SetZeroFlag(PCONTEXT Context)
+//**************************************************************************************
+{
+    if (Context == NULL)
+        return FALSE;
+	
+    Context->EFlags |= FL_ZF;
+    
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL ClearZeroFlag(PCONTEXT Context)
+//**************************************************************************************
+{
+    if (Context == NULL)
+        return FALSE;
+
+    Context->EFlags &= ~FL_ZF;
+
+    return TRUE;
+}
+
+//**************************************************************************************
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler)
 //**************************************************************************************
 {
@@ -2939,7 +2964,7 @@ __declspec (naked dllexport) void DebuggerInit(void)
 #else
 #pragma optimize("", off)
 //**************************************************************************************
-void DebuggerInit(void)
+__declspec(dllexport) void DebuggerInit(void)
 //**************************************************************************************
 {   
     DWORD_PTR StackPointer;

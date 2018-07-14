@@ -26,8 +26,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "config.h"
 #include "ignore.h"
+#include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -100,11 +104,34 @@ HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
     __out   PVECTORED_EXCEPTION_HANDLER Handler
 ) {
 	PVOID ret = 0;
-    
-    ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
-	
+
+    if (DEBUGGER_ENABLED && VECTORED_HANDLER && First)
+    {
+        if (!CAPEExceptionFilterHandle)
+        {
+            DoOutputDebugString("RtlAddVectoredExceptionHandler hook: Error - CAPE vectored handler not registered.\n");
+            ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+            LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
+            return ret;
+        }
+
+        // We register the handler at the bottom, this minimizes
+        // our interference and means the handle is valid
+        ret = Old_RtlAddVectoredExceptionHandler(0, Handler);
+
+        if (ret == NULL)
+            return ret;
+
+        // We record the handler address so that
+        // CAPEExceptionFilter can call it directly
+        DoOutputDebugString("RtlAddVectoredExceptionHandler hook: CAPE vectored handler protected as First.\n");
+        SampleVectoredHandler = (SAMPLE_HANDLER)Handler;
+    }
+    else
+        ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+
     LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
-    
+
     return ret;
 }
 
@@ -459,10 +486,11 @@ static int lasty;
 HOOKDEF(BOOL, WINAPI, GetCursorPos,
     _Out_ LPPOINT lpPoint
 ) {
+    ENSURE_STRUCT(lpPoint, POINT);
     BOOL ret = Old_GetCursorPos(lpPoint);
 
 	/* work around the fact that skipping sleeps prevents the human module from making the system look active */
-	if (lpPoint && time_skipped.QuadPart != last_skipped.QuadPart) {
+	if (ret && time_skipped.QuadPart != last_skipped.QuadPart) {
 		int xres, yres;
 		xres = our_GetSystemMetrics(0);
 		yres = our_GetSystemMetrics(1);
@@ -485,9 +513,13 @@ HOOKDEF(BOOL, WINAPI, GetCursorPos,
 		last_skipped.QuadPart = time_skipped.QuadPart;
 	}
 
-	LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
-        "y", lpPoint != NULL ? lpPoint->y : 0);
-	
+	if (ret){
+    	    LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
+    			 "y", lpPoint != NULL ? lpPoint->y : 0);
+	}
+	else{
+	    LOQ_bool("misc", "ii", "x", 0, "y", 0);
+	}
 	return ret;
 }
 
@@ -626,9 +658,23 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in ULONG ProcessInformationLength
 ) {
 	NTSTATUS ret = Old_NtSetInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength);
-	if (NT_SUCCESS(ret) && (ProcessInformationClass == ProcessInfoDEPPolicy || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
-		LOQ_ntstatus("misc", "ii", "ProcessInformationClass", ProcessInformationClass, "Value", *(int *)ProcessInformation);
+	if ((ProcessInformationClass == ProcessExecuteFlags || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
+		LOQ_ntstatus("process", "ii", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", *(int*)ProcessInformation);
+    else
+		LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
 	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+) {
+	NTSTATUS ret = Old_NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength, ReturnLength);
+    LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
+    return ret;
 }
 
 HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
