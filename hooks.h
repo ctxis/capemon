@@ -1142,6 +1142,14 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in ULONG ProcessInformationLength
 );
 
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+);
+
 extern HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     HANDLE ProcessHandle,
     __inout  PVOID *BaseAddress,
@@ -2864,3 +2872,29 @@ extern HOOKDEF(unsigned int, WINAPIV, SizeofResource,
 extern HOOKDEF(void, WINAPIV, srand,
    unsigned int seed
 );   
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    IN PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    OUT PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+);
+
+extern HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR  lpString1,
+  _In_  LPSTR  lpString2,
+  _In_  int    iMaxLength
+);
+
+extern HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
+);

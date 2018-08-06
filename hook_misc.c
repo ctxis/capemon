@@ -116,16 +116,16 @@ HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
         }
 
         // We register the handler at the bottom, this minimizes
-        // our interference and means the handle is valid 
+        // our interference and means the handle is valid
         ret = Old_RtlAddVectoredExceptionHandler(0, Handler);
 
         if (ret == NULL)
             return ret;
 
-        // We record the handler address so that 
+        // We record the handler address so that
         // CAPEExceptionFilter can call it directly
         DoOutputDebugString("RtlAddVectoredExceptionHandler hook: CAPE vectored handler protected as First.\n");
-        SampleVectoredHandler = (SAMPLE_HANDLER)Handler;        
+        SampleVectoredHandler = (SAMPLE_HANDLER)Handler;
     }
     else
         ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
@@ -486,10 +486,11 @@ static int lasty;
 HOOKDEF(BOOL, WINAPI, GetCursorPos,
     _Out_ LPPOINT lpPoint
 ) {
+    ENSURE_STRUCT(lpPoint, POINT);
     BOOL ret = Old_GetCursorPos(lpPoint);
 
 	/* work around the fact that skipping sleeps prevents the human module from making the system look active */
-	if (lpPoint && time_skipped.QuadPart != last_skipped.QuadPart) {
+	if (ret && time_skipped.QuadPart != last_skipped.QuadPart) {
 		int xres, yres;
 		xres = our_GetSystemMetrics(0);
 		yres = our_GetSystemMetrics(1);
@@ -512,9 +513,13 @@ HOOKDEF(BOOL, WINAPI, GetCursorPos,
 		last_skipped.QuadPart = time_skipped.QuadPart;
 	}
 
-	LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
-        "y", lpPoint != NULL ? lpPoint->y : 0);
-	
+	if (ret){
+    	    LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
+    			 "y", lpPoint != NULL ? lpPoint->y : 0);
+	}
+	else{
+	    LOQ_bool("misc", "ii", "x", 0, "y", 0);
+	}
 	return ret;
 }
 
@@ -653,9 +658,23 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in ULONG ProcessInformationLength
 ) {
 	NTSTATUS ret = Old_NtSetInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength);
-	if (NT_SUCCESS(ret) && (ProcessInformationClass == ProcessInfoDEPPolicy || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
-		LOQ_ntstatus("misc", "ii", "ProcessInformationClass", ProcessInformationClass, "Value", *(int *)ProcessInformation);
+	if ((ProcessInformationClass == ProcessExecuteFlags || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
+		LOQ_ntstatus("process", "ii", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", *(int*)ProcessInformation);
+    else
+		LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
 	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+) {
+	NTSTATUS ret = Old_NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength, ReturnLength);
+    LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
+    return ret;
 }
 
 HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
@@ -1109,4 +1128,33 @@ HOOKDEF(void, WINAPIV, srand,
 	Old_srand(seed);
 
 	LOQ_void("misc", "h", "seed", seed);
+}
+
+HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR   lpString1,
+  _In_  LPSTR   lpString2,
+  _In_  int     iMaxLength
+)
+{
+    LPSTR ret;
+
+    ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
+
+	LOQ_nonzero("misc", "u", "String", lpString1);
+
+    return ret;
+}
+
+HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
+)
+{
+    int ret;
+
+    ret = Old_lstrcmpiA(lpString1, lpString2);
+
+	LOQ_nonzero("misc", "ss", "String1", lpString1, "String2", lpString2);
+
+    return ret;
 }

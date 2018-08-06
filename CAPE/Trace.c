@@ -21,7 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE.h"
 
 #define MAX_INSTRUCTIONS 0x10
-#define SINGLE_STEP_LIMIT 0x80
+#define SINGLE_STEP_LIMIT 0x80  // default unless specified in web ui
 #define CHUNKSIZE 0x10 * MAX_INSTRUCTIONS
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
@@ -33,11 +33,11 @@ extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 extern BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize);
 
 BOOL BreakpointSet, DllPrinted;
-unsigned int DumpCount, Correction, StepCount, DepthCount, DepthLimit;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
 BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
-int StepOverRegister;
+unsigned int DumpCount, Correction, StepCount, StepLimit;
+int StepOverRegister, TraceDepthCount, TraceDepthLimit;
 
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo);
 BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
@@ -61,10 +61,9 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 
     StepCount++;
     
-    if (StepCount > SINGLE_STEP_LIMIT)
+    if (StepCount > StepLimit)
     {
-        DoOutputDebugString("Trace: single-step limit reached, releasing.");
-        
+        DoOutputDebugString("Trace: single-step limit reached (%d), releasing.", StepLimit);
         return TRUE;
     }
     
@@ -88,7 +87,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
-        if (DepthCount >= DepthLimit)
+        if (TraceDepthCount >= TraceDepthLimit)
         {    
 #ifdef _WIN64
             ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
@@ -105,11 +104,20 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             return TRUE;
         }
         else
-            DepthCount++;
+            TraceDepthCount++;
     }
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
     {
-        DepthCount--;
+        if (TraceDepthCount < 0)
+        {
+            DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
+            
+            ClearSingleStepMode(ExceptionInfo->ContextRecord);
+            
+            return TRUE;
+        }
+        
+        TraceDepthCount--;
     }
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
@@ -146,14 +154,8 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
     
-    //ContextClearCurrentBreakpoint(ExceptionInfo->ContextRecord);    
-    
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
-    StepCount = 0;
-    DepthCount = 0;
-    DepthLimit = 3;
-    
     DoSetSingleStepMode(pBreakpointInfo->Register, ExceptionInfo->ContextRecord, Trace);
     
     return TRUE;
@@ -164,6 +166,12 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     DWORD_PTR BreakpointVA;
     DWORD Register;
 
+    StepCount = 0;
+    TraceDepthCount = 0;
+
+    if (!StepLimit)
+        StepLimit = SINGLE_STEP_LIMIT;
+    
 	if (!bp0 && !bp1 && !bp2 && !bp3)
 	{
 		DoOutputDebugString("SetInitialBreakpoints: Error - No address specified for Trace breakpoints.\n");

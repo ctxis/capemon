@@ -214,21 +214,33 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithLogonW,
 ) {
 	BOOL ret;
 	LPWSTR origcommandline = NULL;
-	
+	ENSURE_STRUCT(lpProcessInfo, PROCESS_INFORMATION);
+
 	if (lpCommandLine)
 		origcommandline = wcsdup(lpCommandLine);
 
 	ret = Old_CreateProcessWithLogonW(lpUsername, lpDomain, lpPassword, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "uuuhuuhiipp", "Username", lpUsername, "Domain", lpDomain, "Password", lpPassword, "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	LOQ_bool("process", "uuuhuuhiipp",
+		"Username", lpUsername,
+		"Domain", lpDomain,
+		"Password", lpPassword,
+		"LogonFlags", dwLogonFlags,
+		"ApplicationName", lpApplicationName,
+		"CommandLine", origcommandline,
+		"CreationFlags", dwCreationFlags,
+		"ProcessId", lpProcessInfo->dwProcessId,
+		"ThreadId", lpProcessInfo->dwThreadId,
+		"ProcessHandle", lpProcessInfo->hProcess,
+		"ThreadHandle", lpProcessInfo->hThread
+	);
 
 	if (origcommandline)
 		free(origcommandline);
 
 	if (ret) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
-		if (!(dwCreationFlags & CREATE_SUSPENDED))
+		if (!(dwCreationFlags & CREATE_SUSPENDED) && is_valid_address_range((ULONG_PTR)lpProcessInfo, (DWORD)sizeof(PROCESS_INFORMATION)))
 			ResumeThread(lpProcessInfo->hThread);
 		disable_sleep_skip();
 	}
@@ -254,13 +266,35 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithTokenW,
 
 	ret = Old_CreateProcessWithTokenW(hToken, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "huuhiipp", "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	if (lpProcessInfo) {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", lpProcessInfo->dwProcessId,
+			"ThreadId", lpProcessInfo->dwThreadId,
+			"ProcessHandle", lpProcessInfo->hProcess,
+			"ThreadHandle", lpProcessInfo->hThread
+		);
+	}
+	else {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", NULL,
+			"ThreadId", NULL,
+			"ProcessHandle", NULL,
+			"ThreadHandle", NULL
+		);
+	}
 
 	if (origcommandline)
 		free(origcommandline);
 
-	if (ret) {
+	if (ret && lpProcessInfo) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
 		if (!(dwCreationFlags & CREATE_SUSPENDED))
 			ResumeThread(lpProcessInfo->hThread);
@@ -439,7 +473,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
         map_size = mbi.RegionSize;
     }
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
-	
+
     LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", map_size);
 
@@ -506,11 +540,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadVirtualMemory,
 	NTSTATUS ret;
     ENSURE_SIZET(NumberOfBytesRead);
 
-    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer,
-        NumberOfBytesToRead, NumberOfBytesRead);
+    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead);
 
-    LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "Buffer", NumberOfBytesRead, Buffer);
+    LOQ_ntstatus("process", "pphB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress, "Size", NumberOfBytesToRead, "Buffer", NumberOfBytesRead, Buffer);
 
 	return ret;
 }
@@ -525,11 +557,9 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
 	BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
-    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
-        nSize, lpNumberOfBytesRead);
+    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead);
 
-    LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-        "Buffer", lpNumberOfBytesRead, lpBuffer);
+    LOQ_bool("process", "pphB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress, "Size", nSize, "Buffer", lpNumberOfBytesRead, lpBuffer);
 
     return ret;
 }
@@ -550,8 +580,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 
 	pid = pid_from_process_handle(ProcessHandle);
 
-    LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "Buffer", NumberOfBytesWritten, Buffer, "BufferLength", *NumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+	 LOQ_ntstatus("process", "ppBhs",
+	    "ProcessHandle", ProcessHandle,
+	    "BaseAddress", BaseAddress,
+	    "Buffer", NumberOfBytesWritten, Buffer,
+	    "BufferLength", is_valid_address_range((ULONG_PTR)NumberOfBytesWritten, 4) ? *NumberOfBytesWritten : 0,
+	    "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (pid != GetCurrentProcessId()) {
 		if (NT_SUCCESS(ret)) {
@@ -559,7 +593,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 			disable_sleep_skip();
 		}
 	}
-
 
 	return ret;
 }
@@ -659,12 +692,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
-	
+
 	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress,
         NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
 
 	memset(&meminfo, 0, sizeof(meminfo));
-	if (NT_SUCCESS(ret)) {
+	if (NT_SUCCESS(ret) && OldAccessProtection && *OldAccessProtection == NewAccessProtection) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
 		VirtualQueryEx(ProcessHandle, *BaseAddress, &meminfo, sizeof(meminfo));
@@ -707,7 +740,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
         lpflOldProtect);
 
 	memset(&meminfo, 0, sizeof(meminfo));
-	if (ret) {
+	if (ret && lpflOldProtect && *lpflOldProtect == flNewProtect) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
 		VirtualQueryEx(hProcess, lpAddress, &meminfo, sizeof(meminfo));
@@ -825,7 +858,7 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 		if (tebtmp[0] != 0xffffffff)
 			seh = ((DWORD *)tebtmp[0])[1];
 		if (seh < g_our_dll_base || seh >= (g_our_dll_base + g_our_dll_size)) {
-			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
+			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in capemon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
 			log_anomaly("cuckoocrash", buf);
 		}
 	}

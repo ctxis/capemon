@@ -153,7 +153,7 @@ enum {
 	
     CERBER_CONFIG           = 0x30,
     CERBER_PAYLOAD          = 0x31,
-    
+
     DATADUMP                = 0x66
 };
 

@@ -25,6 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern PVOID bp0, bp1, bp2, bp3;
+extern unsigned int StepLimit;
+extern int TraceDepthLimit;
 
 int read_config(void)
 {
@@ -249,6 +251,14 @@ int read_config(void)
             else if (!strcmp(key, "bp3")) {
 				bp3 = (PVOID)strtoul(value, NULL, 10);
                 DoOutputDebugString("bp3 set to 0x%x", bp3);
+			}
+            else if (!strcmp(key, "depth")) {
+				TraceDepthLimit = (int)strtoul(value, NULL, 10);
+                DoOutputDebugString("Trace depth set to 0x%x", TraceDepthLimit);
+			}
+            else if (!strcmp(key, "count")) {
+				StepLimit = (unsigned int)strtoul(value, NULL, 10);
+                DoOutputDebugString("Trace instruction count set to 0x%x", StepLimit);
 			}
             else if (!strcmp(key, "procdump")) {
 				g_config.procdump = value[0] == '1';

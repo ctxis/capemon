@@ -100,8 +100,6 @@ typedef struct _hook_info_t {
 	ULONG_PTR main_caller_retaddr;
 	ULONG_PTR parent_caller_retaddr;
 } hook_info_t;
-
-#define CAPE_OUTPUT_FILE "CapeOutput.bin"
  
 extern uint32_t path_from_handle(HANDLE handle, wchar_t *path, uint32_t path_buffer_len);
 extern int called_by_hook(void);
@@ -1896,9 +1894,9 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised: 64-bit Trace package loaded at 0x%p, process image base 0x%p, stack from 0x%p-0x%p\n", g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
+    DoOutputDebugString("CAPE initialised: 64-bit Trace package loaded in process %d at 0x%p, image base 0x%p, stack from 0x%p-0x%p\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #else
-    DoOutputDebugString("CAPE initialised: 32-bit Trace package loaded at 0x%x, process image base 0x%x, stack from 0x%x-0x%x\n", g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
+    DoOutputDebugString("CAPE initialised: 32-bit Trace package loaded in process %d at 0x%x, image base 0x%x, stack from 0x%x-0x%x\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #endif
 
     SetInitialBreakpoints(GetModuleHandle(NULL));

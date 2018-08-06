@@ -172,32 +172,30 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
         disable_sleep_skip();
     }
 	
-    if (!called_by_hook()) {
-		if (dwCreationFlags & EXTENDED_STARTUPINFO_PRESENT && lpStartupInfo->cb == sizeof(STARTUPINFOEXW)) {
-			HANDLE ParentHandle = (HANDLE)-1;
-			unsigned int i;
-			LPSTARTUPINFOEXW lpExtStartupInfo = (LPSTARTUPINFOEXW)lpStartupInfo;
-			if (lpExtStartupInfo->lpAttributeList) {
-				for (i = 0; i < lpExtStartupInfo->lpAttributeList->Count; i++)
-					if (lpExtStartupInfo->lpAttributeList->Entries[i].Attribute == PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)
-						ParentHandle = *(HANDLE *)lpExtStartupInfo->lpAttributeList->Entries[i].lpValue;
-			}
-			LOQ_bool("process", "uuhiippps", "ApplicationName", lpApplicationName,
-				"CommandLine", lpCommandLine, "CreationFlags", dwCreationFlags,
-				"ProcessId", lpProcessInformation->dwProcessId,
-				"ThreadId", lpProcessInformation->dwThreadId,
-				"ParentHandle", ParentHandle,
-				"ProcessHandle", lpProcessInformation->hProcess,
-				"ThreadHandle", lpProcessInformation->hThread, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-		}
-		else {
-			LOQ_bool("process", "uuhiipps", "ApplicationName", lpApplicationName,
-				"CommandLine", lpCommandLine, "CreationFlags", dwCreationFlags,
-				"ProcessId", lpProcessInformation->dwProcessId,
-				"ThreadId", lpProcessInformation->dwThreadId,
-				"ProcessHandle", lpProcessInformation->hProcess,
-				"ThreadHandle", lpProcessInformation->hThread, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-		}
+    if (dwCreationFlags & EXTENDED_STARTUPINFO_PRESENT && lpStartupInfo->cb == sizeof(STARTUPINFOEXW)) {
+        HANDLE ParentHandle = (HANDLE)-1;
+        unsigned int i;
+        LPSTARTUPINFOEXW lpExtStartupInfo = (LPSTARTUPINFOEXW)lpStartupInfo;
+        if (lpExtStartupInfo->lpAttributeList) {
+            for (i = 0; i < lpExtStartupInfo->lpAttributeList->Count; i++)
+                if (lpExtStartupInfo->lpAttributeList->Entries[i].Attribute == PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)
+                    ParentHandle = *(HANDLE *)lpExtStartupInfo->lpAttributeList->Entries[i].lpValue;
+        }
+        LOQ_bool("process", "uuhiippps", "ApplicationName", lpApplicationName,
+            "CommandLine", lpCommandLine, "CreationFlags", dwCreationFlags,
+            "ProcessId", lpProcessInformation->dwProcessId,
+            "ThreadId", lpProcessInformation->dwThreadId,
+            "ParentHandle", ParentHandle,
+            "ProcessHandle", lpProcessInformation->hProcess,
+            "ThreadHandle", lpProcessInformation->hThread, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+    }
+    else {
+        LOQ_bool("process", "uuhiipps", "ApplicationName", lpApplicationName,
+            "CommandLine", lpCommandLine, "CreationFlags", dwCreationFlags,
+            "ProcessId", lpProcessInformation->dwProcessId,
+            "ThreadId", lpProcessInformation->dwThreadId,
+            "ProcessHandle", lpProcessInformation->hProcess,
+            "ThreadHandle", lpProcessInformation->hThread, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
     }
 
     return ret;
@@ -229,8 +227,10 @@ HOOKDEF(HRESULT, WINAPI, CoCreateInstance,
 	if (!pProgIDFromCLSID)
 		pProgIDFromCLSID = (_ProgIDFromCLSID)GetProcAddress(GetModuleHandleA("ole32"), "ProgIDFromCLSID");
 
-	memcpy(&id1, rclsid, sizeof(id1));
-	memcpy(&id2, riid, sizeof(id2));
+	if (is_valid_address_range((ULONG_PTR)rclsid, 16))
+        	memcpy(&id1, rclsid, sizeof(id1));
+    	if (is_valid_address_range((ULONG_PTR)riid, 16))
+        	memcpy(&id2, riid, sizeof(id2));
 	sprintf(idbuf1, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 		id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
 	sprintf(idbuf2, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id2.Data1, id2.Data2, id2.Data3,
@@ -290,7 +290,8 @@ HOOKDEF(HRESULT, WINAPI, CoCreateInstanceEx,
 	if (!pProgIDFromCLSID)
 		pProgIDFromCLSID = (_ProgIDFromCLSID)GetProcAddress(GetModuleHandleA("ole32"), "ProgIDFromCLSID");
 
-	memcpy(&id1, rclsid, sizeof(id1));
+	if (is_valid_address_range((ULONG_PTR)rclsid, 16))
+            memcpy(&id1, rclsid, sizeof(id1));
 	sprintf(idbuf1, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 		id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
 
@@ -352,8 +353,10 @@ HOOKDEF(HRESULT, WINAPI, CoGetClassObject,
 	if (!pProgIDFromCLSID)
 		pProgIDFromCLSID = (_ProgIDFromCLSID)GetProcAddress(GetModuleHandleA("ole32"), "ProgIDFromCLSID");
 
-	memcpy(&id1, rclsid, sizeof(id1));
-	memcpy(&id2, riid, sizeof(id2));
+	if (is_valid_address_range((ULONG_PTR)rclsid, 16))
+            memcpy(&id1, rclsid, sizeof(id1));
+        if (is_valid_address_range((ULONG_PTR)riid, 16))
+	    memcpy(&id2, riid, sizeof(id2));
 	sprintf(idbuf1, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,
 		id1.Data4[0], id1.Data4[1], id1.Data4[2], id1.Data4[3], id1.Data4[4], id1.Data4[5], id1.Data4[6], id1.Data4[7]);
 	sprintf(idbuf2, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id2.Data1, id2.Data2, id2.Data3,

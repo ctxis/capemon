@@ -87,6 +87,8 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
+    //HOOK_SPECIAL(kernel32, lstrcpynA),
+    //HOOK_SPECIAL(kernel32, lstrcmpiA),
 
 	// has special handling
 
@@ -357,6 +359,8 @@ static hook_t g_hooks[] = {
     HOOK(kernel32, CreateThread),
     HOOK(kernel32, CreateRemoteThread),
     HOOK(ntdll, RtlCreateUserThread),
+    HOOK(ntdll, NtSetInformationThread),
+    HOOK(ntdll, NtQueryInformationThread),
 
 	//
     // Misc Hooks
@@ -402,6 +406,7 @@ static hook_t g_hooks[] = {
 	HOOK(user32, GetAsyncKeyState),
 	HOOK(ntdll, NtLoadDriver),
 	HOOK(ntdll, NtSetInformationProcess),
+	//HOOK(ntdll, NtQueryInformationProcess),
 	HOOK(ntdll, RtlDecompressBuffer),
 	HOOK(ntdll, RtlCompressBuffer),
 	HOOK(kernel32, GetSystemInfo),
@@ -644,7 +649,7 @@ void revalidate_all_hooks(void)
 
 PVOID g_dll_notify_cookie;
 
-VOID CALLBACK DllLoadNotification(
+VOID CALLBACK New_DllLoadNotification(
 	_In_     ULONG                       NotificationReason,
 	_In_     const PLDR_DLL_NOTIFICATION_DATA NotificationData,
 	_In_opt_ PVOID                       Context)
@@ -741,9 +746,9 @@ void set_hooks()
 	free(suspended_threads);
 
 	if (pLdrRegisterDllNotification)
-		pLdrRegisterDllNotification(0, &DllLoadNotification, NULL, &g_dll_notify_cookie);
+		pLdrRegisterDllNotification(0, &New_DllLoadNotification, NULL, &g_dll_notify_cookie);
 	else
-		register_dll_notification_manually(&DllLoadNotification);
+		register_dll_notification_manually(&New_DllLoadNotification);
 
 	hook_enable();
 }

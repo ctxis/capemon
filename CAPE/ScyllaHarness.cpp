@@ -180,7 +180,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
         else
         {
             DoOutputDebugString("DumpProcess: Module entry point VA is 0x%p.\n", entrypoint);
-            entrypoint = entrypoint + ModuleBase;
+            entrypoint = entrypoint + (DWORD_PTR)ModuleBase;
         }
         
         if (peFile->dumpProcess(ModuleBase, entrypoint, NULL))
@@ -828,7 +828,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
     }
 
     delete peFile;
-    
+
 	return 1;
 }
 
@@ -839,13 +839,13 @@ extern "C" BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* Secti
 	ScyllaInitCurrentProcess();
 
     PeParser *peFile = new PeParser((DWORD_PTR)ImageBase, true);
-    
+
     if (!peFile->isValidPeFile())
     {
         DoOutputDebugString("ScyllaGetSectionByName: Invalid PE image.\n");
         return 0;
     }
-        
+
     if (!peFile->readPeSectionsFromProcess())
     {
         DoOutputDebugString("ScyllaGetSectionByName: Failed to read PE sections from image.\n");
@@ -853,7 +853,7 @@ extern "C" BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* Secti
     }    
 
     unsigned int NumberOfSections = peFile->getNumberOfSections();
-    
+
     for (unsigned int i = 0; i < NumberOfSections; i++)
     {
         if (!strcmp((char*)peFile->listPeSection[i].sectionHeader.Name, Name))
