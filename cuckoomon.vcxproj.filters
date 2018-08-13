@@ -276,7 +276,7 @@
     <ClCompile Include="CAPE\wow64_fix.c">
       <Filter>Source Files\CAPE</Filter>
     </ClCompile>
-    <ClCompile Include="CAPE\Trace.c">
+    <ClCompile Include="CAPE\QakBot.c">
       <Filter>Source Files\CAPE</Filter>
     </ClCompile>
   </ItemGroup>

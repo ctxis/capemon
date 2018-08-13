@@ -154,6 +154,9 @@ enum {
     CERBER_CONFIG           = 0x30,
     CERBER_PAYLOAD          = 0x31,
 
+    QAKBOT_CONFIG           = 0x38,
+    QAKBOT_PAYLOAD          = 0x39,
+	
     DATADUMP                = 0x66
 };
 

@@ -126,7 +126,7 @@ extern SIZE_T GetPESize(PVOID Buffer);
 extern LPVOID GetReturnAddress(hook_info_t *hookinfo);
 extern PVOID CallingModule;
 
-BOOL ProcessDumped, FilesDumped;
+BOOL ProcessDumped, FilesDumped, ModuleDumped;
 static unsigned int DumpCount;
 
 static __inline ULONG_PTR get_stack_top(void)
@@ -1720,7 +1720,7 @@ int DumpModuleInCurrentProcess(LPVOID ModuleBase)
         ModuleBase = PEImage;
     }
 
-    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+    SetCapeMetaData(QAKBOT_PAYLOAD, 0, NULL, (PVOID)ModuleBase);
     
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
     {
@@ -1894,12 +1894,10 @@ void init_CAPE()
             DoOutputDebugString("Failed to initialise debugger.\n");
 
 #ifdef _WIN64
-    DoOutputDebugString("CAPE initialised: 64-bit Trace package loaded in process %d at 0x%p, image base 0x%p, stack from 0x%p-0x%p\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
+    DoOutputDebugString("CAPE initialised: 64-bit QakBot package loaded in process %d at 0x%p, image base 0x%p, stack from 0x%p-0x%p\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #else
-    DoOutputDebugString("CAPE initialised: 32-bit Trace package loaded in process %d at 0x%x, image base 0x%x, stack from 0x%x-0x%x\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
+    DoOutputDebugString("CAPE initialised: 32-bit QakBot package loaded in process %d at 0x%x, image base 0x%x, stack from 0x%x-0x%x\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #endif
-
-    SetInitialBreakpoints(GetModuleHandle(NULL));
 
     return;
 }

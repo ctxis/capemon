@@ -31,7 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void file_handle_terminate();
 extern int RoutineProcessDump();
-extern BOOL ProcessDumped;
+extern BOOL ProcessDumped, ModuleDumped;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -403,7 +403,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 	}
 	set_lasterrors(&lasterror);
 
-	ret = Old_NtTerminateProcess(ProcessHandle, ExitStatus);
+	if (ModuleDumped && ExitStatus == 1)
+        ExitStatus = 0;
+        
+    ret = Old_NtTerminateProcess(ProcessHandle, ExitStatus);
     return ret;
 }
 

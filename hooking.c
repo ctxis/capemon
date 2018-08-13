@@ -28,6 +28,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern DWORD g_tls_hook_index;
 
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern PVOID GetHookCallerBase();
+extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
+extern PVOID GetAllocationBase(PVOID Address);
+extern SIZE_T GetAllocationSize(PVOID Address);
+extern BOOL ModuleDumped;
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+BOOL BreakpointsSet;
+
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
 #define TLS_LAST_NTSTATUS_ERROR 0x1250
@@ -105,6 +114,41 @@ int called_by_hook(void)
 	return __called_by_hook(hookinfo->stack_pointer, hookinfo->frame_pointer);
 }
 
+void base_on_api(hook_t *h)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAYSIZE(g_config.base_on_apiname); i++) {
+        PVOID AllocationBase;
+		if (!g_config.base_on_apiname[i])
+			break;
+		if (!BreakpointsSet && !called_by_hook() && !stricmp(h->funcname, g_config.base_on_apiname[i])) {
+            DoOutputDebugString("Base-on-API: %s call detected in thread %d.\n", g_config.base_on_apiname[i], GetCurrentThreadId());
+            AllocationBase = GetHookCallerBase();
+            if (AllocationBase) {
+                BreakpointsSet = SetInitialBreakpoints((PVOID)AllocationBase);
+                if (BreakpointsSet)
+                {
+                    DoOutputDebugString("Base-on-API: GetHookCallerBase success 0x%p - Breakpoints set.\n", AllocationBase);
+                    if (!ModuleDumped && DumpModuleInCurrentProcess(AllocationBase)) {
+                        ModuleDumped = TRUE;
+                        DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    }
+                    else {
+                        DoOutputDebugString("Dump-on-API: Failed to dump module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    }
+                }
+                else
+                    DoOutputDebugString("Base-on-API: Failed to set breakpoints on 0x%p.\n", AllocationBase);
+            }
+            else
+                DoOutputDebugString("Base-on-API: GetHookCallerBase fail.\n");
+        }
+	}
+
+	return;
+}
+
 extern BOOLEAN is_ignored_thread(DWORD tid);
 
 static hook_info_t tmphookinfo;
@@ -147,6 +191,8 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 		hookinfo->parent_caller_retaddr = 0;
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
+
+		base_on_api(h);
 
 		return 1;
 	}
