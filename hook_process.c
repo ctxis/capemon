@@ -363,6 +363,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
     NTSTATUS ret = 0;
 	lasterror_t lasterror;
 
+	if (ModuleDumped && ExitStatus == 1)
+    {
+        DoOutputDebugString("NtTerminateProcess hook: Fixing return value to bypass QakBot anti-sandbox.\n");
+        ExitStatus = 0;
+    }
+
 	get_lasterrors(&lasterror);
 	if (ProcessHandle == NULL) {
 		// we mark this here as this termination type will kill all threads but ours, including
@@ -403,9 +409,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 	}
 	set_lasterrors(&lasterror);
 
-	if (ModuleDumped && ExitStatus == 1)
-        ExitStatus = 0;
-        
     ret = Old_NtTerminateProcess(ProcessHandle, ExitStatus);
     return ret;
 }
