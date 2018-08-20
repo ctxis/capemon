@@ -30,13 +30,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "unhook.h"
 #include "bson.h"
-#include "CAPE\CAPE.h"
-#include "CAPE\Debugger.h"
 
 volatile int dummy_val;
 
 extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+extern ULONG_PTR base_of_dll_of_interest;
 
 void disable_tail_call_optimization(void)
 {
@@ -293,7 +293,6 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtCreateEvent),
 	HOOK(ntdll, NtOpenEvent),
 	HOOK(ntdll, NtCreateNamedPipeFile),
-
 	HOOK(ntdll, NtAddAtom),
 	HOOK(ntdll, NtAddAtomEx),
 	HOOK(ntdll, NtFindAtom),
@@ -357,13 +356,18 @@ static hook_t g_hooks[] = {
     HOOK(kernel32, CreateThread),
     HOOK(kernel32, CreateRemoteThread),
     HOOK(ntdll, RtlCreateUserThread),
+    HOOK(ntdll, NtSetInformationThread),
+    HOOK(ntdll, NtQueryInformationThread),
 
 	//
     // Misc Hooks
     //
-
-	//HOOK(msvcrt, memcpy),
-	//HOOK(ntdll, memcpy),  
+#ifndef _WIN64
+	HOOK(ntdll, memcpy),
+#endif
+	HOOK(msvcrt, memcpy),
+	//HOOK(kernel32, SizeofResource),
+    HOOK(msvcrt, srand),
     
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
@@ -371,7 +375,7 @@ static hook_t g_hooks[] = {
 	HOOK(user32, SetWindowsHookExA),
     HOOK(user32, SetWindowsHookExW),
     HOOK(user32, UnhookWindowsHookEx),
-    //HOOK(kernel32, SetUnhandledExceptionFilter),
+    HOOK(kernel32, SetUnhandledExceptionFilter),
     HOOK(ntdll, RtlAddVectoredExceptionHandler),
 	HOOK(kernel32, SetErrorMode),
     HOOK(ntdll, LdrGetDllHandle),
@@ -399,6 +403,7 @@ static hook_t g_hooks[] = {
 	HOOK(user32, GetAsyncKeyState),
 	HOOK(ntdll, NtLoadDriver),
 	HOOK(ntdll, NtSetInformationProcess),
+	//HOOK(ntdll, NtQueryInformationProcess),
 	HOOK(ntdll, RtlDecompressBuffer),
 	HOOK(ntdll, RtlCompressBuffer),
 	HOOK(kernel32, GetSystemInfo),
@@ -641,7 +646,7 @@ void revalidate_all_hooks(void)
 
 PVOID g_dll_notify_cookie;
 
-VOID CALLBACK DllLoadNotification(
+VOID CALLBACK New_DllLoadNotification(
 	_In_     ULONG                       NotificationReason,
 	_In_     const PLDR_DLL_NOTIFICATION_DATA NotificationData,
 	_In_opt_ PVOID                       Context)
@@ -654,19 +659,23 @@ VOID CALLBACK DllLoadNotification(
 		/* Just for debug purposes, gives a stripped fake function name */
 		LOQ_void("system", "sup", "NotificationReason", NotificationReason == 1 ? "load" : "unload", "DllName", library.Buffer, "DllBase", NotificationReason == 1 ? NotificationData->Loaded.DllBase : NotificationData->Unloaded.DllBase);
 	}
-
+        
 	if (NotificationReason == 1) {
+		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest)) {
+            if (base_of_dll_of_interest)
+                DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+			else
+                set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+        }
+        else {
+            // unoptimized, but easy
+            add_all_dlls_to_dll_ranges();
 
-		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest))
-			set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            dllname = get_dll_basename(&library);
+            set_hooks_dll(dllname);
 
-		// unoptimized, but easy
-		add_all_dlls_to_dll_ranges();
-
-		dllname = get_dll_basename(&library);
-		set_hooks_dll(dllname);
-
-        DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+            DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+        }
 	}
 	else {
 		// unload
@@ -679,8 +688,6 @@ VOID CALLBACK DllLoadNotification(
 }
 
 extern _LdrRegisterDllNotification pLdrRegisterDllNotification;
-
-CRITICAL_SECTION g_tmp_hookinfo_lock;
 
 void set_hooks()
 {
@@ -698,13 +705,13 @@ void set_hooks()
 	// the hooks contain executable code as well, so they have to be RWX
 	DWORD old_protect;
 
-	InitializeCriticalSection(&g_tmp_hookinfo_lock);
-
 	VirtualProtect(g_hooks, sizeof(g_hooks), PAGE_EXECUTE_READWRITE,
 		&old_protect);
 
 	memset(&threadInfo, 0, sizeof(threadInfo));
 	threadInfo.dwSize = sizeof(threadInfo);
+
+	hook_init();
 
 	hook_disable();
 
@@ -735,9 +742,9 @@ void set_hooks()
 	free(suspended_threads);
 
 	if (pLdrRegisterDllNotification)
-		pLdrRegisterDllNotification(0, &DllLoadNotification, NULL, &g_dll_notify_cookie);
+		pLdrRegisterDllNotification(0, &New_DllLoadNotification, NULL, &g_dll_notify_cookie);
 	else
-		register_dll_notification_manually(&DllLoadNotification);
+		register_dll_notification_manually(&New_DllLoadNotification);
 
 	hook_enable();
 }
@@ -786,14 +793,16 @@ LONG WINAPI cuckoomon_exception_handler(__in struct _EXCEPTION_POINTERS *Excepti
 	}
 #endif
 
-
 	if (g_config.debug == 1 && ExceptionInfo->ExceptionRecord->ExceptionCode < 0xc0000000)
 		return EXCEPTION_CONTINUE_SEARCH;
 
     if (ExceptionInfo->ExceptionRecord->ExceptionCode == DBG_PRINTEXCEPTION_C)
 		return EXCEPTION_CONTINUE_SEARCH;
 
-    if (DEBUGGER_ENABLED && ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+		return CAPEExceptionFilter(ExceptionInfo);
+
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION)
 		return CAPEExceptionFilter(ExceptionInfo);
 
 	hook_disable();
@@ -846,6 +855,7 @@ next:
 			eipptr[0], eipptr[1], eipptr[2], eipptr[3], eipptr[4], eipptr[5], eipptr[6], eipptr[7], eipptr[8], eipptr[9], eipptr[10], eipptr[11], eipptr[12], eipptr[13], eipptr[14], eipptr[15]);
 	}
 	debug_message(msg);
+    DoOutputDebugString(msg);
 	if (dllname)
 		free(dllname);
 	free(msg);
@@ -960,7 +970,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		if (!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xff\x25", 4) || !memcmp((PUCHAR)WaitForDebugEvent, "\xff\x25", 2) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xe9", 3) || !memcmp((PUCHAR)WaitForDebugEvent, "\xe9", 1) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\xeb\xf9", 2))
-			goto early_abort;
+			goto abort;
 
 		g_our_dll_base = (ULONG_PTR)hModule;
 		g_our_dll_size = get_image_size(g_our_dll_base);
@@ -985,7 +995,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		g_tls_hook_index = TlsAlloc();
 		if (g_tls_hook_index == TLS_OUT_OF_INDEXES)
-			goto early_abort;
+			goto abort;
 
 		// adds our own DLL range as well, since the hiding is done later
 		add_all_dlls_to_dll_ranges();
@@ -996,12 +1006,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 			;
 #else
 			// if we're not debugging, then failure to read the cuckoomon config should be a critical error
-			goto early_abort;
+			goto abort;
 #endif
 
 		// don't inject into our own binaries run out of the analyzer directory unless they're the first process (intended)
 		if (wcslen(g_config.w_analyzer) && !wcsnicmp(our_process_path, g_config.w_analyzer, wcslen(g_config.w_analyzer)) && !g_config.first_process)
-			goto out;
+			goto abort;
 
 		if (g_config.debug) {
 			AddVectoredExceptionHandler(1, cuckoomon_exception_handler);
@@ -1076,13 +1086,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
     }
 
 	g_dll_main_complete = TRUE;
-
-out:
 	set_lasterrors(&lasterror);
 	return TRUE;
-early_abort:
+    
+abort:
 	sprintf(config_fname, "C:\\%u.ini", GetCurrentProcessId());
 	DeleteFileA(config_fname);
 	set_lasterrors(&lasterror);
-	return TRUE;
+	return FALSE;
 }

@@ -1,6 +1,6 @@
 /*
 CAPE - Config And Payload Extraction
-Copyright(C) 2015, 2016 Context Information Security. (kevin.oreilly@contextis.com)
+Copyright(C) 2015 - 2018 Context Information Security. (kevin.oreilly@contextis.com)
 
 This program is free software : you can redistribute it and / or modify
 it under the terms of the GNU General Public License as published by
@@ -1781,6 +1781,18 @@ BOOL SetZeroFlag(PCONTEXT Context)
 	
     Context->EFlags |= FL_ZF;
     
+    return TRUE;
+}
+
+//**************************************************************************************
+BOOL ClearZeroFlag(PCONTEXT Context)
+//**************************************************************************************
+{
+    if (Context == NULL)
+        return FALSE;
+
+    Context->EFlags &= ~FL_ZF;
+
     return TRUE;
 }
 

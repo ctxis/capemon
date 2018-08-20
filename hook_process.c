@@ -19,7 +19,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include "ntapi.h"
 #include <tlhelp32.h>
-#include <psapi.h>
 #include "hooking.h"
 #include "log.h"
 #include "pipe.h"
@@ -28,14 +27,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "unhook.h"
 #include "config.h"
-#include "CAPE\CAPE.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
-extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
-extern int DumpImageInCurrentProcess(PVOID ImageBase);
-extern int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
-extern PVOID get_process_image_base(HANDLE process_handle);
+extern void file_handle_terminate();
+extern int RoutineProcessDump();
+extern BOOL ProcessDumped;
+#ifdef CAPE_INJECTION
+extern void OpenProcessHandler(PHANDLE ProcessHandle, int Pid);
+extern void ResumeProcessHandler(HANDLE ProcessHandle);
+extern void UnmapSectionViewHandler(PVOID BaseAddress);
+extern void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID BaseAddress, PSIZE_T ViewSize);
+extern void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer, SIZE_T NumberOfBytesToWrite, PSIZE_T NumberOfBytesWritten);
+#endif
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -218,21 +221,33 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithLogonW,
 ) {
 	BOOL ret;
 	LPWSTR origcommandline = NULL;
-	
+	ENSURE_STRUCT(lpProcessInfo, PROCESS_INFORMATION);
+
 	if (lpCommandLine)
 		origcommandline = wcsdup(lpCommandLine);
 
 	ret = Old_CreateProcessWithLogonW(lpUsername, lpDomain, lpPassword, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "uuuhuuhiipp", "Username", lpUsername, "Domain", lpDomain, "Password", lpPassword, "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	LOQ_bool("process", "uuuhuuhiipp",
+		"Username", lpUsername,
+		"Domain", lpDomain,
+		"Password", lpPassword,
+		"LogonFlags", dwLogonFlags,
+		"ApplicationName", lpApplicationName,
+		"CommandLine", origcommandline,
+		"CreationFlags", dwCreationFlags,
+		"ProcessId", lpProcessInfo->dwProcessId,
+		"ThreadId", lpProcessInfo->dwThreadId,
+		"ProcessHandle", lpProcessInfo->hProcess,
+		"ThreadHandle", lpProcessInfo->hThread
+	);
 
 	if (origcommandline)
 		free(origcommandline);
 
 	if (ret) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
-		if (!(dwCreationFlags & CREATE_SUSPENDED))
+		if (!(dwCreationFlags & CREATE_SUSPENDED) && is_valid_address_range((ULONG_PTR)lpProcessInfo, (DWORD)sizeof(PROCESS_INFORMATION)))
 			ResumeThread(lpProcessInfo->hThread);
 		disable_sleep_skip();
 	}
@@ -258,13 +273,35 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithTokenW,
 
 	ret = Old_CreateProcessWithTokenW(hToken, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "huuhiipp", "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	if (lpProcessInfo) {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", lpProcessInfo->dwProcessId,
+			"ThreadId", lpProcessInfo->dwThreadId,
+			"ProcessHandle", lpProcessInfo->hProcess,
+			"ThreadHandle", lpProcessInfo->hThread
+		);
+	}
+	else {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", NULL,
+			"ThreadId", NULL,
+			"ProcessHandle", NULL,
+			"ThreadHandle", NULL
+		);
+	}
 
 	if (origcommandline)
 		free(origcommandline);
 
-	if (ret) {
+	if (ret && lpProcessInfo) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
 		if (!(dwCreationFlags & CREATE_SUSPENDED))
 			ResumeThread(lpProcessInfo->hThread);
@@ -282,12 +319,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     // although the documentation on msdn is a bit vague, this seems correct
     // for both XP and Vista (the ClientId->UniqueProcess part, that is)
 
-	NTSTATUS ret;
-	struct InjectionInfo *CurrentInjectionInfo;
-    DWORD BufferSize = MAX_PATH;
-    char DevicePath[MAX_PATH];
-    unsigned int PathLength;
     int pid = 0;
+	NTSTATUS ret;
 
     if(ClientId != NULL) {
 		__try {
@@ -305,55 +338,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
         return ret;
     }
 
+#ifdef CAPE_INJECTION
+    OpenProcessHandler(ProcessHandle, pid);
+#endif
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess,
         ObjectAttributes, ClientId);
-        
-    if (NT_SUCCESS(ret) && pid != GetCurrentProcessId()) {// && (DesiredAccess & (PROCESS_CREATE_THREAD|PROCESS_VM_WRITE|PROCESS_SUSPEND_RESUME))){
-        CurrentInjectionInfo = GetInjectionInfo(pid);
-        
-        if (CurrentInjectionInfo == NULL)
-        {   // First call for this process, create new info
-            CurrentInjectionInfo = CreateInjectionInfo(pid);
-            DoOutputDebugString("NtOpenProcess: Injection info created for pid %d.\n", pid);
-        
-            if (CurrentInjectionInfo == NULL)
-            {
-                DoOutputDebugString("NtOpenProcess: Cannot create new injection info - FATAL ERROR.\n");
-            }
-            else
-            {
-                CurrentInjectionInfo->ProcessHandle = *ProcessHandle;
-                CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
-                CurrentInjectionInfo->ImageDumped = FALSE;
-                CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
-
-                CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
-                
-                if (!CurrentInjectionInfo->ImageBase)
-                    DoOutputDebugString("NtOpenProcess: Error obtaining target process image base for process %d (handle 0x%x).\n", pid, *ProcessHandle);
-                else
-                    DoOutputDebugString("NtOpenProcess: Image base for process %d (handle 0x%x): 0x%p.\n", pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
-                
-                PathLength = GetProcessImageFileName(*ProcessHandle, DevicePath, BufferSize);
-
-                if (!PathLength)
-                {
-                    DoOutputErrorString("NtOpenProcess: Error obtaining target process name");
-                    _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
-                }
-                else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
-                    DoOutputErrorString("NtOpenProcess: Error translating target process path");                
-            }
-        }
-        else if (CurrentInjectionInfo->ImageBase == (DWORD_PTR)NULL)
-        {
-            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
-            
-            if (CurrentInjectionInfo->ImageBase)
-                DoOutputDebugString("NtOpenProcess: Image base for process %d (handle 0x%x): 0x%p.\n", pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
-        }
-    }    
-        
     LOQ_ntstatus("process", "Phi", "ProcessHandle", ProcessHandle,
         "DesiredAccess", DesiredAccess,
         "ProcessIdentifier", pid);
@@ -365,38 +354,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	__in  HANDLE ProcessHandle
 ) {
 	NTSTATUS ret;
-	struct InjectionInfo *CurrentInjectionInfo;
-
-    DWORD pid = pid_from_process_handle(ProcessHandle);
+	DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
 
-    CurrentInjectionInfo = GetInjectionInfo(pid);
-    
-    if (CurrentInjectionInfo)
-    {
-        if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
-        {
-            SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-            
-            DoOutputDebugString("NtResumeProcess hook: Dumping hollowed process %d, image base 0x%x.\n", pid, CurrentInjectionInfo->ImageBase);
-            
-            CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
-            
-            if (CurrentInjectionInfo->ImageDumped)
-            {
-                DoOutputDebugString("NtResumeProcess hook: Dumped PE image from buffer.\n");
-            }
-            else
-                DoOutputDebugString("NtResumeProcess hook: Failed to dump PE image from buffer.\n");
-        }
-
-        DumpSectionViewsForPid(pid);
-    }
-    
 	ret = Old_NtResumeProcess(ProcessHandle);
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
 	return ret;
 }
+
 
 int process_shutting_down;
 
@@ -413,14 +378,26 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
+        if (g_config.procdump && !ProcessDumped)
+        {
+            DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
+            RoutineProcessDump();
+        }
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
+        file_handle_terminate();
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
+        if (g_config.procdump && !ProcessDumped)
+        {
+            DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
+            RoutineProcessDump();
+        }
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
 		log_free();
+        file_handle_terminate();
 	}
 	else {
 		DWORD PID = pid_from_process_handle(ProcessHandle);
@@ -497,33 +474,20 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
     _In_      HANDLE ProcessHandle,
     _In_opt_  PVOID BaseAddress
 ) {
-    PINJECTIONSECTIONVIEW CurrentSectionView; 
     SIZE_T map_size = 0; MEMORY_BASIC_INFORMATION mbi;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-	DWORD protect = PAGE_READWRITE;
 	NTSTATUS ret;
 
 	if (VirtualQueryEx(ProcessHandle, BaseAddress, &mbi,
             sizeof(mbi)) == sizeof(mbi)) {
         map_size = mbi.RegionSize;
-		protect = mbi.Protect;
     }
-        
-    CurrentSectionView = SectionViewList;
-
-    while (CurrentSectionView)
-    {
-        if (CurrentSectionView->TargetProcessId && CurrentSectionView->LocalView == BaseAddress)
-        {
-            DoOutputDebugString("NtUnmapViewOfSection hook: Attempt to unmap view at 0x%p, dumping.\n", BaseAddress);
-            DumpSectionView(CurrentSectionView);
-        }
-
-        CurrentSectionView = CurrentSectionView->NextSectionView;
-    }
-
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
 	
+#ifdef CAPE_INJECTION
+    UnmapSectionViewHandler(BaseAddress);
+#endif
+
     LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", map_size);
 
@@ -541,93 +505,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 	__in     UINT InheritDisposition,
 	__in     ULONG AllocationType,
 	__in     ULONG Win32Protect
-) {
-	struct InjectionInfo *CurrentInjectionInfo;
-    struct InjectionSectionView *CurrentSectionViewInfo;
-    char DevicePath[MAX_PATH];
-    unsigned int PathLength;
-    DWORD BufferSize = MAX_PATH;
-	
-    NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
+	) {
+	NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
-	
-    DWORD pid = pid_from_process_handle(ProcessHandle);
-    
-    CurrentInjectionInfo = GetInjectionInfo(pid);
-    
-    if (pid == GetCurrentProcessId())
-    {
-        PINJECTIONSECTIONVIEW CurrentSectionView = GetSectionView(SectionHandle);
-        
-        if (!CurrentSectionView)
-        {
-            AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
-            DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and local view 0x%x to global list.\n", SectionHandle, *BaseAddress);
-        }
-        else
-        {
-            if (NT_SUCCESS(ret) && CurrentSectionView->LocalView != *BaseAddress)
-            {
-                CurrentSectionView->LocalView = *BaseAddress;
-                CurrentSectionView->ViewSize = *ViewSize;
-                DoOutputDebugString("NtMapViewOfSection hook: Updated local view to 0x%x for section view with handle 0x%x.\n", *BaseAddress, SectionHandle);
-            }
-        }
-    }
-    else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
-    {
-        CurrentSectionViewInfo = AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
+	DWORD pid = pid_from_process_handle(ProcessHandle);
 
-        if (CurrentSectionViewInfo)
-        {
-	        CurrentSectionViewInfo->TargetProcessId = pid;
-            DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
-        }
-        else
-        {
-            DoOutputDebugString("NtMapViewOfSection hook: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
-        }
-    }    
-    else if (!CurrentInjectionInfo && pid != GetCurrentProcessId())
-    {
-        CurrentInjectionInfo = CreateInjectionInfo(pid);
-        
-        if (CurrentInjectionInfo == NULL)
-        {
-            DoOutputDebugString("NtMapViewOfSection hook: Cannot create new injection info - FATAL ERROR.\n");
-        }
-        else
-        {
-            CurrentInjectionInfo->ProcessHandle = ProcessHandle;
-            CurrentInjectionInfo->ProcessId = pid;
-            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
-            CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
-            CurrentInjectionInfo->ImageDumped = FALSE;
-            CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
-
-            PathLength = GetProcessImageFileName(ProcessHandle, DevicePath, BufferSize);
-
-            if (!PathLength)
-            {
-                DoOutputErrorString("NtMapViewOfSection hook: Error obtaining target process name");
-                _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
-            }
-            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
-                DoOutputErrorString("NtMapViewOfSection hook: Error translating target process path");
-                
-            CurrentSectionViewInfo = AddSectionView(SectionHandle, *BaseAddress, *ViewSize);
-
-            if (CurrentSectionViewInfo)
-            {
-                CurrentSectionViewInfo->TargetProcessId = pid;
-                DoOutputDebugString("NtMapViewOfSection hook: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, pid);
-            }
-            else
-                DoOutputDebugString("NtMapViewOfSection hook: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, pid);
-        }
-    }
-    
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
@@ -636,6 +519,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		if (pid != GetCurrentProcessId()) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
+#ifdef CAPE_INJECTION
+            MapSectionViewHandler(SectionHandle, ProcessHandle, *BaseAddress, ViewSize);
+#endif
 		}
 	}
 	return ret;
@@ -671,11 +557,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadVirtualMemory,
 	NTSTATUS ret;
     ENSURE_SIZET(NumberOfBytesRead);
 
-    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer,
-        NumberOfBytesToRead, NumberOfBytesRead);
+    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead);
 
-    LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "Buffer", NumberOfBytesRead, Buffer);
+    LOQ_ntstatus("process", "pphB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress, "Size", NumberOfBytesToRead, "Buffer", NumberOfBytesRead, Buffer);
 
 	return ret;
 }
@@ -690,11 +574,9 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
 	BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
-    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
-        nSize, lpNumberOfBytesRead);
+    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead);
 
-    LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-        "Buffer", lpNumberOfBytesRead, lpBuffer);
+    LOQ_bool("process", "pphB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress, "Size", nSize, "Buffer", lpNumberOfBytesRead, lpBuffer);
 
     return ret;
 }
@@ -708,100 +590,27 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 ) {
 	NTSTATUS ret;
 	DWORD pid;
-	struct InjectionInfo *CurrentInjectionInfo;
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
     ENSURE_SIZET(NumberOfBytesWritten);
 
     ret = Old_NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buffer,
         NumberOfBytesToWrite, NumberOfBytesWritten);
 
 	pid = pid_from_process_handle(ProcessHandle);
-        
-    CurrentInjectionInfo = GetInjectionInfo(pid);
-    
-    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
-    {
-        CurrentInjectionInfo->WriteDetected = TRUE;
-        
-        if (NT_SUCCESS(ret) && *NumberOfBytesWritten > 0)
-        {
-            // Check if we have a valid DOS and PE header at the beginning of Buffer
-            if (*(WORD*)Buffer == IMAGE_DOS_SIGNATURE)
-            {
-                pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer);
-                
-                if (pDosHeader->e_lfanew && (unsigned int)pDosHeader->e_lfanew < PE_HEADER_LIMIT)
-                    pNtHeader = (PIMAGE_NT_HEADERS)((char*)Buffer + pDosHeader->e_lfanew);
-                
-                if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
-                {
-                    CurrentInjectionInfo->ImageBase = (DWORD_PTR)BaseAddress;
-                    
-                    DoOutputDebugString("NtWriteVirtualMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
 
-                    if (CurrentInjectionInfo->ImageDumped == FALSE)
-                    {
-                        SetCapeMetaData(INJECTION_PE, pid, ProcessHandle, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((PVOID)Buffer);
-                        
-                        if (CurrentInjectionInfo->ImageDumped)
-                        {
-                            CurrentInjectionInfo->BufferBase = (LPVOID)Buffer;
-                            CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
-                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped PE image from buffer at 0x%x, SizeOfImage 0x%x.\n", Buffer, CurrentInjectionInfo->BufferSizeOfImage);
-                        }
-                        else
-                            DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump PE image from buffer.\n");
-                    }                    
-                }
-                else
-                {
-                    DoOutputDebugString("NtWriteVirtualMemory hook: invalid PE file in buffer, attempting raw dump.\n");
-                    
-                    CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                    CapeMetaData->TargetPid = pid;
-                    if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
-                        DoOutputDebugString("NtWriteVirtualMemory hook: Dumped malformed PE image from buffer.");
-                    else
-                        DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump malformed PE image from buffer.");                    
-                }
-            }
-            else
-            {   
-                if (*NumberOfBytesWritten > 0x10)
-                {
-                    if (CurrentInjectionInfo->BufferBase && Buffer > CurrentInjectionInfo->BufferBase && 
-                        Buffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
-                    {   
-                        // Looks like a previously dumped PE image is being written a section at a time to the target process.
-                        // We don't want to dump these writes.
-                        DoOutputDebugString("NtWriteVirtualMemory hook: injection of section of PE image which has already been dumped.\n");
-                    }
-                    else
-                    {
-                        DoOutputDebugString("NtWriteVirtualMemory hook: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", Buffer, *NumberOfBytesWritten, pid);
-                    
-                        // dump injected code to .bin file
-                        CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                        CapeMetaData->TargetPid = pid;
-                        if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
-                            DoOutputDebugString("NtWriteVirtualMemory hook: Dumped injected code from buffer.");
-                        else
-                            DoOutputDebugString("NtWriteVirtualMemory hook: Failed to dump injected code from buffer.");
-                    }
-                }
-            }
-        }
-    }
+	 LOQ_ntstatus("process", "ppBhs",
+	    "ProcessHandle", ProcessHandle,
+	    "BaseAddress", BaseAddress,
+	    "Buffer", NumberOfBytesWritten, Buffer,
+	    "BufferLength", is_valid_address_range((ULONG_PTR)NumberOfBytesWritten, 4) ? *NumberOfBytesWritten : 0,
+	    "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (pid != GetCurrentProcessId()) {
-		LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-			"Buffer", NumberOfBytesWritten, Buffer, "BufferLength", *NumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-
 		if (NT_SUCCESS(ret)) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
+#ifdef CAPE_INJECTION
+            WriteMemoryHandler(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten);
+#endif            
 		}
 	}
 
@@ -817,129 +626,23 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 ) {
 	BOOL ret;
 	DWORD pid;
-	struct InjectionInfo *CurrentInjectionInfo;
-    PIMAGE_DOS_HEADER pDosHeader;
-    PIMAGE_NT_HEADERS pNtHeader;
     ENSURE_SIZET(lpNumberOfBytesWritten);
 
     ret = Old_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer,
         nSize, lpNumberOfBytesWritten);
 
-    pid = pid_from_process_handle(hProcess);
-    
-    CurrentInjectionInfo = GetInjectionInfo(pid);
+	pid = pid_from_process_handle(hProcess);
 
-    if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == pid)
-    {
-        CurrentInjectionInfo->WriteDetected = TRUE;
-        
-        if ((unsigned int)((PUCHAR)CurrentInjectionInfo->StackPointer - (PUCHAR)lpBaseAddress) < 0x100)
-        {
-            PINJECTIONSECTIONVIEW CurrentSectionView = SectionViewList;
-            
-            DoOutputDebugString("WriteProcessMemory hook: Target address is stack of target process %d.\n", pid);
-            
-            while (CurrentSectionView)
-            {
-#ifdef _WIN64
-                if (CurrentSectionView->SectionHandle == (HANDLE)(*((DWORD_PTR*)lpBuffer + 1)))
-#else
-                if (CurrentSectionView->SectionHandle == (HANDLE)(*((DWORD*)lpBuffer + 1)))
-#endif
-                {
-                    CurrentSectionView->TargetProcessId = pid;
-                    DoOutputDebugString("WriteProcessMemory hook: Section handle 0x%x written to stack of target process %d.\n", CurrentSectionView->SectionHandle, pid);
-                }
-                
-                CurrentSectionView = CurrentSectionView->NextSectionView;
-            }
-        }
-        
-        if (NT_SUCCESS(ret) && *lpNumberOfBytesWritten > 0)
-        {
-            // Check if we have a valid DOS and PE header at the beginning of Buffer
-            if (*(WORD*)lpBuffer == IMAGE_DOS_SIGNATURE)
-            {
-                pDosHeader = (PIMAGE_DOS_HEADER)((char*)lpBuffer);
-                
-                if (pDosHeader->e_lfanew && (unsigned int)pDosHeader->e_lfanew < PE_HEADER_LIMIT)
-                    pNtHeader = (PIMAGE_NT_HEADERS)((char*)lpBuffer + pDosHeader->e_lfanew);
-                
-                if (pNtHeader->Signature == IMAGE_NT_SIGNATURE && pNtHeader->FileHeader.Machine != 0 && pNtHeader->FileHeader.SizeOfOptionalHeader != 0)
-                {
-                    CurrentInjectionInfo->ImageBase = (DWORD_PTR)lpBaseAddress;
-                    
-                    DoOutputDebugString("WriteProcessMemory hook: Executable binary injected into process %d (ImageBase 0x%x)\n", pid, CurrentInjectionInfo->ImageBase);
-
-                    if (CurrentInjectionInfo->ImageDumped == FALSE)
-                    {
-                        SetCapeMetaData(INJECTION_PE, pid, hProcess, NULL);
-                        CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((PVOID)lpBuffer);
-                        
-                        if (CurrentInjectionInfo->ImageDumped)
-                        {
-                            CurrentInjectionInfo->BufferBase = (LPVOID)lpBuffer;
-                            CurrentInjectionInfo->BufferSizeOfImage = pNtHeader->OptionalHeader.SizeOfImage;
-                            DoOutputDebugString("WriteProcessMemory hook: Dumped PE image from buffer at 0x%x, SizeOfImage 0x%x.\n", lpBuffer, CurrentInjectionInfo->BufferSizeOfImage);
-                        }
-                        else
-                        {
-                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump PE image from buffer, dumping raw buffer.\n");
-
-                            if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
-                                DoOutputDebugString("WriteProcessMemory hook: Dumped malformed PE image from buffer.");
-                            else
-                                DoOutputDebugString("WriteProcessMemory hook: Failed to dump malformed PE image from buffer.");
-                        }
-                    }                    
-                }
-                else
-                {
-                    DoOutputDebugString("WriteProcessMemory hook: invalid PE file in buffer, attempting raw dump.\n");
-                    
-                    CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                    CapeMetaData->TargetPid = pid;
-                    if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
-                        DoOutputDebugString("WriteProcessMemory hook: Dumped malformed PE image from buffer.");
-                    else
-                        DoOutputDebugString("WriteProcessMemory hook: Failed to dump malformed PE image from buffer.");                    
-                }
-            }
-            else
-            {   
-                if (*lpNumberOfBytesWritten > 0x10)
-                {
-                    if (CurrentInjectionInfo->BufferBase && lpBuffer > CurrentInjectionInfo->BufferBase && 
-                        lpBuffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
-                    {   
-                        // Looks like a previously dumped PE image is being written a section at a time to the target process.
-                        // We don't want to dump these writes.
-                        DoOutputDebugString("WriteProcessMemory hook: injection of section of PE image which has already been dumped.\n");
-                    }
-                    else
-                    {
-                        DoOutputDebugString("WriteProcessMemory hook: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", lpBuffer, *lpNumberOfBytesWritten, pid);
-                    
-                        // dump injected code to .bin file
-                        CapeMetaData->DumpType = INJECTION_SHELLCODE;
-                        CapeMetaData->TargetPid = pid;
-                        if (DumpMemory((LPVOID)lpBuffer, *lpNumberOfBytesWritten))
-                            DoOutputDebugString("WriteProcessMemory hook: Dumped injected code from buffer.");
-                        else
-                            DoOutputDebugString("WriteProcessMemory hook: Failed to dump injected code from buffer.");
-                    }
-                }
-            }
-        }
-    }
+    LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
+        "Buffer", lpNumberOfBytesWritten, lpBuffer, "BufferLength", *lpNumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (pid != GetCurrentProcessId()) {
-		LOQ_bool("process", "ppBhs", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-			"Buffer", lpNumberOfBytesWritten, lpBuffer, "BufferLength", *lpNumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
-
 		if (ret) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
+#ifdef CAPE_INJECTION
+            WriteMemoryHandler(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten);
+#endif            
 		}
 	}
 
@@ -1012,12 +715,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
-	
+
 	ret = Old_NtProtectVirtualMemory(ProcessHandle, BaseAddress,
         NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
 
 	memset(&meminfo, 0, sizeof(meminfo));
-	if (NT_SUCCESS(ret)) {
+	if (NT_SUCCESS(ret) && OldAccessProtection && *OldAccessProtection == NewAccessProtection) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
 		VirtualQueryEx(ProcessHandle, *BaseAddress, &meminfo, sizeof(meminfo));
@@ -1060,7 +763,7 @@ HOOKDEF(BOOL, WINAPI, VirtualProtectEx,
         lpflOldProtect);
 
 	memset(&meminfo, 0, sizeof(meminfo));
-	if (ret) {
+	if (ret && lpflOldProtect && *lpflOldProtect == flNewProtect) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
 		VirtualQueryEx(hProcess, lpAddress, &meminfo, sizeof(meminfo));
@@ -1178,7 +881,7 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 		if (tebtmp[0] != 0xffffffff)
 			seh = ((DWORD *)tebtmp[0])[1];
 		if (seh < g_our_dll_base || seh >= (g_our_dll_base + g_our_dll_size)) {
-			_snprintf(buf, sizeof(buf), "Exception reported at offset 0x%x in cuckoomon itself while accessing 0x%x from hook %s", (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
+			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in capemon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
 			log_anomaly("cuckoocrash", buf);
 		}
 	}

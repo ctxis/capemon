@@ -22,7 +22,7 @@ extern CHAR s_szDllPath[MAX_PATH];
 //Global debugger switch
 #define DEBUGGER_ENABLED 0
 
-void GetHookCallerBase();
+PVOID GetHookCallerBase();
 PVOID GetPageAddress(PVOID Address);
 PVOID GetAllocationBase(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
@@ -38,6 +38,7 @@ int ScanPageForNonZero(LPVOID Address);
 int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int IsDisguisedPEHeader(LPVOID Buffer);
+int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 int DumpImageInCurrentProcess(LPVOID ImageBase);
 void DumpSectionViewsForPid(DWORD Pid);
 
@@ -152,7 +153,9 @@ enum {
     URSNIF_PAYLOAD          = 0x25,
 	
     CERBER_CONFIG           = 0x30,
-    CERBER_PAYLOAD          = 0x31
+    CERBER_PAYLOAD          = 0x31,
+
+    DATADUMP                = 0x66
 };
 
 HANDLE EvilGrabRegHandle;

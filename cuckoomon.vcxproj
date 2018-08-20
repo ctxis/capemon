@@ -137,7 +137,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGSNDEBUG;_WINDOWS;_USRDLL;MONGO_HAVE_STDINT;MONGO_STATIC_BUILD;CUCKOOMON_EXPORTS;_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS;CAPE_INJECTION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -199,6 +199,7 @@
     <ClCompile Include="CAPE\CAPE.c" />
     <ClCompile Include="CAPE\Debugger.c" />
     <ClCompile Include="CAPE\GetThreadId.c" />
+    <ClCompile Include="CAPE\Injection.c" />
     <ClCompile Include="CAPE\Output.c" />
     <ClCompile Include="CAPE\ScyllaHarness.cpp" />
     <ClCompile Include="CAPE\Scylla\ApiReader.cpp" />
