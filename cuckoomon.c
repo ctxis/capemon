@@ -86,6 +86,8 @@ static hook_t g_hooks[] = {
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
+    //HOOK_SPECIAL(kernel32, lstrcpynA),
+    //HOOK_SPECIAL(kernel32, lstrcmpiA),
 
 	// has special handling
 
@@ -275,8 +277,8 @@ static hook_t g_hooks[] = {
     //HOOK(user32, EnumWindows),
 	HOOK(user32, PostMessageA),
 	HOOK(user32, PostMessageW),
-	HOOK(user32, SendMessageA),
-	HOOK(user32, SendMessageW),
+	//HOOK(user32, SendMessageA),
+	//HOOK(user32, SendMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -366,7 +368,6 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, memcpy),
 #endif
 	HOOK(msvcrt, memcpy),
-	//HOOK(kernel32, SizeofResource),
     HOOK(msvcrt, srand),
     
 	// for debugging only
@@ -428,6 +429,28 @@ static hook_t g_hooks[] = {
 	HOOK(user32, SystemParametersInfoW),
 	HOOK(pstorec, PStoreCreateInstance),
 	HOOK(advapi32, SaferIdentifyLevel),
+
+	// PE resource related functions
+	HOOK(kernel32, FindResourceExA),
+	HOOK(kernel32, FindResourceExW),
+	HOOK(kernel32, LoadResource),
+	HOOK(kernel32, LockResource),
+	HOOK(kernel32, SizeofResource),
+
+	// functions with callbacks (abused for control-flow transfer)
+	HOOK(kernel32, EnumResourceTypesExA),
+	HOOK(kernel32, EnumResourceTypesExW),
+	HOOK(kernel32, EnumCalendarInfoA),
+	HOOK(kernel32, EnumCalendarInfoW),
+	HOOK(kernel32, EnumTimeFormatsA),
+	HOOK(kernel32, EnumTimeFormatsW),
+
+	// transaction functions (for process doppel-ganging)
+	HOOK(ntdll, NtCreateTransaction),
+	HOOK(ntdll, NtOpenTransaction),
+	HOOK(ntdll, NtRollbackTransaction),
+	HOOK(ntdll, NtCommitTransaction),
+	HOOK(ntdll, RtlSetCurrentTransaction),
 
 	//
     // Network Hooks
@@ -662,10 +685,9 @@ VOID CALLBACK New_DllLoadNotification(
         
 	if (NotificationReason == 1) {
 		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest)) {
-            if (base_of_dll_of_interest)
-                DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
-			else
+            if (!base_of_dll_of_interest)
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
         }
         else {
             // unoptimized, but easy

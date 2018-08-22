@@ -2864,11 +2864,6 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
 	_Out_opt_ PULONG ReturnLength
 );
 
-extern HOOKDEF(unsigned int, WINAPIV, SizeofResource,
-    _In_opt_ HMODULE hModule,
-    _In_     HRSRC   hResInfo
-);
-
 extern HOOKDEF(void, WINAPIV, srand,
    unsigned int seed
 );   
@@ -2886,4 +2881,120 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationThread,
     OUT PVOID ThreadInformation,
     IN ULONG ThreadInformationLength,
     OUT PULONG ReturnLength OPTIONAL
+);
+
+extern HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR  lpString1,
+  _In_  LPSTR  lpString2,
+  _In_  int    iMaxLength
+);
+
+extern HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
+);
+
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExA,
+  HMODULE hModule,
+  LPCSTR lpType,
+  LPCSTR lpName,
+  WORD wLanguage
+);
+
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExW,
+  HMODULE hModule,
+  LPCWSTR lpType,
+  LPCWSTR lpName,
+  WORD wLanguage
+);
+
+extern HOOKDEF(HGLOBAL, WINAPI, LoadResource,
+  _In_opt_ HMODULE hModule,
+  _In_     HRSRC   hResInfo
+);
+
+extern HOOKDEF(LPVOID, WINAPI, LockResource,
+  _In_ HGLOBAL hResData
+);
+
+extern HOOKDEF(DWORD, WINAPI, SizeofResource,
+    _In_opt_ HMODULE hModule,
+    _In_     HRSRC   hResInfo
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExA,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExW,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoA,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoW,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsA,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsW,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCreateTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle,
+  ULONG              CreateOptions,
+  ULONG              IsolationLevel,
+  ULONG              IsolationFlags,
+  PLARGE_INTEGER     Timeout,
+  PUNICODE_STRING    Description
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtOpenTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtRollbackTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCommitTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
+    _In_ HANDLE     TransactionHandle
 );

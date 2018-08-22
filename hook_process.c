@@ -33,11 +33,11 @@ extern void file_handle_terminate();
 extern int RoutineProcessDump();
 extern BOOL ProcessDumped;
 #ifdef CAPE_INJECTION
-extern void OpenProcessHandler(PHANDLE ProcessHandle, int Pid);
-extern void ResumeProcessHandler(HANDLE ProcessHandle);
+extern void OpenProcessHandler(PHANDLE ProcessHandle, DWORD Pid);
+extern void ResumeProcessHandler(HANDLE ProcessHandle, DWORD Pid);
 extern void UnmapSectionViewHandler(PVOID BaseAddress);
 extern void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID BaseAddress, PSIZE_T ViewSize);
-extern void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer, SIZE_T NumberOfBytesToWrite, PSIZE_T NumberOfBytesWritten);
+extern void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer, SIZE_T NumberOfBytesWritten);
 #endif
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
@@ -319,12 +319,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     // although the documentation on msdn is a bit vague, this seems correct
     // for both XP and Vista (the ClientId->UniqueProcess part, that is)
 
-    int pid = 0;
+    DWORD pid = 0;
 	NTSTATUS ret;
 
     if(ClientId != NULL) {
 		__try {
-			pid = (int)(ULONG_PTR)ClientId->UniqueProcess;
+			pid = (DWORD)(ULONG_PTR)ClientId->UniqueProcess;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) {
 			;
@@ -356,7 +356,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	NTSTATUS ret;
 	DWORD pid = pid_from_process_handle(ProcessHandle);
 	pipe("RESUME:%d", pid);
-
+#ifdef CAPE_INJECTION
+    ResumeProcessHandler(ProcessHandle, pid);
+#endif
 	ret = Old_NtResumeProcess(ProcessHandle);
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
 	return ret;
@@ -482,12 +484,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
             sizeof(mbi)) == sizeof(mbi)) {
         map_size = mbi.RegionSize;
     }
-    ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
-	
 #ifdef CAPE_INJECTION
     UnmapSectionViewHandler(BaseAddress);
 #endif
 
+    ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
+	
     LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", map_size);
 
@@ -516,13 +518,16 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (NT_SUCCESS(ret)) {
-		if (pid != GetCurrentProcessId()) {
+#ifdef CAPE_INJECTION
+        MapSectionViewHandler(SectionHandle, ProcessHandle, *BaseAddress, ViewSize);
+#endif
+        if (pid != GetCurrentProcessId()) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
-#ifdef CAPE_INJECTION
-            MapSectionViewHandler(SectionHandle, ProcessHandle, *BaseAddress, ViewSize);
-#endif
 		}
+		//else {
+		//	prevent_module_reloading(BaseAddress);
+		//}
 	}
 	return ret;
 }
@@ -609,7 +614,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
 #ifdef CAPE_INJECTION
-            WriteMemoryHandler(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten);
+            WriteMemoryHandler(ProcessHandle, BaseAddress, Buffer, *NumberOfBytesWritten);
 #endif            
 		}
 	}
@@ -641,7 +646,7 @@ HOOKDEF(BOOL, WINAPI, WriteProcessMemory,
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
 #ifdef CAPE_INJECTION
-            WriteMemoryHandler(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten);
+            WriteMemoryHandler(hProcess, lpBaseAddress, lpBuffer, *lpNumberOfBytesWritten);
 #endif            
 		}
 	}

@@ -569,10 +569,7 @@ PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
     while (CurrentSectionView)
 	{
         if (CurrentSectionView->SectionHandle == SectionHandle)
-        {
-            DoOutputDebugString("GetSectionView: returning section view pointer 0x%x.\n", CurrentSectionView);
             return CurrentSectionView;
-        }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;
 	}
@@ -1453,6 +1450,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
                             //break;
                         }
                     }
+
                     MachineProbe += sizeof(WORD);
                     
                     if (pNtHeader && (PUCHAR)pNtHeader == (PUCHAR)pDosHeader && pNtHeader->OptionalHeader.SizeOfHeaders)
@@ -1471,8 +1469,6 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             *(WORD*)pDosHeader = IMAGE_DOS_SIGNATURE;
             *(DWORD*)((PUCHAR)pDosHeader + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
-            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)pDosHeader);
-            
             if (DumpImageInCurrentProcess((LPVOID)pDosHeader))
             {
                 DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", pDosHeader);

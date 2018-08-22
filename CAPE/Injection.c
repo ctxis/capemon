@@ -143,7 +143,7 @@ void CreateProcessHandler(LPWSTR lpApplicationName, LPWSTR lpCommandLine, LPPROC
     DoOutputDebugString("CreateProcessHandler: Injection info set for new process %d, ImageBase: 0x%x", CurrentInjectionInfo->ProcessId, CurrentInjectionInfo->ImageBase);
 }
 
-void OpenProcessHandler(PHANDLE ProcessHandle, int Pid)
+void OpenProcessHandler(PHANDLE ProcessHandle, DWORD Pid)
 {
 	struct InjectionInfo *CurrentInjectionInfo;
     DWORD BufferSize = MAX_PATH;
@@ -171,9 +171,7 @@ void OpenProcessHandler(PHANDLE ProcessHandle, int Pid)
 
             CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(*ProcessHandle);
             
-            if (!CurrentInjectionInfo->ImageBase)
-                DoOutputDebugString("OpenProcessHandler: Error obtaining target process image base for process %d (handle 0x%x).\n", Pid, *ProcessHandle);
-            else
+            if (CurrentInjectionInfo->ImageBase)
                 DoOutputDebugString("OpenProcessHandler: Image base for process %d (handle 0x%x): 0x%p.\n", Pid, *ProcessHandle, CurrentInjectionInfo->ImageBase);
             
             PathLength = GetProcessImageFileName(*ProcessHandle, DevicePath, BufferSize);
@@ -196,11 +194,9 @@ void OpenProcessHandler(PHANDLE ProcessHandle, int Pid)
     }
 }
 
-void ResumeProcessHandler(HANDLE ProcessHandle)
+void ResumeProcessHandler(HANDLE ProcessHandle, DWORD Pid)
 {
 	struct InjectionInfo *CurrentInjectionInfo;
-
-    DWORD Pid = pid_from_process_handle(ProcessHandle);
 
     CurrentInjectionInfo = GetInjectionInfo(Pid);
     
@@ -237,6 +233,8 @@ void UnmapSectionViewHandler(PVOID BaseAddress)
         if (CurrentSectionView->TargetProcessId && CurrentSectionView->LocalView == BaseAddress)
         {
             DoOutputDebugString("UnmapSectionViewHandler: Attempt to unmap view at 0x%p, dumping.\n", BaseAddress);
+            CapeMetaData->DumpType = INJECTION_PE;
+            CapeMetaData->TargetPid = CurrentSectionView->TargetProcessId;
             DumpSectionView(CurrentSectionView);
         }
 
@@ -255,7 +253,7 @@ void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID Bas
     DWORD Pid = pid_from_process_handle(ProcessHandle);
     
     CurrentInjectionInfo = GetInjectionInfo(Pid);
-    
+
     if (Pid == GetCurrentProcessId())
     {
         PINJECTIONSECTIONVIEW CurrentSectionView = GetSectionView(SectionHandle);
@@ -282,7 +280,7 @@ void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID Bas
         if (CurrentSectionViewInfo)
         {
 	        CurrentSectionViewInfo->TargetProcessId = Pid;
-            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, Pid);
+            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d.\n", SectionHandle, Pid);
         }
         else
         {
@@ -321,7 +319,7 @@ void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID Bas
             if (CurrentSectionViewInfo)
             {
                 CurrentSectionViewInfo->TargetProcessId = Pid;
-                DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x and to target process %d.\n", SectionHandle, Pid);
+                DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d.\n", SectionHandle, Pid);
             }
             else
                 DoOutputDebugString("MapSectionViewHandler: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, Pid);
@@ -329,7 +327,7 @@ void MapSectionViewHandler(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID Bas
     }
 }
 
-void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer, SIZE_T NumberOfBytesToWrite, PSIZE_T NumberOfBytesWritten)
+void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer, SIZE_T NumberOfBytesWritten)
 {
 	DWORD Pid;
 	struct InjectionInfo *CurrentInjectionInfo;
@@ -343,7 +341,7 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
     if (!CurrentInjectionInfo || CurrentInjectionInfo->ProcessId != Pid)
         return;
     
-    if (*NumberOfBytesWritten == 0)
+    if (NumberOfBytesWritten == 0)
         return;
     
     CurrentInjectionInfo->WriteDetected = TRUE;
@@ -377,7 +375,7 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
                 
                 CapeMetaData->DumpType = INJECTION_SHELLCODE;
                 CapeMetaData->TargetPid = Pid;
-                if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
+                if (DumpMemory((LPVOID)Buffer, NumberOfBytesWritten))
                     DoOutputDebugString("WriteMemoryHandler: Dumped malformed PE image from buffer.");
                 else
                     DoOutputDebugString("WriteMemoryHandler: Failed to dump malformed PE image from buffer.");                    
@@ -386,7 +384,7 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
     }
     else
     {   
-        if (*NumberOfBytesWritten > 0x10)
+        if (NumberOfBytesWritten > 0x10)
         {
             if (CurrentInjectionInfo->BufferBase && Buffer > CurrentInjectionInfo->BufferBase && 
                 Buffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
@@ -397,12 +395,12 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
             }
             else
             {
-                DoOutputDebugString("WriteMemoryHandler: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", Buffer, *NumberOfBytesWritten, Pid);
+                DoOutputDebugString("WriteMemoryHandler: Shellcode at 0x%x (size 0x%x) injected into process %d.\n", Buffer, NumberOfBytesWritten, Pid);
             
                 // dump injected code/data
                 CapeMetaData->DumpType = INJECTION_SHELLCODE;
                 CapeMetaData->TargetPid = Pid;
-                if (DumpMemory((LPVOID)Buffer, *NumberOfBytesWritten))
+                if (DumpMemory((LPVOID)Buffer, NumberOfBytesWritten))
                     DoOutputDebugString("WriteMemoryHandler: Dumped injected code/data from buffer.");
                 else
                     DoOutputDebugString("WriteMemoryHandler: Failed to dump injected code/data from buffer.");
