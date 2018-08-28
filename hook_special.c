@@ -162,13 +162,13 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
 		if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
 			dont_monitor = TRUE;
 
-		if (!dont_monitor)
+		if (!dont_monitor) {
+#ifdef CAPE_INJECTION
+            CreateProcessHandler(lpApplicationName, lpCommandLine, lpProcessInformation);
+#endif
 			pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
 			    lpProcessInformation->dwThreadId);
-
-#ifdef CAPE_INJECTION
-        CreateProcessHandler(lpApplicationName, lpCommandLine, lpProcessInformation);
-#endif
+        }
 
         // if the CREATE_SUSPENDED flag was not set, then we have to resume the main thread ourself
         if ((dwCreationFlags & CREATE_SUSPENDED) == 0) {

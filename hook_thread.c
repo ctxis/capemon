@@ -247,8 +247,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
 ) {
 	ENSURE_HANDLE(ThreadHandle);
 	ENSURE_STRUCT(Context, CONTEXT);
+
     NTSTATUS ret = Old_NtGetContextThread(ThreadHandle, Context);
-	if (Context && Context->ContextFlags & CONTEXT_CONTROL)
+
+    if (Context && Context->ContextFlags & CONTEXT_CONTROL)
 #ifdef _WIN64
 		LOQ_ntstatus("threading", "pp", "ThreadHandle", ThreadHandle, "InstructionPointer", Context->Rcx);
 #else
@@ -271,9 +273,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
 	DWORD pid = pid_from_thread_handle(ThreadHandle);
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 
-    if (pid != GetCurrentProcessId())
-        pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
-
     ret = Old_NtSetContextThread(ThreadHandle, Context);
 
     if (Context && Context->ContextFlags & CONTEXT_CONTROL)
@@ -287,6 +286,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
 #ifdef CAPE_INJECTION
     SetThreadContextHandler(pid, Context);
 #endif
+    if (pid != GetCurrentProcessId())
+        pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
+
     return ret;
 }
 
@@ -325,10 +327,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeThread,
 	DWORD tid = tid_from_thread_handle(ThreadHandle);
 	NTSTATUS ret;
 	ENSURE_ULONG(SuspendCount);
-	pipe("RESUME:%d,%d", pid, tid);
 #ifdef CAPE_INJECTION
     ResumeThreadHandler(pid);
 #endif
+	pipe("RESUME:%d,%d", pid, tid);
 
     ret = Old_NtResumeThread(ThreadHandle, SuspendCount);
     LOQ_ntstatus("threading", "pI", "ThreadHandle", ThreadHandle, "SuspendCount", SuspendCount);
