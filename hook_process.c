@@ -1,4 +1,4 @@
-/*
+ /*
 Cuckoo Sandbox - Automated Malware Analysis
 Copyright (C) 2010-2015 Cuckoo Sandbox Developers, Optiv, Inc. (brad.spengler@optiv.com)
 
@@ -505,6 +505,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		if (pid != GetCurrentProcessId()) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
+		}
+		else {
+			prevent_module_reloading(BaseAddress);
 		}
 	}
 	return ret;
