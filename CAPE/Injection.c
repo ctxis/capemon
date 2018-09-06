@@ -295,7 +295,7 @@ void MapSectionViewHandler(HANDLE ProcessHandle, HANDLE SectionHandle, PVOID Bas
                 DoOutputErrorString("MapSectionViewHandler: Error obtaining target process name");
                 _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
             }
-            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
+            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize))
                 DoOutputErrorString("MapSectionViewHandler: Error translating target process path");
                 
             CurrentSectionViewInfo = AddSectionView(SectionHandle, BaseAddress, ViewSize);
@@ -337,15 +337,51 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
 	struct InjectionInfo *CurrentInjectionInfo;
     PIMAGE_DOS_HEADER pDosHeader;
     PIMAGE_NT_HEADERS pNtHeader;
+    char DevicePath[MAX_PATH];
+    unsigned int PathLength;
+    DWORD BufferSize = MAX_PATH;
 
 	Pid = pid_from_process_handle(ProcessHandle);
     
     CurrentInjectionInfo = GetInjectionInfo(Pid);
     
-    if (!CurrentInjectionInfo || CurrentInjectionInfo->ProcessId != Pid)
+    if (NumberOfBytesWritten == 0)
         return;
 
-    if (NumberOfBytesWritten == 0)
+    if (!CurrentInjectionInfo && Pid != GetCurrentProcessId())
+    {
+        CurrentInjectionInfo = CreateInjectionInfo(Pid);
+
+        if (CurrentInjectionInfo == NULL)
+        {
+            DoOutputDebugString("WriteMemoryHandler: Cannot create new injection info - error.\n");
+        }
+        else
+        {
+            CurrentInjectionInfo->ProcessHandle = ProcessHandle;
+            CurrentInjectionInfo->ProcessId = Pid;
+            CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
+            CurrentInjectionInfo->ImageDumped = FALSE;
+            CapeMetaData->TargetProcess = (char*)malloc(BufferSize);
+
+            CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(ProcessHandle);
+
+            if (CurrentInjectionInfo->ImageBase)
+                DoOutputDebugString("WriteMemoryHandler: Image base for process %d (handle 0x%x): 0x%p.\n", Pid, ProcessHandle, CurrentInjectionInfo->ImageBase);
+
+            PathLength = GetProcessImageFileName(ProcessHandle, DevicePath, BufferSize);
+
+            if (!PathLength)
+            {
+                DoOutputErrorString("WriteMemoryHandler: Error obtaining target process name");
+                _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
+            }
+            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize))
+                DoOutputErrorString("WriteMemoryHandler: Error translating target process path");
+        }
+    }
+
+    if (CurrentInjectionInfo->ProcessId != Pid)
         return;
 
     CurrentInjectionInfo->WriteDetected = TRUE;
