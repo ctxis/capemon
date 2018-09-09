@@ -1800,13 +1800,21 @@ BOOL ClearZeroFlag(PCONTEXT Context)
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler)
 //**************************************************************************************
 {
-	if (Context == NULL)
+    PDR7 Dr7;
+
+    if (Context == NULL)
         return FALSE;
-    
+
+    Dr7 = (PDR7)&(Context->Dr7);
+
     // set the trap flag
     Context->EFlags |= FL_TF;
     
     SingleStepHandler = (SINGLE_STEP_HANDLER)Handler;
+
+    // Set the LBR & BTF bits
+    Dr7->LE = 1;
+    Dr7->GE = 1;
 
     return TRUE;
 }
@@ -2174,8 +2182,6 @@ BOOL ContextSetThreadBreakpoint
 	}
 	else
 	{
-		DoOutputDebugString("ContextSetThreadBreakpoint: Call to ContextSetDebugRegister succeeded.\n");
-          
         CurrentThreadBreakpoint = GetThreadBreakpoints(GetCurrentThreadId());
         
         if (CurrentThreadBreakpoint == NULL)

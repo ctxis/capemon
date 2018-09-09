@@ -32,7 +32,7 @@ extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 extern BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize);
 
-BOOL BreakpointSet, DllPrinted;
+BOOL BreakpointSet, ModuleNamePrinted;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
 BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
@@ -51,8 +51,6 @@ BOOL DoSetSingleStepMode(int Register, PCONTEXT Context, PVOID Handler)
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
 	PVOID ReturnAddress;
-    char* DllName;
-    unsigned int DllRVA;
 
     _DecodeResult Result;
     _OffsetType Offset = 0;
@@ -68,23 +66,15 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
     
 #ifdef _WIN64
-    DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Rip, &DllRVA);
     _DecodeType DecodeType = Decode64Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
     DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
-    DllName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Eip, &DllRVA);
     _DecodeType DecodeType = Decode32Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
     DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
 
-    if (!DllPrinted && DllName)
-    {
-        DoOutputDebugString("Trace: Tracing in %s (RVA 0x%x).\n", DllName, DllRVA);
-        DllPrinted = TRUE;
-    }
-    
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
         if (TraceDepthCount >= TraceDepthLimit)
@@ -127,10 +117,12 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 
 BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
+	PVOID ReturnAddress;
+    char* ModuleName;
     _DecodeResult Result;
     _OffsetType Offset = 0;
     _DecodedInst DecodedInstruction;
-    unsigned int DecodedInstructionsCount = 0;
+    unsigned int DllRVA, DecodedInstructionsCount = 0;
 
 	if (pBreakpointInfo == NULL)
 	{
@@ -145,15 +137,58 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 	}
 
 #ifdef _WIN64
+    ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Rip, &DllRVA);
     _DecodeType DecodeType = Decode64Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
     DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
+    ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Eip, &DllRVA);
     _DecodeType DecodeType = Decode32Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
     DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
     
+    if (!ModuleNamePrinted && ModuleName)
+    {
+        DoOutputDebugString("BreakpointCallback: Break in %s (RVA 0x%x).\n", ModuleName, DllRVA);
+        ModuleNamePrinted = TRUE;
+    }
+
+    if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
+    {
+        if (TraceDepthCount >= TraceDepthLimit)
+        {
+#ifdef _WIN64
+            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
+#else
+            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size);
+#endif
+            if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, 0, (BYTE*)ReturnAddress, BP_EXEC, BreakpointCallback))
+            {
+                DoOutputDebugString("BreakpointCallback: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
+            }
+
+            StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+
+            return TRUE;
+        }
+        else
+            TraceDepthCount++;
+    }
+    else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
+    {
+        if (TraceDepthCount < 0)
+        {
+            DoOutputDebugString("BreakpointCallback: Stepping out of initial depth, releasing.");
+
+            StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
+
+            return TRUE;
+        }
+        else
+            TraceDepthCount--;
+    }
+
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
     DoSetSingleStepMode(pBreakpointInfo->Register, ExceptionInfo->ContextRecord, Trace);
