@@ -1800,21 +1800,13 @@ BOOL ClearZeroFlag(PCONTEXT Context)
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler)
 //**************************************************************************************
 {
-    PDR7 Dr7;
-
-    if (Context == NULL)
+	if (Context == NULL)
         return FALSE;
-
-    Dr7 = (PDR7)&(Context->Dr7);
 
     // set the trap flag
     Context->EFlags |= FL_TF;
-    
-    SingleStepHandler = (SINGLE_STEP_HANDLER)Handler;
 
-    // Set the LBR & BTF bits
-    Dr7->LE = 1;
-    Dr7->GE = 1;
+    SingleStepHandler = (SINGLE_STEP_HANDLER)Handler;
 
     return TRUE;
 }
@@ -1849,7 +1841,7 @@ BOOL StepOverExecutionBreakpoint(PCONTEXT Context, PBREAKPOINTINFO pBreakpointIn
         return FALSE;
 
     Dr7 = (PDR7)&(Context->Dr7);
-    
+
 	switch(pBreakpointInfo->Register)
 	{
         case 0:
