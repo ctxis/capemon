@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern PVOID bp0, bp1, bp2, bp3;
+extern int EntryPointRegister;
 
 int read_config(void)
 {
@@ -51,6 +52,8 @@ int read_config(void)
 	g_config.hook_type = HOOK_HOTPATCH_JMP_INDIRECT;
 #endif
     g_config.procdump = 0;
+
+    EntryPointRegister = 0;
 
 	memset(buf, 0, sizeof(buf));
 	while (fgets(buf, sizeof(buf), fp) != NULL)
@@ -251,20 +254,44 @@ int read_config(void)
 				}
 			}
             else if (!strcmp(key, "bp0")) {
-				bp0 = (PVOID)strtoul(value, NULL, 10);
-                DoOutputDebugString("bp0 set to 0x%x", bp0);
+                if (!strncmp(value, "ep", 2)) {
+                    DoOutputDebugString("bp0 set to entry point.\n", bp0);
+                    EntryPointRegister = 1;
+                }
+                else {
+                    bp0 = (PVOID)strtoul(value, NULL, 0);
+                    DoOutputDebugString("bp0 set to 0x%x.\n", bp0);
+                }
 			}
             else if (!strcmp(key, "bp1")) {
-				bp1 = (PVOID)strtoul(value, NULL, 10);
-                DoOutputDebugString("bp1 set to 0x%x", bp1);
+                if (!strncmp(value, "ep", 2)) {
+                    DoOutputDebugString("bp1 set to entry point.\n", bp1);
+                    EntryPointRegister = 2;
+                }
+                else {
+                    bp1 = (PVOID)strtoul(value, NULL, 0);
+                    DoOutputDebugString("bp1 set to 0x%x.\n", bp1);
+                }
 			}
             else if (!strcmp(key, "bp2")) {
-				bp2 = (PVOID)strtoul(value, NULL, 10);
-                DoOutputDebugString("bp2 set to 0x%x", bp2);
+                if (!strncmp(value, "ep", 2)) {
+                    DoOutputDebugString("bp2 set to entry point.\n", bp2);
+                    EntryPointRegister = 3;
+                }
+                else {
+                    bp2 = (PVOID)strtoul(value, NULL, 0);
+                    DoOutputDebugString("bp2 set to 0x%x.\n", bp2);
+                }
 			}
             else if (!strcmp(key, "bp3")) {
-				bp3 = (PVOID)strtoul(value, NULL, 10);
-                DoOutputDebugString("bp3 set to 0x%x", bp3);
+                if (!strncmp(value, "ep", 2)) {
+                    DoOutputDebugString("bp3 set to entry point.\n", bp3);
+                    EntryPointRegister = 4;
+                }
+                else {
+                    bp3 = (PVOID)strtoul(value, NULL, 0);
+                    DoOutputDebugString("bp3 set to 0x%x.\n", bp3);
+                }
 			}
             else if (!strcmp(key, "procdump")) {
 				g_config.procdump = value[0] == '1';
