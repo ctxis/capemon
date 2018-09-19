@@ -1333,7 +1333,7 @@ void PeParser::fixPeHeader()
 //#ifdef DEBUG_COMMENTS
 //            DoOutputDebugString("fixPeHeader: ImageBase set to 0x%x.\n", pNTHeader32->OptionalHeader.ImageBase);
 //#endif
-//		}        
+//		}
 	}
 	else
 	{
@@ -1357,11 +1357,11 @@ void PeParser::fixPeHeader()
 
 //		if (moduleBaseAddress && moduleBaseAddress != pNTHeader64->OptionalHeader.ImageBase)
 //		{
-//			pNTHeader64->OptionalHeader.ImageBase = (DWORD)moduleBaseAddress;
+//			    pNTHeader64->OptionalHeader.ImageBase = (DWORD)moduleBaseAddress;
 //#ifdef DEBUG_COMMENTS
 //            DoOutputDebugString("fixPeHeader: ImageBase set to 0x%x.\n", pNTHeader64->OptionalHeader.ImageBase);
 //#endif
-//		}        
+//		}
 	}
 
 	removeIatDirectory();

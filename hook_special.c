@@ -40,6 +40,7 @@ HOOKDEF_NOTAIL(WINAPI, LdrLoadDll,
     __in        PUNICODE_STRING ModuleFileName,
     __out       PHANDLE ModuleHandle
 ) {
+
     //
     // In the event that loading this dll results in loading another dll as
     // well, then the unicode string (which is located in the TEB) will be

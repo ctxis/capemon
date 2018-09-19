@@ -38,7 +38,6 @@ int ScanPageForNonZero(LPVOID Address);
 int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int IsDisguisedPEHeader(LPVOID Buffer);
-int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 int DumpImageInCurrentProcess(LPVOID ImageBase);
 void DumpSectionViewsForPid(DWORD Pid);
 

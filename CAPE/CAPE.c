@@ -108,6 +108,7 @@ extern unsigned int address_is_in_stack(PVOID Address);
 extern hook_info_t *hook_info();
 extern ULONG_PTR base_of_dll_of_interest;
 extern wchar_t *our_process_path;
+extern wchar_t *our_commandline;
 extern ULONG_PTR g_our_dll_base;
 extern DWORD g_our_dll_size;
 
@@ -124,8 +125,12 @@ extern BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address);
 extern SIZE_T GetPESize(PVOID Buffer);
 extern LPVOID GetReturnAddress(hook_info_t *hookinfo);
 extern PVOID CallingModule;
+#ifdef CAPE_TRACE
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+extern BOOL BreakpointsSet;
+#endif
 
-BOOL ProcessDumped, FilesDumped;
+BOOL ProcessDumped, FilesDumped, ModuleDumped;
 static unsigned int DumpCount;
 
 static __inline ULONG_PTR get_stack_top(void)
@@ -1469,6 +1474,10 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             *(WORD*)pDosHeader = IMAGE_DOS_SIGNATURE;
             *(DWORD*)((PUCHAR)pDosHeader + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
+#ifdef CAPE_INJECTION
+            SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)pDosHeader);
+#endif
+            
             if (DumpImageInCurrentProcess((LPVOID)pDosHeader))
             {
                 DoOutputDebugString("DumpPEsInRange: Dumped PE image from 0x%x.\n", pDosHeader);
@@ -1715,13 +1724,17 @@ int DumpModuleInCurrentProcess(LPVOID ModuleBase)
         ModuleBase = PEImage;
     }
 
-    DoOutputDebugString("DumpModuleInCurrentProcess: About to call ScyllaDumpProcess.\n");
+#ifdef CAPE_INJECTION
+    SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)ModuleBase);
+#else
+    SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
+#endif
+    
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
     {
         DumpCount++;
         return 1;
     }
-    DoOutputDebugString("DumpModuleInCurrentProcess: returned from ScyllaDumpProcess.\n");
 
 	return 0;
 }
@@ -1857,6 +1870,7 @@ int RoutineProcessDump()
 
 void init_CAPE()
 {
+    char* CommandLine;
     // Initialise CAPE global variables
     //
 #ifndef STANDALONE
@@ -1864,7 +1878,10 @@ void init_CAPE()
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
-    
+
+    CommandLine = (char*)malloc(MAX_PATH);
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_commandline, (int)wcslen(our_commandline)+1, CommandLine, MAX_PATH, NULL, NULL);
+
     // Specific to Injection package:
     CapeMetaData->DumpType = INJECTION_SHELLCODE;  // default value for now, may be changed to INJECTION_PE
     CapeMetaData->Address = NULL;
@@ -1893,6 +1910,8 @@ void init_CAPE()
 #else
     DoOutputDebugString("CAPE initialised: 32-bit Injection package loaded in process %d at 0x%x, image base 0x%x, stack from 0x%x-0x%x\n", GetCurrentProcessId(), g_our_dll_base, GetModuleHandle(NULL), get_stack_bottom(), get_stack_top());
 #endif
-    
+
+    DoOutputDebugString("Commandline: %s.\n", CommandLine);
+
     return;
 }

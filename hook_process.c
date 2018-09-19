@@ -87,6 +87,34 @@ HOOKDEF(BOOL, WINAPI, Process32FirstW,
 	return ret;
 }
 
+HOOKDEF(BOOL, WINAPI, Module32NextW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
+	) {
+	BOOL ret = Old_Module32NextW(hSnapshot, lpme);
+
+	if (ret)
+		LOQ_bool("process", "uii", "ModuleName", lpme->szModule, "ModuleID", lpme->th32ModuleID, "ProcessId", lpme->th32ProcessID);
+	else
+		LOQ_bool("process", "");
+
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, Module32FirstW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
+	) {
+	BOOL ret = Old_Module32FirstW(hSnapshot, lpme);
+
+	if (ret)
+		LOQ_bool("process", "uii", "ModuleName", lpme->szModule, "ModuleID", lpme->th32ModuleID, "ProcessId", lpme->th32ProcessID);
+	else
+		LOQ_bool("process", "");
+
+	return ret;
+}
+
 HOOKDEF(NTSTATUS, WINAPI, NtCreateProcess,
     __out       PHANDLE ProcessHandle,
     __in        ACCESS_MASK DesiredAccess,
@@ -102,7 +130,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateProcess,
         DebugPort, ExceptionPort);
     LOQ_ntstatus("process", "PphO", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
         "FileName", ObjectAttributes);
-    if (NT_SUCCESS(ret)) {
+    if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
         pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
         disable_sleep_skip();
@@ -126,7 +154,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateProcessEx,
         ExceptionPort, InJob);
 	LOQ_ntstatus("process", "PphOhh", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
         "FileName", ObjectAttributes, "Flags", Flags, "SectionHandle", SectionHandle);
-    if (NT_SUCCESS(ret)) {
+    if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
         pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
         disable_sleep_skip();
@@ -168,7 +196,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateUserProcess,
         "ThreadName", ThreadObjectAttributes,
         "ImagePathName", &ProcessParameters->ImagePathName,
         "CommandLine", &ProcessParameters->CommandLine);
-    if (NT_SUCCESS(ret)) {
+    if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
 		DWORD tid = tid_from_thread_handle(*ThreadHandle);
 		pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
@@ -197,7 +225,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlCreateUserProcess,
         ExceptionPort, ProcessInformation);
     LOQ_ntstatus("process", "ohp", "ImagePath", ImagePath, "ObjectAttributes", ObjectAttributes,
         "ParentHandle", ParentProcess);
-    if (NT_SUCCESS(ret)) {
+    if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(ProcessInformation->ProcessHandle);
 		DWORD tid = tid_from_thread_handle(ProcessInformation->ThreadHandle);
 		pipe("PROCESS:%d:%d,%d", is_suspended(pid, tid), pid, tid);
@@ -319,12 +347,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
     // although the documentation on msdn is a bit vague, this seems correct
     // for both XP and Vista (the ClientId->UniqueProcess part, that is)
 
-    DWORD pid = 0;
+    int pid = 0;
 	NTSTATUS ret;
 
     if(ClientId != NULL) {
 		__try {
-			pid = (DWORD)(ULONG_PTR)ClientId->UniqueProcess;
+			pid = (int)(ULONG_PTR)ClientId->UniqueProcess;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) {
 			;
@@ -333,12 +361,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenProcess,
 
     if(is_protected_pid(pid)) {
         ret = STATUS_ACCESS_DENIED;
-        LOQ_ntstatus("process", "ppl", "ProcessHandle", NULL, "DesiredAccess", DesiredAccess, "ProcessIdentifier", pid);
+        LOQ_ntstatus("process", "ppl", "ProcessHandle", NULL, "DesiredAccess", DesiredAccess,
+            "ProcessIdentifier", pid);
         return ret;
     }
 
     ret = Old_NtOpenProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId);
-    
+
 #ifdef CAPE_INJECTION
     if (NT_SUCCESS(ret))
         OpenProcessHandler(*ProcessHandle, pid);
@@ -363,7 +392,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtResumeProcess,
 	LOQ_ntstatus("process", "p", "ProcessHandle", ProcessHandle);
 	return ret;
 }
-
 
 int process_shutting_down;
 
@@ -489,7 +517,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
 #endif
 
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
-	
+
     LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", map_size);
 
@@ -508,7 +536,11 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 	__in     ULONG AllocationType,
 	__in     ULONG Win32Protect
 	) {
-	NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
+    PVOID InputAddress = *BaseAddress;
+    LARGE_INTEGER InputOffset = *SectionOffset;
+    SIZE_T InputSize = *ViewSize;
+
+    NTSTATUS ret = Old_NtMapViewOfSection(SectionHandle, ProcessHandle,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
@@ -525,12 +557,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
 		}
-		else {
+		else if (ret == STATUS_IMAGE_NOT_AT_BASE && Win32Protect == PAGE_READONLY) {
 			prevent_module_reloading(BaseAddress);
 		}
 	}
-    else
-        DoOutputDebugString("NtMapViewOfSection hook: skipping MapSectionViewHandler (ret %d).\n", ret);
 	return ret;
 }
 
