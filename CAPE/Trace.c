@@ -21,7 +21,7 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #include "CAPE.h"
 
 #define MAX_INSTRUCTIONS 0x10
-#define SINGLE_STEP_LIMIT 0x80  // default unless specified in web ui
+#define SINGLE_STEP_LIMIT 0x200  // default unless specified in web ui
 #define CHUNKSIZE 0x10 * MAX_INSTRUCTIONS
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
@@ -126,7 +126,109 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
                 DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
-
+        else if (!strncmp(DecodedInstruction.operands.p, "EAX", 3))
+        {
+#ifdef _WIN64
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Rax;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#else
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Eax;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#endif
+        }
+        else if (!strncmp(DecodedInstruction.operands.p, "EBX", 3))
+        {
+#ifdef _WIN64
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Rbx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#else
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Ebx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#endif
+        }
+        else if (!strncmp(DecodedInstruction.operands.p, "ECX", 3))
+        {
+#ifdef _WIN64
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Rcx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#else
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Ecx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#endif
+        }
+        else if (!strncmp(DecodedInstruction.operands.p, "EDX", 3))
+        {
+#ifdef _WIN64
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Rdx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#else
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Edx;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#endif
+        }
+        else
+#ifdef _WIN64
+            DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+#else
+            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+#endif
+        
         if (TraceDepthCount >= TraceDepthLimit || StepOver == TRUE)
         {    
 #ifdef _WIN64
