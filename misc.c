@@ -370,6 +370,12 @@ void perform_ascii_registry_fakery(PWCHAR keypath, LPVOID Data, ULONG DataLength
 		replace_string_in_buf(Data, DataLength, "VMWar", "Lenov");
 		replace_string_in_buf(Data, DataLength, "VBOX", "DELL");
 	}
+
+	if (!wcsicmp(keypath, L"HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\DeviceClasses\\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}")) {
+		replace_string_in_buf(Data, DataLength, "VMware", "Lenovo");
+		replace_string_in_buf(Data, DataLength, "VMWar", "Lenov");
+		replace_string_in_buf(Data, DataLength, "VBOX", "DELL");
+	}
 }
 
 void perform_unicode_registry_fakery(PWCHAR keypath, LPVOID Data, ULONG DataLength)
@@ -440,6 +446,12 @@ void perform_unicode_registry_fakery(PWCHAR keypath, LPVOID Data, ULONG DataLeng
 
 	if (!wcsicmp(keypath, L"HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Enum\\IDE\\") ||
         !wcsicmp(keypath, L"HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Enum\\SCSI\\")) {
+		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VMware", L"Lenovo");
+		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VMWar", L"Lenov");
+		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VBOX", L"DELL");
+	}
+
+	if (!wcsicmp(keypath, L"HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\DeviceClasses\\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}")) {
 		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VMware", L"Lenovo");
 		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VMWar", L"Lenov");
 		replace_wstring_in_buf(Data, DataLength / sizeof(wchar_t), L"VBOX", L"DELL");
@@ -660,10 +672,9 @@ void add_all_dlls_to_dll_ranges(void)
 	for (mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink;
 		mod->BaseAddress != NULL;
 		mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink) {
-		//if ((ULONG_PTR)mod->BaseAddress != base_of_dll_of_interest)
+		if ((ULONG_PTR)mod->BaseAddress != base_of_dll_of_interest)
 			add_dll_range((ULONG_PTR)mod->BaseAddress, (ULONG_PTR)mod->BaseAddress + mod->SizeOfImage);
 	}
-
 }
 
 char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset)
@@ -1909,7 +1920,7 @@ void prevent_module_reloading(PVOID *BaseAddress) {
 			// is this a loaded module?
 			HMODULE address = GetModuleHandleW(absolutepath);
 			if (address != NULL) {
-				pipe("INFO:Sample tried to reload already loaded module '%Z' from disk, returning original module address instead: 0x%x", absolutepath, address);
+				pipe("INFO:Sample attempted to remap module '%Z' at 0x%p, returning original module address instead: 0x%p", absolutepath, *BaseAddress, address);
 				pNtUnmapViewOfSection(GetCurrentProcess(), *BaseAddress);
 				*BaseAddress = (LPVOID)address;
 			}
