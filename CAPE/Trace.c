@@ -78,19 +78,32 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
         StepOver = FALSE;
-        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5))
-        {
 #ifdef _WIN64
-            PVOID *CallTarget = *(PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4);
-            PCHAR ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
+        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "QWORD", 5))
+        {
+            PCHAR ExportName;
+            PVOID *CallTarget = (PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4) + DecodedInstruction.size);
+            __try
+            {
+                ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER)
+            {
+                DoOutputDebugString("Trace: Error dereferencing CallTarget.\n", CallTarget);
+                return FALSE;
+            }
+
             if (ExportName)
             {
-                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
+
 #else
+        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5))
+        {
             PVOID *CallTarget = *(PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4);
             PCHAR ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
             if (ExportName)
@@ -105,12 +118,12 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         else if (DecodedInstruction.size > 4)
         {
 #ifdef _WIN64
-            PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Rip + (int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4));
+            PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4));
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                StepOver = TRUE;
+                //StepOver = TRUE;
             }
             else
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
@@ -240,9 +253,11 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             {
                 DoOutputDebugString("Trace: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
             }
-            
+            else
+                DoOutputDebugString("Trace: Successfully set breakpoint on return address 0x%p\n", ReturnAddress);
+
             ClearSingleStepMode(ExceptionInfo->ContextRecord);
-            
+
             return TRUE;
         }
         else

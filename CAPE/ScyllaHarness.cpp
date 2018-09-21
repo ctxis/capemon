@@ -942,6 +942,7 @@ extern "C" PCHAR ScyllaGetExportNameByAddress(PVOID Address, PCHAR* ModuleName)
 #ifdef DEBUG_COMMENTS
         DoOutputDebugString("ScyllaGetExportNameByAddress: Located function %s within module %s.\n", apiInfo->name, apiInfo->module->fullPath);
 #endif
+        delete peFile;
         return (PCHAR)apiInfo->name;
     }
 #ifdef DEBUG_COMMENTS
