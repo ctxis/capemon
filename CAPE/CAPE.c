@@ -1909,7 +1909,8 @@ void init_CAPE()
     DoOutputDebugString("Commandline: %s.\n", CommandLine);
 
 #ifdef CAPE_TRACE
-    SetInitialBreakpoints(GetModuleHandle(NULL));
+    if (!g_config.base_on_apiname[0])
+        SetInitialBreakpoints(GetModuleHandle(NULL));
 #endif
 
     return;

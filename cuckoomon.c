@@ -42,6 +42,9 @@ extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern ULONG_PTR base_of_dll_of_interest;
+#ifdef CAPE_TRACE
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+#endif
 
 void disable_tail_call_optimization(void)
 {
@@ -313,6 +316,8 @@ static hook_t g_hooks[] = {
 	HOOK(kernel32, CreateToolhelp32Snapshot),
 	HOOK(kernel32, Process32FirstW),
 	HOOK(kernel32, Process32NextW),
+	HOOK(kernel32, Module32FirstW),
+	HOOK(kernel32, Module32NextW),
 	HOOK(ntdll, NtCreateProcess),
     HOOK(ntdll, NtCreateProcessEx),
     HOOK(ntdll, NtCreateUserProcess),
@@ -699,7 +704,8 @@ VOID CALLBACK New_DllLoadNotification(
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
             DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+//            if (!g_config.base_on_apiname[0])
+//                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else if (((!wcsnicmp(our_commandline, L"c:\\windows\\system32\\rundll32.exe", 32) ||
@@ -713,7 +719,8 @@ VOID CALLBACK New_DllLoadNotification(
             }
             DoOutputDebugString("rundll32 target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+//            if (!g_config.base_on_apiname[0])
+//                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else {

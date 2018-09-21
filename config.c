@@ -232,6 +232,7 @@ int read_config(void)
 					}
 					g_config.base_on_apiname[x++] = strdup(p);
                     DoOutputDebugString("Added '%s' to base-on-API list.\n", p);
+                    DoOutputDebugString("g_config.base_on_apiname[0] %s.\n", g_config.base_on_apiname[0]);
 					if (p2 == NULL)
 						break;
 					p = p2 + 1;
