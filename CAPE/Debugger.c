@@ -1338,8 +1338,6 @@ BOOL ContextSetDebugRegister
         DoOutputErrorString("ContextSetDebugRegister: SetThreadContext failed");
         return FALSE;
     }	
-    else
-        DoOutputDebugString("ContextSetDebugRegister: SetThreadContext success.\n");
 #endif
 
 	return TRUE;

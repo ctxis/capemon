@@ -25,7 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern PVOID bp0, bp1, bp2, bp3;
-extern int EntryPointRegister;
+extern int TraceDepthLimit, EntryPointRegister;
+extern unsigned int StepLimit;
 
 int read_config(void)
 {
@@ -232,7 +233,6 @@ int read_config(void)
 					}
 					g_config.base_on_apiname[x++] = strdup(p);
                     DoOutputDebugString("Added '%s' to base-on-API list.\n", p);
-                    DoOutputDebugString("g_config.base_on_apiname[0] %s.\n", g_config.base_on_apiname[0]);
 					if (p2 == NULL)
 						break;
 					p = p2 + 1;
@@ -293,6 +293,14 @@ int read_config(void)
                     bp3 = (PVOID)strtoul(value, NULL, 0);
                     DoOutputDebugString("bp3 set to 0x%x.\n", bp3);
                 }
+			}
+            else if (!strcmp(key, "depth")) {
+				TraceDepthLimit = (int)strtoul(value, NULL, 10);
+                DoOutputDebugString("Trace depth set to 0x%x", TraceDepthLimit);
+			}
+            else if (!strcmp(key, "count")) {
+				StepLimit = (unsigned int)strtoul(value, NULL, 10);
+                DoOutputDebugString("Trace instruction count set to 0x%x", StepLimit);
 			}
             else if (!strcmp(key, "procdump")) {
 				g_config.procdump = value[0] == '1';
