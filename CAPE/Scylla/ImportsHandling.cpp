@@ -435,7 +435,7 @@ void ImportsHandling::updateImportInTreeView(const ImportThunk * importThunk, CT
 
 void ImportsHandling::updateModuleInTreeView(const ImportModuleThunk * importThunk, CTreeItem item)
 {
-	sprintf_s(stringBuffer, "%s (%zd) FThunk: " PRINTF_DWORD_PTR_HALF, importThunk->moduleName,importThunk->thunkList.size(), importThunk->firstThunk);
+	sprintf_s(stringBuffer, "%s (%d) FThunk: " PRINTF_DWORD_PTR_HALF, importThunk->moduleName,importThunk->thunkList.size(), importThunk->firstThunk);
 
 	item.SetText(stringBuffer);
 	Icon icon = getAppropiateIcon(importThunk->isValid());

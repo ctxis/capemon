@@ -643,7 +643,7 @@ void add_all_dlls_to_dll_ranges(void)
 	for (mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink;
 		mod->BaseAddress != NULL;
 		mod = (LDR_MODULE *)mod->InLoadOrderModuleList.Flink) {
-		if ((ULONG_PTR)mod->BaseAddress != base_of_dll_of_interest)
+		//if ((ULONG_PTR)mod->BaseAddress != base_of_dll_of_interest)
 			add_dll_range((ULONG_PTR)mod->BaseAddress, (ULONG_PTR)mod->BaseAddress + mod->SizeOfImage);
 	}
 
@@ -781,9 +781,7 @@ uint32_t path_from_object_attributes(const OBJECT_ATTRIBUTES *obj,
         return copylen;
     }
 
-    length = path_from_handle(obj->RootDirectory,
-        path, buffer_length);
-
+    length = path_from_handle(obj->RootDirectory, path, buffer_length);
 	
 	path[length++] = L'\\';
 	if (length >= (buffer_length - 1))

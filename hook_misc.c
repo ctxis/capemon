@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "ignore.h"
 #include "CAPE\CAPE.h"
+#include "CAPE\Debugger.h"
 
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
@@ -103,11 +104,34 @@ HOOKDEF(PVOID, WINAPI, RtlAddVectoredExceptionHandler,
     __out   PVECTORED_EXCEPTION_HANDLER Handler
 ) {
 	PVOID ret = 0;
-    
-    ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
-	
+
+    if (DEBUGGER_ENABLED && VECTORED_HANDLER && First)
+    {
+        if (!CAPEExceptionFilterHandle)
+        {
+            DoOutputDebugString("RtlAddVectoredExceptionHandler hook: Error - CAPE vectored handler not registered.\n");
+            ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+            LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
+            return ret;
+        }
+
+        // We register the handler at the bottom, this minimizes
+        // our interference and means the handle is valid
+        ret = Old_RtlAddVectoredExceptionHandler(0, Handler);
+
+        if (ret == NULL)
+            return ret;
+
+        // We record the handler address so that
+        // CAPEExceptionFilter can call it directly
+        DoOutputDebugString("RtlAddVectoredExceptionHandler hook: CAPE vectored handler protected as First.\n");
+        SampleVectoredHandler = (SAMPLE_HANDLER)Handler;
+    }
+    else
+        ret = Old_RtlAddVectoredExceptionHandler(First, Handler);
+
     LOQ_nonnull("hooking", "ip", "First", First, "Handler", Handler);
-    
+
     return ret;
 }
 
@@ -462,10 +486,11 @@ static int lasty;
 HOOKDEF(BOOL, WINAPI, GetCursorPos,
     _Out_ LPPOINT lpPoint
 ) {
+    ENSURE_STRUCT(lpPoint, POINT);
     BOOL ret = Old_GetCursorPos(lpPoint);
 
 	/* work around the fact that skipping sleeps prevents the human module from making the system look active */
-	if (lpPoint && time_skipped.QuadPart != last_skipped.QuadPart) {
+	if (ret && time_skipped.QuadPart != last_skipped.QuadPart) {
 		int xres, yres;
 		xres = our_GetSystemMetrics(0);
 		yres = our_GetSystemMetrics(1);
@@ -488,9 +513,13 @@ HOOKDEF(BOOL, WINAPI, GetCursorPos,
 		last_skipped.QuadPart = time_skipped.QuadPart;
 	}
 
-	LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
-        "y", lpPoint != NULL ? lpPoint->y : 0);
-	
+	if (ret){
+    	    LOQ_bool("misc", "ii", "x", lpPoint != NULL ? lpPoint->x : 0,
+    			 "y", lpPoint != NULL ? lpPoint->y : 0);
+	}
+	else{
+	    LOQ_bool("misc", "ii", "x", 0, "y", 0);
+	}
 	return ret;
 }
 
@@ -629,9 +658,23 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in ULONG ProcessInformationLength
 ) {
 	NTSTATUS ret = Old_NtSetInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength);
-	if (NT_SUCCESS(ret) && (ProcessInformationClass == ProcessInfoDEPPolicy || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
-		LOQ_ntstatus("misc", "ii", "ProcessInformationClass", ProcessInformationClass, "Value", *(int *)ProcessInformation);
+	if ((ProcessInformationClass == ProcessExecuteFlags || ProcessInformationClass == ProcessBreakOnTermination) && ProcessInformationLength == 4)
+		LOQ_ntstatus("process", "ii", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", *(int*)ProcessInformation);
+    else
+		LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
 	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+) {
+	NTSTATUS ret = Old_NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength, ReturnLength);
+    LOQ_ntstatus("process", "ib", "ProcessInformationClass", ProcessInformationClass, "ProcessInformation", ProcessInformationLength, ProcessInformation);
+    return ret;
 }
 
 HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
@@ -784,6 +827,9 @@ HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsW,
 	char idbuf[40];
 	char *known;
 	lasterror_t lasterror;
+
+	get_lasterrors(&lasterror);
+
 	HDEVINFO ret = Old_SetupDiGetClassDevsW(ClassGuid, Enumerator, hwndParent, Flags);
 	if (ClassGuid) {
 		memcpy(&id1, ClassGuid, sizeof(id1));
@@ -1051,12 +1097,12 @@ HOOKDEF(void, WINAPIV, memcpy,
    size_t count
 ) 
 {
-	int ret = 0;	// needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void
 
 	Old_memcpy(dest, src, count);
 	
     if (count > 0xa00)
-        LOQ_void("misc", "bi", "DestinationBuffer", count, dest, "count", count);
+        LOQ_void("misc", "bppi", "DestinationBuffer", count, dest, "source", src, "destination", dest, "count", count);
 	
 	return;
 }
@@ -1077,47 +1123,38 @@ HOOKDEF(void, WINAPIV, srand,
 	unsigned int seed
 )
 {
-	int ret = 0;	// needed for LOQ_void.
+	int ret = 0;	// needed for LOQ_void
 
 	Old_srand(seed);
 
 	LOQ_void("misc", "h", "seed", seed);
 }
 
-HOOKDEF(DWORD, WINAPI, GetCurrentProcessId,
-	void
-) {
-	DWORD ret = Old_GetCurrentProcessId();
-	LOQ_void("misc", "");
-	return ret;
-}
-
-HOOKDEF(HANDLE, WINAPI, HeapCreate,
-  _In_ DWORD  flOptions,
-  _In_ SIZE_T dwInitialSize,
-  _In_ SIZE_T dwMaximumSize
+HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR   lpString1,
+  _In_  LPSTR   lpString2,
+  _In_  int     iMaxLength
 )
 {
-    HANDLE ret;
-    
-    ret = Old_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
-    
-    LOQ_nonnull("misc", "");
+    LPSTR ret;
 
-    DoOutputDebugString("HeapCreate hook.\n");
-    
+    ret = Old_lstrcpynA(lpString1, lpString2, iMaxLength);
+
+	LOQ_nonzero("misc", "u", "String", lpString1);
+
     return ret;
 }
 
-HOOKDEF(DWORD, WINAPI, GetVersion,
-    void
+HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
 )
 {
-    DWORD ret;
+    int ret;
 
-    ret = Old_GetVersion();
-    
-    LOQ_void("misc", "");
-    
+    ret = Old_lstrcmpiA(lpString1, lpString2);
+
+	LOQ_nonzero("misc", "ss", "String1", lpString1, "String2", lpString2);
+
     return ret;
 }

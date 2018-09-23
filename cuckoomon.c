@@ -36,6 +36,7 @@ volatile int dummy_val;
 extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
+extern ULONG_PTR base_of_dll_of_interest;
 
 void disable_tail_call_optimization(void)
 {
@@ -80,16 +81,13 @@ static hook_t g_hooks[] = {
     //
 
 	HOOK_NOTAIL_ALT(ntdll, LdrLoadDll, 4),
-	//HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
+	HOOK_NOTAIL(ntdll, LdrUnloadDll, 1),
     HOOK_SPECIAL(kernel32, CreateProcessInternalW),
 	//HOOK_SPECIAL(ntdll, NtCreateThread),
 	//HOOK_SPECIAL(ntdll, NtCreateThreadEx),
 	//HOOK_SPECIAL(ntdll, NtTerminateThread),
-
-    //HOOK(ntdll, RtlAllocateHeap),
-    //HOOK_SPECIAL(ntdll, RtlAllocateHeap),
-    //HOOK_NOTAIL(ntdll, RtlAllocateHeap, 3),
-    //HOOK_SAFEST(ntdll, RtlAllocateHeap, 3),
+    //HOOK_SPECIAL(kernel32, lstrcpynA),
+    //HOOK_SPECIAL(kernel32, lstrcmpiA),
 
 	// has special handling
 
@@ -104,7 +102,7 @@ static hook_t g_hooks[] = {
 	HOOK_SPECIAL(ole32, CoCreateInstanceEx),
 	HOOK_SPECIAL(ole32, CoGetClassObject),
 
-	//HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
+	HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
 	HOOK_NOTAIL(ntdll, NtRaiseException, 3),
 
 	// lowest variant of MoveFile()
@@ -130,6 +128,8 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, NtCreateDirectoryObject),
     HOOK(ntdll, NtQueryDirectoryObject),
 
+    HOOK(kernel32, CreateFileTransactedA),
+    HOOK(kernel32, CreateFileTransactedW),
     // CreateDirectoryExA calls CreateDirectoryExW
     // CreateDirectoryW does not call CreateDirectoryExW
     HOOK(kernel32, CreateDirectoryW),
@@ -146,7 +146,7 @@ static hook_t g_hooks[] = {
     // Covered by NtCreateFile() but still grab this information
     HOOK(kernel32, CopyFileA),
     HOOK(kernel32, CopyFileW),
-    HOOK(kernel32, CopyFileExW),
+    HOOK_NOTAIL_ALT(kernel32, CopyFileExW, 6),
 
     // Covered by NtSetInformationFile() but still grab this information
     HOOK(kernel32, DeleteFileA),
@@ -277,6 +277,8 @@ static hook_t g_hooks[] = {
     //HOOK(user32, EnumWindows),
 	HOOK(user32, PostMessageA),
 	HOOK(user32, PostMessageW),
+	HOOK(user32, SendMessageA),
+	HOOK(user32, SendMessageW),
 	HOOK(user32, SendNotifyMessageA),
 	HOOK(user32, SendNotifyMessageW),
 	HOOK(user32, SetWindowLongA),
@@ -297,6 +299,7 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtAddAtomEx),
 	HOOK(ntdll, NtFindAtom),
 	HOOK(ntdll, NtDeleteAtom),
+	HOOK(ntdll, NtQueryInformationAtom),
 	
 	//
     // Process Hooks
@@ -355,6 +358,8 @@ static hook_t g_hooks[] = {
     HOOK(kernel32, CreateThread),
     HOOK(kernel32, CreateRemoteThread),
     HOOK(ntdll, RtlCreateUserThread),
+    HOOK(ntdll, NtSetInformationThread),
+    HOOK(ntdll, NtQueryInformationThread),
 
 	//
     // Misc Hooks
@@ -400,6 +405,7 @@ static hook_t g_hooks[] = {
 	HOOK(user32, GetAsyncKeyState),
 	HOOK(ntdll, NtLoadDriver),
 	HOOK(ntdll, NtSetInformationProcess),
+	//HOOK(ntdll, NtQueryInformationProcess),
 	HOOK(ntdll, RtlDecompressBuffer),
 	HOOK(ntdll, RtlCompressBuffer),
 	HOOK(kernel32, GetSystemInfo),
@@ -520,6 +526,7 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, NtSetTimer),
 	HOOK(ntdll, NtSetTimerEx),
 	HOOK(user32, MsgWaitForMultipleObjectsEx),
+	HOOK(kernel32, CreateTimerQueueTimer),
 
 	//
     // Socket Hooks
@@ -641,7 +648,7 @@ void revalidate_all_hooks(void)
 
 PVOID g_dll_notify_cookie;
 
-VOID CALLBACK DllLoadNotification(
+VOID CALLBACK New_DllLoadNotification(
 	_In_     ULONG                       NotificationReason,
 	_In_     const PLDR_DLL_NOTIFICATION_DATA NotificationData,
 	_In_opt_ PVOID                       Context)
@@ -654,17 +661,22 @@ VOID CALLBACK DllLoadNotification(
 		/* Just for debug purposes, gives a stripped fake function name */
 		LOQ_void("system", "sup", "NotificationReason", NotificationReason == 1 ? "load" : "unload", "DllName", library.Buffer, "DllBase", NotificationReason == 1 ? NotificationData->Loaded.DllBase : NotificationData->Unloaded.DllBase);
 	}
-
+        
 	if (NotificationReason == 1) {
+		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest)) {
+            if (!base_of_dll_of_interest)
+                set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+        }
+        else {
+            // unoptimized, but easy
+            add_all_dlls_to_dll_ranges();
 
-		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest))
-			set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            dllname = get_dll_basename(&library);
+            set_hooks_dll(dllname);
 
-		// unoptimized, but easy
-		add_all_dlls_to_dll_ranges();
-
-		dllname = get_dll_basename(&library);
-		set_hooks_dll(dllname);
+            DoOutputDebugString("DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+        }
 	}
 	else {
 		// unload
@@ -677,8 +689,6 @@ VOID CALLBACK DllLoadNotification(
 }
 
 extern _LdrRegisterDllNotification pLdrRegisterDllNotification;
-
-CRITICAL_SECTION g_tmp_hookinfo_lock;
 
 void set_hooks()
 {
@@ -696,13 +706,13 @@ void set_hooks()
 	// the hooks contain executable code as well, so they have to be RWX
 	DWORD old_protect;
 
-	InitializeCriticalSection(&g_tmp_hookinfo_lock);
-
 	VirtualProtect(g_hooks, sizeof(g_hooks), PAGE_EXECUTE_READWRITE,
 		&old_protect);
 
 	memset(&threadInfo, 0, sizeof(threadInfo));
 	threadInfo.dwSize = sizeof(threadInfo);
+
+	hook_init();
 
 	hook_disable();
 
@@ -733,9 +743,9 @@ void set_hooks()
 	free(suspended_threads);
 
 	if (pLdrRegisterDllNotification)
-		pLdrRegisterDllNotification(0, &DllLoadNotification, NULL, &g_dll_notify_cookie);
+		pLdrRegisterDllNotification(0, &New_DllLoadNotification, NULL, &g_dll_notify_cookie);
 	else
-		register_dll_notification_manually(&DllLoadNotification);
+		register_dll_notification_manually(&New_DllLoadNotification);
 
 	hook_enable();
 }
@@ -948,6 +958,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 #ifdef STANDALONE
         // initialise CAPE
+        resolve_runtime_apis();
         init_CAPE();
         return TRUE;
 #endif
@@ -960,7 +971,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 		if (!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xff\x25", 4) || !memcmp((PUCHAR)WaitForDebugEvent, "\xff\x25", 2) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\x8b\xff\xe9", 3) || !memcmp((PUCHAR)WaitForDebugEvent, "\xe9", 1) ||
 			!memcmp((PUCHAR)WaitForDebugEvent, "\xeb\xf9", 2))
-			goto early_abort;
+			goto abort;
 
 		g_our_dll_base = (ULONG_PTR)hModule;
 		g_our_dll_size = get_image_size(g_our_dll_base);
@@ -985,7 +996,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		g_tls_hook_index = TlsAlloc();
 		if (g_tls_hook_index == TLS_OUT_OF_INDEXES)
-			goto early_abort;
+			goto abort;
 
 		// adds our own DLL range as well, since the hiding is done later
 		add_all_dlls_to_dll_ranges();
@@ -996,12 +1007,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 			;
 #else
 			// if we're not debugging, then failure to read the cuckoomon config should be a critical error
-			goto early_abort;
+			goto abort;
 #endif
 
 		// don't inject into our own binaries run out of the analyzer directory unless they're the first process (intended)
 		if (wcslen(g_config.w_analyzer) && !wcsnicmp(our_process_path, g_config.w_analyzer, wcslen(g_config.w_analyzer)) && !g_config.first_process)
-			goto out;
+			goto abort;
 
 		if (g_config.debug) {
 			AddVectoredExceptionHandler(1, cuckoomon_exception_handler);
@@ -1025,14 +1036,16 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
         // initialize the log file
         log_init(CUCKOODBG);
 
-        // initialise CAPE
-        init_CAPE();
-
         // initialize the Sleep() skipping stuff
         init_sleep_skip(g_config.first_process);
 
         // we skip a random given amount of milliseconds each run
         init_startup_time(g_config.startup_time);
+
+        // disable the retaddr check if the user wants so
+        //if(g_config.retaddr_check == 0) {
+        //    hook_disable_retaddr_check();
+        //}
 
 		// initialize our unhook detection
         unhook_init_detection();
@@ -1051,6 +1064,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		// initialize context watchdog
 		//init_watchdog();
+
+        // initialise CAPE
+        init_CAPE();
 
 #ifndef _WIN64
 		if (!g_config.no_stealth) {
@@ -1071,13 +1087,12 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
     }
 
 	g_dll_main_complete = TRUE;
-
-out:
 	set_lasterrors(&lasterror);
 	return TRUE;
-early_abort:
+    
+abort:
 	sprintf(config_fname, "C:\\%u.ini", GetCurrentProcessId());
 	DeleteFileA(config_fname);
 	set_lasterrors(&lasterror);
-	return TRUE;
+	return FALSE;
 }

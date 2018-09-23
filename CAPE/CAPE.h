@@ -22,7 +22,9 @@ extern CHAR s_szDllPath[MAX_PATH];
 //Global debugger switch
 #define DEBUGGER_ENABLED 1
 
-void GetHookCallerBase();
+BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address);
+BOOL GetCurrentFrame(LPVOID* ReturnAddress, LPVOID Address);
+PVOID GetHookCallerBase();
 PVOID GetPageAddress(PVOID Address);
 PVOID GetAllocationBase(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
@@ -56,6 +58,8 @@ typedef struct InjectionSectionView
 PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
 PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
 BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
+void DumpSectionViewsForPid(DWORD Pid);
+void DumpSectionView(PINJECTIONSECTIONVIEW SectionView);
 
 typedef struct InjectionInfo
 {
@@ -65,7 +69,8 @@ typedef struct InjectionInfo
     DWORD_PTR                   EntryPoint;
     BOOL                        WriteDetected;
     BOOL                        ImageDumped;
-    LPVOID                     BufferBase;
+    LPVOID                      BufferBase;
+    LPVOID                      StackPointer;
     unsigned int                BufferSizeOfImage;
     HANDLE                      SectionHandle;
 //    struct InjectionSectionView *SectionViewList;
@@ -108,7 +113,6 @@ struct InjectionSectionView *SectionViewList;
 #define	DLL			        2
 
 #define PLUGX_SIGNATURE		0x5658	// 'XV'
-#define	PE_HEADER_LIMIT		0x200	// Range to look for PE header within candidate buffer
 
 typedef struct CapeMetadata 
 {
@@ -150,7 +154,9 @@ enum {
     URSNIF_PAYLOAD          = 0x25,
 	
     CERBER_CONFIG           = 0x30,
-    CERBER_PAYLOAD          = 0x31
+    CERBER_PAYLOAD          = 0x31,
+
+    DATADUMP                = 0x66
 };
 
 HANDLE EvilGrabRegHandle;

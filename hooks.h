@@ -213,6 +213,32 @@ extern HOOKDEF(BOOL, WINAPI, RemoveDirectoryW,
     __in  LPWSTR lpPathName
 );
 
+extern HOOKDEF(HANDLE, WINAPI, CreateFileTransactedA,
+  __in       LPCSTR                lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+);
+
+extern HOOKDEF(HANDLE, WINAPI, CreateFileTransactedW,
+  __in       LPCWSTR               lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+);
+
 extern HOOKDEF(HANDLE, WINAPI, FindFirstFileExA,
     __in        LPCTSTR lpFileName,
     __in        FINDEX_INFO_LEVELS fInfoLevelId,
@@ -784,6 +810,20 @@ extern HOOKDEF(BOOL, WINAPI, PostMessageW,
 	_In_  LPARAM lParam
 );
 
+extern HOOKDEF(BOOL, WINAPI, SendMessageA,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
+extern HOOKDEF(BOOL, WINAPI, SendMessageW,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
 extern HOOKDEF(BOOL, WINAPI, SendNotifyMessageA,
 	_In_  HWND hWnd,
 	_In_  UINT Msg,
@@ -892,6 +932,14 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtAddAtomEx,
 	IN	ULONG	AtomNameLength,
 	OUT PRTL_ATOM Atom,
 	IN	PVOID	Unknown
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationAtom,
+	IN	RTL_ATOM Atom,
+	IN	ATOM_INFORMATION_CLASS AtomInformationClass,
+    OUT PVOID AtomInformation,
+    IN  ULONG AtomInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
 );
 
 //
@@ -1094,6 +1142,14 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in ULONG ProcessInformationLength
 );
 
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+);
+
 extern HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
     __in     HANDLE ProcessHandle,
     __inout  PVOID *BaseAddress,
@@ -1272,7 +1328,7 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtGetContextThread,
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSetContextThread,
     __in  HANDLE ThreadHandle,
-    __in  CONTEXT *Context
+    __in  const CONTEXT *Context
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtSuspendThread,
@@ -1593,22 +1649,6 @@ extern HOOKDEF(void, WINAPIV, memcpy,
    const void *src,
    size_t count
 );   
-
-extern HOOKDEF(HANDLE, WINAPI, GetProcessHeap,
-	void
-);
-
-extern HOOKDEF(LPVOID, WINAPI, HeapAlloc,
-  _In_ HANDLE hHeap,
-  _In_ DWORD  dwFlags,
-  _In_ SIZE_T dwBytes
-);
-
-extern HOOKDEF(PVOID, WINAPI, RtlAllocateHeap,
-    __in        PVOID  HeapHandle,
-    __in_opt    ULONG  Flags,
-    __in        SIZE_T Size
-);
 
 extern HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsA,
 	_In_opt_ const GUID   *ClassGuid,
@@ -2296,6 +2336,16 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQueryPerformanceCounter,
 	_Out_opt_ PLARGE_INTEGER PerformanceFrequency
 );
 
+extern HOOKDEF(BOOL, WINAPI, CreateTimerQueueTimer,
+  _Out_    PHANDLE             phNewTimer,
+  _In_opt_ HANDLE              TimerQueue,
+  _In_     WAITORTIMERCALLBACK Callback,
+  _In_opt_ PVOID               Parameter,
+  _In_     DWORD               DueTime,
+  _In_     DWORD               Period,
+  _In_     ULONG               Flags
+);
+
 //
 // Socket Hooks
 //
@@ -2814,6 +2864,37 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
 	_Out_opt_ PULONG ReturnLength
 );
 
+extern HOOKDEF(unsigned int, WINAPIV, SizeofResource,
+    _In_opt_ HMODULE hModule,
+    _In_     HRSRC   hResInfo
+);
+
 extern HOOKDEF(void, WINAPIV, srand,
    unsigned int seed
 );   
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    IN PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    OUT PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+);
+
+extern HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR  lpString1,
+  _In_  LPSTR  lpString2,
+  _In_  int    iMaxLength
+);
+
+extern HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
+);

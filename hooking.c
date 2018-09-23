@@ -27,8 +27,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 
 extern DWORD g_tls_hook_index;
-extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern void ExtractionCallback();
 
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
@@ -37,6 +35,13 @@ extern void ExtractionCallback();
 #define TLS_LAST_WIN32_ERROR 0x34
 #define TLS_LAST_NTSTATUS_ERROR 0xbf4
 #endif
+
+static lookup_t g_hook_info;
+
+void hook_init()
+{
+    lookup_init(&g_hook_info);
+}
 
 void emit_rel(unsigned char *buf, unsigned char *source, unsigned char *target)
 {
@@ -88,7 +93,7 @@ int addr_in_our_dll_range(void *unused, ULONG_PTR addr)
 	return 0;
 }
 
-int __called_by_hook(ULONG_PTR stack_pointer, ULONG_PTR frame_pointer)
+static int __called_by_hook(ULONG_PTR stack_pointer, ULONG_PTR frame_pointer)
 {
 	return operate_on_backtrace(stack_pointer, frame_pointer, NULL, addr_in_our_dll_range);
 }
@@ -101,7 +106,6 @@ int called_by_hook(void)
 }
 
 extern BOOLEAN is_ignored_thread(DWORD tid);
-extern CRITICAL_SECTION g_tmp_hookinfo_lock;
 
 static hook_info_t tmphookinfo;
 DWORD tmphookinfo_threadid;
@@ -116,11 +120,10 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 	if (h->fully_emulate)
 		return 1;
 
-    if (g_tls_hook_index >= 0x40 && h->new_func == &New_NtAllocateVirtualMemory) {
+	if (h->new_func == &New_NtAllocateVirtualMemory) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
-		if (TlsGetValue(g_tls_hook_index) == NULL && (!tmphookinfo_threadid || tmphookinfo_threadid != GetCurrentThreadId())) {
-			EnterCriticalSection(&g_tmp_hookinfo_lock);
+		if (lookup_get_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), NULL) == NULL && (!tmphookinfo_threadid || tmphookinfo_threadid != GetCurrentThreadId())) {
 			memset(&tmphookinfo, 0, sizeof(tmphookinfo));
 			tmphookinfo_threadid = GetCurrentThreadId();
 		}
@@ -128,7 +131,6 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 	}
 	else if (tmphookinfo_threadid) {
 		tmphookinfo_threadid = 0;
-		LeaveCriticalSection(&g_tmp_hookinfo_lock);
 	}
 
 	hookinfo = hook_info();
@@ -146,8 +148,6 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
-        ExtractionCallback();
-        
 		return 1;
 	}
 
@@ -165,10 +165,10 @@ hook_info_t *hook_info()
 
 	get_lasterrors(&lasterror);
 
-	ptr = (hook_info_t *)TlsGetValue(g_tls_hook_index);
+	ptr = (hook_info_t *)lookup_get_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), NULL);
 	if (ptr == NULL) {
-		ptr = (hook_info_t *)calloc(1, sizeof(hook_info_t));
-		TlsSetValue(g_tls_hook_index, ptr);
+		ptr = lookup_add_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), sizeof(hook_info_t));
+		memset(ptr, 0, sizeof(*ptr));
 	}
 
 	set_lasterrors(&lasterror);
@@ -183,6 +183,7 @@ void get_lasterrors(lasterror_t *errors)
     errors->Eflags = (DWORD)__readeflags();
     
     teb = (char *)NtCurrentTeb();
+
 	errors->Win32Error = *(DWORD *)(teb + TLS_LAST_WIN32_ERROR);
 	errors->NtstatusError = *(DWORD *)(teb + TLS_LAST_NTSTATUS_ERROR);
 }
@@ -194,6 +195,7 @@ void set_lasterrors(lasterror_t *errors)
 
 	*(DWORD *)(teb + TLS_LAST_WIN32_ERROR) = errors->Win32Error;
 	*(DWORD *)(teb + TLS_LAST_NTSTATUS_ERROR) = errors->NtstatusError;
+    
     __writeeflags(errors->Eflags);
 }
 

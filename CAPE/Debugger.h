@@ -119,12 +119,15 @@ int launch_debugger(void);
 BOOL SetBreakpoint(int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL SetThreadBreakpoint(DWORD ThreadId, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL ContextSetThreadBreakpoint(PCONTEXT Context, int Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
+BOOL ContextSetDebugRegister(PCONTEXT Context, int Register, int Size, LPVOID Address, DWORD Type);
 BOOL SetThreadBreakpoints(PTHREADBREAKPOINTS ThreadBreakpoints);
 BOOL ContextSetBreakpoint(PTHREADBREAKPOINTS ThreadBreakpoints);
 BOOL ContextUpdateCurrentBreakpoint(PCONTEXT Context, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL SetNextAvailableBreakpoint(DWORD ThreadId, unsigned int* Register, int Size, LPVOID Address, DWORD Type, PVOID Callback);
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler);
 BOOL SetResumeFlag(PCONTEXT Context);
+BOOL SetZeroFlag(PCONTEXT Context);
+BOOL ClearZeroFlag(PCONTEXT Context);
 PTHREADBREAKPOINTS CreateThreadBreakpoints(DWORD ThreadId);
 
 // Get
@@ -135,6 +138,7 @@ BOOL ContextSetNextAvailableBreakpoint(PCONTEXT Context, unsigned int* Register,
 int CheckDebugRegister(HANDLE hThread, int Register);
 BOOL CheckDebugRegisters(HANDLE hThread, PCONTEXT pContext);
 int ContextCheckDebugRegister(CONTEXT Context, int Register);
+BOOL ContextCheckDebugRegisters(PCONTEXT pContext);
 HANDLE GetThreadHandle(DWORD ThreadId);
 
 // Clear

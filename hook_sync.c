@@ -20,9 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ntapi.h"
 #include "hooking.h"
 #include "log.h"
-#include "CAPE\CAPE.h"
 
-extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(NTSTATUS, WINAPI, NtCreateMutant,
     __out       PHANDLE MutantHandle,
@@ -64,15 +62,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateEvent,
 		LOQ_ntstatus("synchronization", "Poii", "Handle", EventHandle,
 			"EventName", eventname, "EventType", EventType, "InitialState", InitialState);
 	}
-    
-    //DoOutputDebugString("NtCreateEvent hook: DesiredAccess 0x%x ObjectAttributes 0x%x EventType 0x%x InitialState 0x%x.\n", DesiredAccess, ObjectAttributes, EventType, InitialState);
-    //
-    //if (DesiredAccess == 0x1f0003 && InitialState == 1) {
-    //    GetHookCallerBase();
-	//	LOQ_ntstatus("synchronization", "Pii", "Handle", EventHandle,
-	//		"EventType", EventType, "InitialState", InitialState);
-    //}
-    
 	return ret;
 }
 
@@ -154,4 +143,28 @@ HOOKDEF(NTSTATUS, WINAPI, NtAddAtomEx,
 	NTSTATUS ret = Old_NtAddAtomEx(AtomName, AtomNameLength, Atom, Unknown);
 	LOQ_ntstatus("synchronization", "uh", "AtomName", AtomName, "Atom", *Atom);
 	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationAtom,
+	IN	RTL_ATOM Atom,
+	IN	ATOM_INFORMATION_CLASS AtomInformationClass,
+    OUT PVOID AtomInformation,
+    IN  ULONG AtomInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+) {
+    WCHAR* AtomName;
+    ULONG AtomNameLength;
+    
+	NTSTATUS ret = Old_NtQueryInformationAtom(Atom, AtomInformationClass, AtomInformation, AtomInformationLength, ReturnLength);
+    
+    if (NT_SUCCESS(ret) && AtomInformationClass == AtomBasicInformation)
+    {
+        AtomNameLength = (ULONG)((PATOM_BASIC_INFORMATION)AtomInformation)->NameLength;
+        AtomName = ((PATOM_BASIC_INFORMATION)AtomInformation)->Name;
+        LOQ_ntstatus("synchronization", "bih", "AtomName", AtomNameLength, AtomName, "Size", AtomNameLength, "Atom", Atom);
+    }
+    else
+        LOQ_ntstatus("synchronization", "h", "Atom", Atom);
+	
+    return ret;
 }

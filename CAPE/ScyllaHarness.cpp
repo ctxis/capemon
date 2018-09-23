@@ -1,6 +1,6 @@
 /*
 CAPE - Config And Payload Extraction
-Copyright(C) 2015, 2016 Context Information Security. (kevin.oreilly@contextis.com)
+Copyright(C) 2015 - 2018 Context Information Security. (kevin.oreilly@contextis.com)
 
 This program is free software : you can redistribute it and / or modify
 it under the terms of the GNU General Public License as published by
@@ -77,12 +77,16 @@ extern "C" DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset)
     
     peFile = new PeParser(modBase, true);
 
-	//return peFile->convertOffsetToRVAVector(dwOffset) + modBase;
-	Test = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+    if (peFile->isValidPeFile())
+    {
+        //return peFile->convertOffsetToRVAVector(dwOffset) + modBase;
+        Test = peFile->convertOffsetToRVAVector(dwOffset) + modBase;
         
-    DoOutputDebugString("FileOffsetToVA: Debug - VA = 0x%p.\n", Test);
-    
-    return Test;
+        DoOutputDebugString("FileOffsetToVA: Debug - VA = 0x%p.\n", Test);
+
+        return Test;
+    }
+    else return NULL;
 }
 
 //**************************************************************************************
@@ -115,7 +119,7 @@ extern "C" int ScyllaDumpCurrentProcess(DWORD_PTR NewOEP)
         }
         else
         {
-            DoOutputErrorString("DumpCurrentProcess: Error - Cannot dump image");
+            DoOutputDebugString("DumpCurrentProcess: Error - Cannot dump image.\n");
             delete peFile;
             return 0;
         }
@@ -149,8 +153,9 @@ void ScyllaInit(HANDLE hProcess)
 extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PTR NewOEP)
 //**************************************************************************************
 {
-	DWORD_PTR entrypoint = 0;
+	SIZE_T SectionBasedFileSize;
 	PeParser * peFile = 0;
+	DWORD_PTR entrypoint = NULL;
 
 	ScyllaInit(hProcess);
     
@@ -165,9 +170,18 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
         else
             entrypoint = peFile->getEntryPoint();
 
-        entrypoint = entrypoint + ModuleBase;
-        
-        DoOutputDebugString("DumpProcess: Module entry point VA is 0x%p.\n", entrypoint);
+        SectionBasedFileSize = (SIZE_T)peFile->getSectionHeaderBasedFileSize();
+
+        if ((SIZE_T)entrypoint > SectionBasedFileSize)
+        {
+            DoOutputDebugString("DumpProcess: Error - entry point too big: 0x%x, ignoring.\n", entrypoint);
+            entrypoint = NULL;
+        }
+        else
+        {
+            DoOutputDebugString("DumpProcess: Module entry point VA is 0x%p.\n", entrypoint);
+            entrypoint = entrypoint + (DWORD_PTR)ModuleBase;
+        }
         
         if (peFile->dumpProcess(ModuleBase, entrypoint, NULL))
         {
@@ -175,7 +189,7 @@ extern "C" int ScyllaDumpProcess(HANDLE hProcess, DWORD_PTR ModuleBase, DWORD_PT
         }
         else
         {
-            DoOutputErrorString("DumpProcess: Error - Cannot dump image.\n");
+            DoOutputDebugString("DumpProcess: Error - Cannot dump image.\n");
             delete peFile;
             return 0;
         }
@@ -553,7 +567,7 @@ extern "C" int ScyllaDumpCurrentProcessFixImports(DWORD_PTR NewOEP)
         
         if (addressIAT && sizeIAT)
         {
-            DoOutputDebugString(TEXT("DumpCurrentProcessFixImports: Found IAT: 0x%p, size: 0x%x"), addressIAT, sizeIAT);
+            DoOutputDebugString("DumpCurrentProcessFixImports: Found IAT: 0x%x, size: 0x%x", addressIAT, sizeIAT);
             
             apiReader.readAndParseIAT(addressIAT, sizeIAT, importsHandling.moduleList);
             importsHandling.scanAndFixModuleList();
@@ -715,7 +729,7 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
         
         if (addressIAT && sizeIAT)
         {
-            DoOutputDebugString(TEXT("DumpProcessFixImports: Found IAT - 0x%p, size: 0x%x"), addressIAT, sizeIAT);
+            DoOutputDebugString("DumpProcessFixImports: Found IAT - 0x%x, size: 0x%x", addressIAT, sizeIAT);
             
             apiReader.readAndParseIAT(addressIAT, sizeIAT, importsHandling.moduleList);
             importsHandling.scanAndFixModuleList();
@@ -814,6 +828,42 @@ extern "C" int ScyllaDumpProcessFixImports(HANDLE hProcess, DWORD_PTR ModuleBase
     }
 
     delete peFile;
-    
+
 	return 1;
+}
+
+//**************************************************************************************
+extern "C" BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize)
+//**************************************************************************************
+{
+	ScyllaInitCurrentProcess();
+
+    PeParser *peFile = new PeParser((DWORD_PTR)ImageBase, true);
+
+    if (!peFile->isValidPeFile())
+    {
+        DoOutputDebugString("ScyllaGetSectionByName: Invalid PE image.\n");
+        return 0;
+    }
+
+    if (!peFile->readPeSectionsFromProcess())
+    {
+        DoOutputDebugString("ScyllaGetSectionByName: Failed to read PE sections from image.\n");
+        return 0;
+    }    
+
+    unsigned int NumberOfSections = peFile->getNumberOfSections();
+
+    for (unsigned int i = 0; i < NumberOfSections; i++)
+    {
+        if (!strcmp((char*)peFile->listPeSection[i].sectionHeader.Name, Name))
+        {
+            *SectionData = peFile->listPeSection[i].sectionHeader.VirtualAddress + (PUCHAR)ImageBase;
+            *SectionSize = peFile->listPeSection[i].sectionHeader.Misc.VirtualSize;
+            DoOutputDebugString("ScyllaGetSectionByName: %s section at 0x%p size 0x%x.\n", Name, *SectionData, *SectionSize);
+            return TRUE;
+        }
+    }
+
+    return FALSE;
 }

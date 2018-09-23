@@ -32,12 +32,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 
+extern struct TrackedRegion *TrackedRegionList;
 extern void AllocationHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
 extern void ProtectionHandler(PVOID BaseAddress, SIZE_T RegionSize, ULONG Protect, ULONG OldProtect);
 extern void FreeHandler(PVOID BaseAddress);
 extern void ProcessTrackedRegion();
 
-extern struct TrackedRegion *TrackedRegionList;
+extern void file_handle_terminate();
+extern int RoutineProcessDump();
+extern BOOL ProcessDumped;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
 	__in DWORD dwFlags,
@@ -123,8 +126,8 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateProcessEx,
     NTSTATUS ret = Old_NtCreateProcessEx(ProcessHandle, DesiredAccess,
         ObjectAttributes, ParentProcess, Flags, SectionHandle, DebugPort,
         ExceptionPort, InJob);
-	LOQ_ntstatus("process", "PphO", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
-        "FileName", ObjectAttributes);
+	LOQ_ntstatus("process", "PphOhh", "ProcessHandle", ProcessHandle, "ParentHandle", ParentProcess, "DesiredAccess", DesiredAccess,
+        "FileName", ObjectAttributes, "Flags", Flags, "SectionHandle", SectionHandle);
     if(NT_SUCCESS(ret)) {
 		DWORD pid = pid_from_process_handle(*ProcessHandle);
         pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
@@ -220,21 +223,33 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithLogonW,
 ) {
 	BOOL ret;
 	LPWSTR origcommandline = NULL;
-	
+	ENSURE_STRUCT(lpProcessInfo, PROCESS_INFORMATION);
+
 	if (lpCommandLine)
 		origcommandline = wcsdup(lpCommandLine);
 
 	ret = Old_CreateProcessWithLogonW(lpUsername, lpDomain, lpPassword, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "uuuhuuhiipp", "Username", lpUsername, "Domain", lpDomain, "Password", lpPassword, "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	LOQ_bool("process", "uuuhuuhiipp",
+		"Username", lpUsername,
+		"Domain", lpDomain,
+		"Password", lpPassword,
+		"LogonFlags", dwLogonFlags,
+		"ApplicationName", lpApplicationName,
+		"CommandLine", origcommandline,
+		"CreationFlags", dwCreationFlags,
+		"ProcessId", lpProcessInfo->dwProcessId,
+		"ThreadId", lpProcessInfo->dwThreadId,
+		"ProcessHandle", lpProcessInfo->hProcess,
+		"ThreadHandle", lpProcessInfo->hThread
+	);
 
 	if (origcommandline)
 		free(origcommandline);
 
 	if (ret) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
-		if (!(dwCreationFlags & CREATE_SUSPENDED))
+		if (!(dwCreationFlags & CREATE_SUSPENDED) && is_valid_address_range((ULONG_PTR)lpProcessInfo, (DWORD)sizeof(PROCESS_INFORMATION)))
 			ResumeThread(lpProcessInfo->hThread);
 		disable_sleep_skip();
 	}
@@ -260,13 +275,35 @@ HOOKDEF(BOOL, WINAPI, CreateProcessWithTokenW,
 
 	ret = Old_CreateProcessWithTokenW(hToken, dwLogonFlags, lpApplicationName, lpCommandLine, dwCreationFlags | CREATE_SUSPENDED, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInfo);
 
-	LOQ_bool("process", "huuhiipp", "LogonFlags", dwLogonFlags, "ApplicationName", lpApplicationName, "CommandLine", origcommandline, "CreationFlags", dwCreationFlags,
-		"ProcessId", lpProcessInfo->dwProcessId, "ThreadId", lpProcessInfo->dwThreadId, "ProcessHandle", lpProcessInfo->hProcess, "ThreadHandle", lpProcessInfo->hThread);
+	if (lpProcessInfo) {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", lpProcessInfo->dwProcessId,
+			"ThreadId", lpProcessInfo->dwThreadId,
+			"ProcessHandle", lpProcessInfo->hProcess,
+			"ThreadHandle", lpProcessInfo->hThread
+		);
+	}
+	else {
+		LOQ_bool("process", "huuhiipp",
+			"LogonFlags", dwLogonFlags,
+			"ApplicationName", lpApplicationName,
+			"CommandLine", origcommandline,
+			"CreationFlags", dwCreationFlags,
+			"ProcessId", NULL,
+			"ThreadId", NULL,
+			"ProcessHandle", NULL,
+			"ThreadHandle", NULL
+		);
+	}
 
 	if (origcommandline)
 		free(origcommandline);
 
-	if (ret) {
+	if (ret && lpProcessInfo) {
 		pipe("PROCESS:%d:%d,%d", is_suspended(lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId), lpProcessInfo->dwProcessId, lpProcessInfo->dwThreadId);
 		if (!(dwCreationFlags & CREATE_SUSPENDED))
 			ResumeThread(lpProcessInfo->hThread);
@@ -376,26 +413,36 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
     __in      NTSTATUS ExitStatus
 ) {
 	// Process will terminate. Default logging will not work. Be aware: return value not valid
-	lasterror_t lasterror;
     NTSTATUS ret = 0;
+	lasterror_t lasterror;
 
 	get_lasterrors(&lasterror);
 	if (ProcessHandle == NULL) {
 		// we mark this here as this termination type will kill all threads but ours, including
 		// the logging thread.  By setting this, we'll switch into a direct logging mode
 		// for the subsequent call to NtTerminateProcess against our own process handle
-
         ProcessTrackedRegion();
-        process_shutting_down = 1;
+        if (g_config.procdump && !ProcessDumped)
+        {
+            DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
+            RoutineProcessDump();
+        }
+		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
+        file_handle_terminate();
 	}
 	else if (GetCurrentProcessId() == our_getprocessid(ProcessHandle)) {
-
         ProcessTrackedRegion();
+        if (g_config.procdump && !ProcessDumped)
+        {
+            DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
+            RoutineProcessDump();
+        }
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
 		pipe("KILL:%d", GetCurrentProcessId());
 		log_free();
+        file_handle_terminate();
 	}
 	else {
 		DWORD PID = pid_from_process_handle(ProcessHandle);
@@ -481,7 +528,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtUnmapViewOfSection,
         map_size = mbi.RegionSize;
     }
     ret = Old_NtUnmapViewOfSection(ProcessHandle, BaseAddress);
-	
+
     LOQ_ntstatus("process", "ppp", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
         "RegionSize", map_size);
 
@@ -504,7 +551,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize,
 		InheritDisposition, AllocationType, Win32Protect);
 	DWORD pid = pid_from_process_handle(ProcessHandle);
-      
+
     LOQ_ntstatus("process", "ppPpPhs", "SectionHandle", SectionHandle,
     "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
     "SectionOffset", SectionOffset, "ViewSize", ViewSize, "Win32Protect", Win32Protect, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
@@ -513,7 +560,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtMapViewOfSection,
 		if (pid != GetCurrentProcessId()) {
 			pipe("PROCESS:%d:%d", is_suspended(pid, 0), pid);
 			disable_sleep_skip();
-		}
+#ifdef CAPE_INJECTION
+            MapSectionViewHandler(SectionHandle, ProcessHandle, *BaseAddress, ViewSize);
+#endif
+#ifdef CAPE_EXTRACTION
+            ProtectionHandler(*BaseAddress, ViewSize, Win32Protect, 0);
+#endif
+}
 	}
 	return ret;
 }
@@ -553,11 +606,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadVirtualMemory,
 	NTSTATUS ret;
     ENSURE_SIZET(NumberOfBytesRead);
 
-    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer,
-        NumberOfBytesToRead, NumberOfBytesRead);
+    ret = Old_NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead);
 
-    LOQ_ntstatus("process", "ppB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "Buffer", NumberOfBytesRead, Buffer);
+    LOQ_ntstatus("process", "pphB", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress, "Size", NumberOfBytesToRead, "Buffer", NumberOfBytesRead, Buffer);
 
 	return ret;
 }
@@ -569,14 +620,12 @@ HOOKDEF(BOOL, WINAPI, ReadProcessMemory,
     _In_    SIZE_T nSize,
     _Out_   PSIZE_T lpNumberOfBytesRead
 ) {
-    BOOL ret;
+	BOOL ret;
     ENSURE_SIZET(lpNumberOfBytesRead);
 
-    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer,
-        nSize, lpNumberOfBytesRead);
+    ret = Old_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead);
 
-    LOQ_bool("process", "ppB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress,
-        "Buffer", lpNumberOfBytesRead, lpBuffer);
+    LOQ_bool("process", "pphB", "ProcessHandle", hProcess, "BaseAddress", lpBaseAddress, "Size", nSize, "Buffer", lpNumberOfBytesRead, lpBuffer);
 
     return ret;
 }
@@ -597,8 +646,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 
 	pid = pid_from_process_handle(ProcessHandle);
 
-    LOQ_ntstatus("process", "ppBhs", "ProcessHandle", ProcessHandle, "BaseAddress", BaseAddress,
-        "Buffer", NumberOfBytesWritten, Buffer, "BufferLength", *NumberOfBytesWritten, "StackPivoted", is_stack_pivoted() ? "yes" : "no");
+	 LOQ_ntstatus("process", "ppBhs",
+	    "ProcessHandle", ProcessHandle,
+	    "BaseAddress", BaseAddress,
+	    "Buffer", NumberOfBytesWritten, Buffer,
+	    "BufferLength", is_valid_address_range((ULONG_PTR)NumberOfBytesWritten, 4) ? *NumberOfBytesWritten : 0,
+	    "StackPivoted", is_stack_pivoted() ? "yes" : "no");
 
 	if (pid != GetCurrentProcessId()) {
 		if (NT_SUCCESS(ret)) {
@@ -606,7 +659,6 @@ HOOKDEF(NTSTATUS, WINAPI, NtWriteVirtualMemory,
 			disable_sleep_skip();
 		}
 	}
-
 
 	return ret;
 }

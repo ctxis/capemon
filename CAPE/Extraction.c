@@ -119,6 +119,7 @@ extern void hook_enable();
 extern hook_info_t *hook_info();
 extern int is_stack_pivoted(void);
 
+extern LPVOID GetReturnAddress(hook_info_t *hookinfo);
 extern BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
 extern int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
@@ -128,56 +129,6 @@ BOOL ActivateBreakpoints(PTRACKEDREGION TrackedRegion, struct _EXCEPTION_POINTER
 
 PTRACKEDREGION GuardedPagesToStep, TrackedRegionFromHook, CurrentBreakpointRegion;
 static DWORD_PTR LastEIP, CurrentEIP;
-
-//**************************************************************************************
-BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address)
-//**************************************************************************************
-{
-    if ((ULONG_PTR)Address >= g_our_dll_base && (ULONG_PTR)Address < (g_our_dll_base + g_our_dll_size))
-    {
-        if (ReturnAddress)
-            *ReturnAddress = Address;
-		return TRUE;
-    }
-	
-    return FALSE;
-}
-
-//**************************************************************************************
-BOOL GetCurrentFrame(LPVOID* ReturnAddress, LPVOID Address)
-//**************************************************************************************
-{
-    *ReturnAddress = Address;
-
-    return TRUE;
-}
-
-//**************************************************************************************
-LPVOID GetReturnAddress(hook_info_t *hookinfo)
-//**************************************************************************************
-{
-    LPVOID ReturnAddress = NULL;
-
-    __try
-    {
-#ifdef _WIN64
-        DoOutputDebugString("GetActualReturnAddress: operate_on_backtrace call with Rip 0x%p.\n", hookinfo->frame_pointer);
-#else
-        DoOutputDebugString("GetActualReturnAddress: operate_on_backtrace call with Ebp 0x%x.\n", hookinfo->frame_pointer);
-#endif
-        operate_on_backtrace(hookinfo->stack_pointer, hookinfo->frame_pointer, &ReturnAddress, GetCurrentFrame);
-        return ReturnAddress;
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER)  
-    {  
-#ifdef _WIN64
-        DoOutputDebugString("GetActualReturnAddress: Exception trying to get return address with Rip 0x%p.\n", hookinfo->frame_pointer);
-#else
-        DoOutputDebugString("GetActualReturnAddress: Exception trying to get return address with base pointer 0x%x.\n", hookinfo->frame_pointer);
-#endif
-        return NULL;
-    }
-}
 
 //**************************************************************************************
 PIMAGE_NT_HEADERS GetNtHeaders(LPVOID BaseAddress)
@@ -510,6 +461,25 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect, ULONG Ol
         TrackedRegion->RegionSize = RegionSize;
         
         TrackedRegion->Protect = Protect;
+        
+        SetCapeMetaData(EXTRACTION_PE, 0, NULL, Address);
+
+        DoOutputDebugString("ProtectionHandler: Debug: About to scan region for a PE image (base 0x%p, size 0x%x).\n", TrackedRegion->MemInfo.AllocationBase, (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress + TrackedRegion->MemInfo.RegionSize - (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase);
+        
+        TrackedRegion->PagesDumped = DumpPEsInRange(Address, RegionSize);
+
+        if (TrackedRegion->PagesDumped)
+            DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");            
+        else
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, Address);
+            
+            TrackedRegion->PagesDumped = DumpMemory(Address, RegionSize);
+            
+            if (TrackedRegion->PagesDumped)
+                DoOutputDebugString("ProtectionHandler: dumped memory range at 0x%p.\n", TrackedRegion->MemInfo.AllocationBase);
+        }
+        
     }
     else 
         TrackedRegion = AddTrackedRegion(Address, RegionSize, Protect);
@@ -549,6 +519,117 @@ void ProtectionHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect, ULONG Ol
     }     
     // deal with newly tracked region
     else if (GuardPagesDisabled)
+    {
+        TrackedRegion->BreakpointsSet = ActivateBreakpoints(TrackedRegion, NULL);
+        
+        if (TrackedRegion->BreakpointsSet)
+            DoOutputDebugString("ProtectionHandler: Breakpoints set on executable region at: 0x%p.\n", Address);
+        else
+            DoOutputDebugString("ProtectionHandler: Error - unable to activate breakpoints around address 0x%p.\n", Address);
+    }
+    else
+    {
+        TrackedRegion->Guarded = ActivateGuardPages(TrackedRegion);
+        //TrackedRegion->Guarded = ActivateGuardPagesOnProtectedRange(TrackedRegion);
+
+        if (TrackedRegion->Guarded)
+            DoOutputDebugString("ProtectionHandler: Guarded executable region at: 0x%p.\n", Address);
+        else
+            DoOutputDebugString("ProtectionHandler: Error - unable to activate guard pages around address 0x%p.\n", Address);
+            
+    }
+
+    hook_enable();
+
+    return;
+}
+
+//**************************************************************************************
+void MapSectionViewHandler(PVOID Address, SIZE_T RegionSize, ULONG Protect)
+//**************************************************************************************
+{
+    PTRACKEDREGION TrackedRegion = NULL;
+    
+    if (!DebuggerInitialised)
+        return;
+
+    if (!Address || !RegionSize)
+    {
+        DoOutputDebugString("ProtectionHandler: Error, Address or RegionSize zero: 0x%p, 0x%x.\n", Address, RegionSize);
+        return;    
+    }
+    
+    ProcessTrackedRegion();
+
+    if (RegionSize < EXTRACTION_MIN_SIZE)
+        return;
+    
+    if (!(Protect & EXECUTABLE_FLAGS))
+        return;
+    
+    DoOutputDebugString("ProtectionHandler: Address:0x%p, NumberOfBytesToProtect: 0x%x, NewAccessProtection: 0x%x\n", Address, RegionSize, Protect);
+
+    hook_disable();
+
+    if (TrackedRegionList)
+        TrackedRegion = GetTrackedRegion(Address);
+        
+    // if region has already been tracked, we update
+    if (TrackedRegion)
+    {
+        DoOutputDebugString("ProtectionHandler: Address already in tracked region list: 0x%p.\n", Address);
+        
+        TrackedRegion->RegionSize = RegionSize;
+        
+        TrackedRegion->Protect = Protect;
+        
+        SetCapeMetaData(EXTRACTION_PE, 0, NULL, Address);
+
+        DoOutputDebugString("ProtectionHandler: Debug: About to scan region for a PE image (base 0x%p, size 0x%x).\n", TrackedRegion->MemInfo.AllocationBase, (DWORD_PTR)TrackedRegion->MemInfo.BaseAddress + TrackedRegion->MemInfo.RegionSize - (DWORD_PTR)TrackedRegion->MemInfo.AllocationBase);
+        
+        TrackedRegion->PagesDumped = DumpPEsInRange(Address, RegionSize);
+
+        if (TrackedRegion->PagesDumped)
+            DoOutputDebugString("ProtectionHandler: PE image(s) detected and dumped.\n");            
+        else
+        {
+            SetCapeMetaData(EXTRACTION_SHELLCODE, 0, NULL, Address);
+            
+            TrackedRegion->PagesDumped = DumpMemory(Address, RegionSize);
+            
+            if (TrackedRegion->PagesDumped)
+                DoOutputDebugString("ProtectionHandler: dumped memory range at 0x%p.\n", TrackedRegion->MemInfo.AllocationBase);
+        }
+        
+    }
+    else 
+        TrackedRegion = AddTrackedRegion(Address, RegionSize, Protect);
+
+    TrackedRegion->ProtectAddress = Address;
+    
+    if (!TrackedRegion)
+    {
+        DoOutputDebugString("ProtectionHandler: Error, unable to add new region at 0x%p to tracked region list.\n", Address);
+        hook_enable();
+        return;
+    }
+    
+    if (!VirtualQuery(Address, &TrackedRegion->MemInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+    {
+        DoOutputErrorString("ProtectionHandler: unable to query memory region 0x%p", Address);
+        hook_enable();
+        return;
+    }
+
+    if (Protect != TrackedRegion->Protect)
+    {
+        DoOutputDebugString("ProtectionHandler: updating protection of tracked region around 0x%p.\n", Address);
+        TrackedRegion->Protect = Protect;
+    }
+    
+  
+    // deal with newly tracked region
+    if (GuardPagesDisabled)
     {
         TrackedRegion->BreakpointsSet = ActivateBreakpoints(TrackedRegion, NULL);
         
