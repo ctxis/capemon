@@ -28,11 +28,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "lookup.h"
 #include "config.h"
 
-#define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_GENERIC_WRITE | \
-    FILE_WRITE_DATA | FILE_APPEND_DATA | STANDARD_RIGHTS_WRITE | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
+#define DUMP_FILE_MASK ((GENERIC_ALL | GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | FILE_APPEND_DATA | MAXIMUM_ALLOWED) & ~SYNCHRONIZE)
 
 // length of a hardcoded unicode string
 #define UNILEN(x) (sizeof(x) / sizeof(wchar_t) - 1)
+
+extern BOOL FilesDumped;
 
 typedef struct _file_record_t {
     unsigned int attributes;
@@ -47,6 +48,8 @@ typedef struct _file_log_t {
 
 static lookup_t g_files;
 static lookup_t g_file_logs;
+
+static void new_file(const UNICODE_STRING *obj);
 
 void file_init()
 {
@@ -139,17 +142,9 @@ void file_write(HANDLE file_handle)
 	get_lasterrors(&lasterror);
 
 	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
-    if(r != NULL) {
-		UNICODE_STRING str;
-		str.Length = (USHORT)r->length * sizeof(wchar_t);
-		str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
-		str.Buffer = r->filename;
-
-        // we do in fact want to dump this file because it was written to
-        new_file(&str);
-
-        // delete the file record from the list
-        lookup_del(&g_files, (ULONG_PTR)file_handle);
+    if(r == NULL) {
+        r = lookup_add(&g_files, (ULONG_PTR)file_handle, sizeof(file_record_t));
+        memset(r, 0, sizeof(*r));
     }
 
 	set_lasterrors(&lasterror);
@@ -199,7 +194,7 @@ static void handle_new_file(HANDLE file_handle, const OBJECT_ATTRIBUTES *obj)
 			len = lstrlenW(absolutename);
 			// cache this file
 			if (is_ignored_file_unicode(absolutename, len) == 0)
-				cache_file(file_handle, absolutename, len, obj->Attributes);
+                cache_file(file_handle, absolutename, len, obj->Attributes);
 			free(absolutename);
 		}
 		else {
@@ -242,9 +237,50 @@ void handle_duplicate(HANDLE old_handle, HANDLE new_handle)
 void file_close(HANDLE file_handle)
 {
 	lasterror_t lasterror;
+	file_record_t *r;
 
 	get_lasterrors(&lasterror);
-    lookup_del(&g_files, (ULONG_PTR) file_handle);
+
+	r = lookup_get(&g_files, (ULONG_PTR)file_handle, NULL);
+    if (r != NULL) {
+        UNICODE_STRING str;
+        str.Length = (USHORT)r->length * sizeof(wchar_t);
+        str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
+        str.Buffer = r->filename;
+        new_file(&str);
+        lookup_del(&g_files, (ULONG_PTR) file_handle);
+    }
+
+	set_lasterrors(&lasterror);
+}
+
+void file_handle_terminate()
+{
+    entry_t *p;
+    file_record_t *r;
+	lasterror_t lasterror;
+
+    // ensure this only happens once as we can't lookup_del in the loop
+    if (FilesDumped)
+        return;
+
+	FilesDumped = TRUE;
+
+    get_lasterrors(&lasterror);
+
+    for (p = (entry_t*)&(g_files.root); p != NULL; p = p->next) {
+        if (p->id) {
+            r = lookup_get(&g_files, (ULONG_PTR)p->id, NULL);
+            if (r != NULL) {
+                UNICODE_STRING str;
+                str.Length = (USHORT)r->length * sizeof(wchar_t);
+                str.MaximumLength = ((USHORT)r->length + 1) * sizeof(wchar_t);
+                str.Buffer = r->filename;
+                new_file(&str);
+            }
+        }
+    }
+
 	set_lasterrors(&lasterror);
 }
 
@@ -402,7 +438,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtReadFile,
 		if (read_count < 50)
 			LOQ_ntstatus("filesystem", "pFbl", "FileHandle", FileHandle,
 				"HandleName", fname, "Buffer", InitialBufferLength, InitialBuffer, "Length", AccumulatedLength);
-		else if (read_count == 50)
+		else
 			LOQ_ntstatus("filesystem", "pFbls", "FileHandle", FileHandle,
 				"HandleName", fname, "Buffer", InitialBufferLength, InitialBuffer, "Length", AccumulatedLength, "Status", "Maximum logged reads reached for this file");
 
@@ -811,7 +847,6 @@ HOOKDEF_ALT(BOOL, WINAPI, MoveFileWithProgressW,
 			// we can do this here because it's not scheduled for deletion until reboot
 			pipe("FILE_DEL:%Z", path);
 		}
-
     }
 
 	free(path);
@@ -870,13 +905,52 @@ HOOKDEF_ALT(BOOL, WINAPI, MoveFileWithProgressTransactedW,
 				// we can do this here because it's not scheduled for deletion until reboot
 				pipe("FILE_DEL:%Z", path);
 			}
-
 		}
 
 		free(path);
 	}
 
 	return ret;
+}
+
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedA,
+  __in       LPCSTR                lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hfhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
+}
+
+HOOKDEF (HANDLE, WINAPI, CreateFileTransactedW,
+  __in       LPCWSTR               lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+) {
+    HANDLE ret = Old_CreateFileTransactedW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
+
+    LOQ_handle("filesystem", "hFhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
+
+    return ret;
 }
 
 HOOKDEF(HANDLE, WINAPI, FindFirstFileExA,
@@ -1231,25 +1305,6 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationA,
 {
     BOOL ret = Old_GetVolumeInformationA(lpRootPathName, lpVolumeNameBuffer, nVolumeNameSize, lpVolumeSerialNumber, lpMaximumComponentLength, lpFileSystemFlags, lpFileSystemNameBuffer, nFileSystemNameSize);
 	LOQ_bool("filesystem", "s", "RootPathName", lpRootPathName);
-#ifdef KEV
-	if (ret != 0 && lpVolumeSerialNumber != NULL)
-	{
-		char SystemDirectory[MAX_PATH];
-		size_t DirectoryPathLength = GetSystemDirectoryA(SystemDirectory, MAX_PATH);
-		
-		if (DirectoryPathLength == 0)
-			return ret;
-
-		if (!strncmp(lpRootPathName, SystemDirectory, 3))
-		{
-			*lpVolumeSerialNumber = 0x46e70ca9;
-			debug_message("Changed Volume Serial Number.");
-		}
-
-
-
-	}	
-#endif	
     return ret;
 }
 
@@ -1266,22 +1321,6 @@ HOOKDEF(BOOL, WINAPI, GetVolumeInformationW,
 {
     BOOL ret = Old_GetVolumeInformationW(lpRootPathName, lpVolumeNameBuffer, nVolumeNameSize, lpVolumeSerialNumber, lpMaximumComponentLength, lpFileSystemFlags, lpFileSystemNameBuffer, nFileSystemNameSize);
 	LOQ_bool("filesystem", "u", "RootPathName", lpRootPathName);
-#ifdef KEV
-	if (ret != 0 && lpVolumeSerialNumber != NULL)
-	{
-		WCHAR SystemDirectory[MAX_PATH];
-		size_t DirectoryPathLength = GetSystemDirectoryW(SystemDirectory, MAX_PATH);
-		
-		if (DirectoryPathLength == 0)
-			return ret;
-
-		if (!wcsncmp(lpRootPathName, SystemDirectory, 3))
-		{
-			*lpVolumeSerialNumber = 0x46e70ca9;
-			debug_message("Changed Volume Serial Number.");
-		}
-	}
-#endif		
     return ret;
 }
 

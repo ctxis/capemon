@@ -26,15 +26,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "misc.h"
 #include "pipe.h"
 
-extern DWORD g_tls_hook_index;
-
-extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
-extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
-extern PVOID GetAllocationBase(PVOID Address);
-extern SIZE_T GetAllocationSize(PVOID Address);
-extern BOOL ModuleDumped;
-
 #ifdef _WIN64
 #define TLS_LAST_WIN32_ERROR 0x68
 #define TLS_LAST_NTSTATUS_ERROR 0x1250
@@ -42,6 +33,24 @@ extern BOOL ModuleDumped;
 #define TLS_LAST_WIN32_ERROR 0x34
 #define TLS_LAST_NTSTATUS_ERROR 0xbf4
 #endif
+
+static lookup_t g_hook_info;
+
+extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+extern BOOL DumpRegion(PVOID Address);
+extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
+extern PVOID GetAllocationBase(PVOID Address);
+extern PVOID GetHookCallerBase();
+extern BOOL ModuleDumped;
+#ifdef CAPE_TRACE
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+extern BOOL BreakpointsSet;
+#endif
+
+void hook_init()
+{
+    lookup_init(&g_hook_info);
+}
 
 void emit_rel(unsigned char *buf, unsigned char *source, unsigned char *target)
 {
@@ -64,43 +73,6 @@ static int set_caller_info(void *unused, ULONG_PTR addr)
 		}
 	}
 	return 0;
-}
-
-void dump_on_api(hook_t *h)
-{
-	unsigned int i;
-	hook_info_t *hookinfo = hook_info();
-
-	for (i = 0; i < ARRAYSIZE(g_config.dump_on_apinames); i++) {
-        PVOID AllocationBase;
-		if (!g_config.dump_on_apinames[i])
-			break;
-		if (!ModuleDumped && !stricmp(h->funcname, g_config.dump_on_apinames[i])) {
-            if (hookinfo->main_caller_retaddr) {
-                AllocationBase = GetAllocationBase((PVOID)hookinfo->main_caller_retaddr);
-                if (!AllocationBase)
-                    AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
-                if (AllocationBase) {
-                    if (DumpModuleInCurrentProcess(AllocationBase)) {
-                        ModuleDumped = TRUE;
-                        DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                    else if (DumpMemory(AllocationBase, GetAllocationSize((PVOID)hookinfo->parent_caller_retaddr))) {
-                        ModuleDumped = TRUE;
-                        DoOutputDebugString("Dump-on-API: Dumped memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                    else {
-                        DoOutputDebugString("Dump-on-API: Failed to dump memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
-                    }
-                }
-                else
-                    DoOutputDebugString("Dump-on-API: Failed to obtain current module base address.\n");
-            }
-            return;
-        }
-	}
-
-	return;
 }
 
 int hook_is_excluded(hook_t *h)
@@ -142,9 +114,73 @@ int called_by_hook(void)
 	return __called_by_hook(hookinfo->stack_pointer, hookinfo->frame_pointer);
 }
 
-extern BOOLEAN is_ignored_thread(DWORD tid);
-extern CRITICAL_SECTION g_tmp_hookinfo_lock;
+void dump_on_api(hook_t *h)
+{
+	unsigned int i;
+	hook_info_t *hookinfo = hook_info();
 
+    for (i = 0; i < ARRAYSIZE(g_config.dump_on_apinames); i++) {
+        PVOID AllocationBase;
+		if (!g_config.dump_on_apinames[i])
+			break;
+		if (!ModuleDumped && !stricmp(h->funcname, g_config.dump_on_apinames[i])) {
+            DoOutputDebugString("Dump-on-API: %s call detected - GetHookCallerBase 0x%p main_caller_retaddr 0x%p parent_caller_retaddr 0x%p.\n", h->funcname, GetHookCallerBase(), hookinfo->main_caller_retaddr, hookinfo->parent_caller_retaddr);
+            if (hookinfo->main_caller_retaddr) {
+                AllocationBase = GetAllocationBase((PVOID)hookinfo->main_caller_retaddr);
+                if (!AllocationBase)
+                    AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
+                if (AllocationBase) {
+                    if (DumpModuleInCurrentProcess(AllocationBase)) {
+                        ModuleDumped = TRUE;
+                        DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    }
+                    else if (DumpRegion(AllocationBase)) {
+                        ModuleDumped = TRUE;
+                        DoOutputDebugString("Dump-on-API: Dumped memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    }
+                    else {
+                        DoOutputDebugString("Dump-on-API: Failed to dump memory region at 0x%p due to %s call.\n", AllocationBase, h->funcname);
+                    }
+                }
+                else
+                    DoOutputDebugString("Dump-on-API: Failed to obtain current module base address.\n");
+            }
+            return;
+        }
+	}
+
+	return;
+}
+
+#ifdef CAPE_TRACE
+void base_on_api(hook_t *h)
+{
+	unsigned int i;
+	hook_info_t *hookinfo = hook_info();
+
+	for (i = 0; i < ARRAYSIZE(g_config.base_on_apiname); i++) {
+		if (!g_config.base_on_apiname[i])
+			break;
+		if (!BreakpointsSet && !called_by_hook() && !stricmp(h->funcname, g_config.base_on_apiname[i])) {
+            DoOutputDebugString("Base-on-API: %s call detected in thread %d.\n", h->funcname, GetCurrentThreadId());
+            PVOID AllocationBase = GetHookCallerBase();
+            if (AllocationBase) {
+                BreakpointsSet = SetInitialBreakpoints((PVOID)AllocationBase);
+                if (BreakpointsSet)
+                    DoOutputDebugString("Base-on-API: GetHookCallerBase success 0x%p - Breakpoints set.\n", AllocationBase);
+                else
+                    DoOutputDebugString("Base-on-API: Failed to set breakpoints on 0x%p.\n", AllocationBase);
+            }
+            else
+                DoOutputDebugString("Base-on-API: GetHookCallerBase fail.\n");
+        }
+	}
+
+	return;
+}
+#endif
+
+extern BOOLEAN is_ignored_thread(DWORD tid);
 static hook_info_t tmphookinfo;
 DWORD tmphookinfo_threadid;
 
@@ -158,11 +194,10 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 	if (h->fully_emulate)
 		return 1;
 
-	if (g_tls_hook_index >= 0x40 && h->new_func == &New_NtAllocateVirtualMemory) {
+	if (h->new_func == &New_NtAllocateVirtualMemory) {
 		lasterror_t lasterrors;
 		get_lasterrors(&lasterrors);
-		if (TlsGetValue(g_tls_hook_index) == NULL && (!tmphookinfo_threadid || tmphookinfo_threadid != GetCurrentThreadId())) {
-			EnterCriticalSection(&g_tmp_hookinfo_lock);
+		if (lookup_get_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), NULL) == NULL && (!tmphookinfo_threadid || tmphookinfo_threadid != GetCurrentThreadId())) {
 			memset(&tmphookinfo, 0, sizeof(tmphookinfo));
 			tmphookinfo_threadid = GetCurrentThreadId();
 		}
@@ -170,7 +205,6 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 	}
 	else if (tmphookinfo_threadid) {
 		tmphookinfo_threadid = 0;
-		LeaveCriticalSection(&g_tmp_hookinfo_lock);
 	}
 
 	hookinfo = hook_info();
@@ -188,9 +222,14 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
+#ifdef CAPE_DUMP_ON_API
 		dump_on_api(h);
-        
-        return 1;
+#endif
+#ifdef CAPE_TRACE
+		base_on_api(h);
+#endif
+
+		return 1;
 	}
 
 	return 0;
@@ -207,10 +246,10 @@ hook_info_t *hook_info()
 
 	get_lasterrors(&lasterror);
 
-	ptr = (hook_info_t *)TlsGetValue(g_tls_hook_index);
+	ptr = (hook_info_t *)lookup_get_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), NULL);
 	if (ptr == NULL) {
-		ptr = (hook_info_t *)calloc(1, sizeof(hook_info_t));
-		TlsSetValue(g_tls_hook_index, ptr);
+		ptr = lookup_add_no_cs(&g_hook_info, (ULONG_PTR)GetCurrentThreadId(), sizeof(hook_info_t));
+		memset(ptr, 0, sizeof(*ptr));
 	}
 
 	set_lasterrors(&lasterror);

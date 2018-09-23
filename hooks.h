@@ -213,6 +213,32 @@ extern HOOKDEF(BOOL, WINAPI, RemoveDirectoryW,
     __in  LPWSTR lpPathName
 );
 
+extern HOOKDEF(HANDLE, WINAPI, CreateFileTransactedA,
+  __in       LPCSTR                lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+);
+
+extern HOOKDEF(HANDLE, WINAPI, CreateFileTransactedW,
+  __in       LPCWSTR               lpFileName,
+  __in       DWORD                 dwDesiredAccess,
+  __in       DWORD                 dwShareMode,
+  __in_opt   LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in       DWORD                 dwCreationDisposition,
+  __in       DWORD                 dwFlagsAndAttributes,
+  __in_opt   HANDLE                hTemplateFile,
+  __in       HANDLE                hTransaction,
+  __in_opt   PUSHORT               pusMiniVersion,
+  __reserved PVOID                 pExtendedParameter
+);
+
 extern HOOKDEF(HANDLE, WINAPI, FindFirstFileExA,
     __in        LPCTSTR lpFileName,
     __in        FINDEX_INFO_LEVELS fInfoLevelId,
@@ -784,6 +810,20 @@ extern HOOKDEF(BOOL, WINAPI, PostMessageW,
 	_In_  LPARAM lParam
 );
 
+extern HOOKDEF(BOOL, WINAPI, SendMessageA,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
+extern HOOKDEF(BOOL, WINAPI, SendMessageW,
+	_In_  HWND hWnd,
+	_In_  UINT Msg,
+	_In_  WPARAM wParam,
+	_In_  LPARAM lParam
+);
+
 extern HOOKDEF(BOOL, WINAPI, SendNotifyMessageA,
 	_In_  HWND hWnd,
 	_In_  UINT Msg,
@@ -919,6 +959,16 @@ extern HOOKDEF(BOOL, WINAPI, Process32FirstW,
 extern HOOKDEF(BOOL, WINAPI, Process32NextW,
 	__in HANDLE hSnapshot,
 	__out LPPROCESSENTRY32W lppe
+);
+
+extern HOOKDEF(BOOL, WINAPI, Module32FirstW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
+);
+
+extern HOOKDEF(BOOL, WINAPI, Module32NextW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtCreateProcess,
@@ -1100,6 +1150,14 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationProcess,
 	__in PROCESSINFOCLASS ProcessInformationClass,
 	__in PVOID ProcessInformation,
 	__in ULONG ProcessInformationLength
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationProcess,
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtAllocateVirtualMemory,
@@ -2288,6 +2346,16 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQueryPerformanceCounter,
 	_Out_opt_ PLARGE_INTEGER PerformanceFrequency
 );
 
+extern HOOKDEF(BOOL, WINAPI, CreateTimerQueueTimer,
+  _Out_    PHANDLE             phNewTimer,
+  _In_opt_ HANDLE              TimerQueue,
+  _In_     WAITORTIMERCALLBACK Callback,
+  _In_opt_ PVOID               Parameter,
+  _In_     DWORD               DueTime,
+  _In_     DWORD               Period,
+  _In_     ULONG               Flags
+);
+
 //
 // Socket Hooks
 //
@@ -2806,11 +2874,141 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtQuerySystemInformation,
 	_Out_opt_ PULONG ReturnLength
 );
 
-extern HOOKDEF(unsigned int, WINAPIV, SizeofResource,
+extern HOOKDEF(void, WINAPIV, srand,
+   unsigned int seed
+);   
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtSetInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    IN PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationThread,
+    IN HANDLE ThreadHandle,
+    IN THREADINFOCLASS ThreadInformationClass,
+    OUT PVOID ThreadInformation,
+    IN ULONG ThreadInformationLength,
+    OUT PULONG ReturnLength OPTIONAL
+);
+
+extern HOOKDEF(LPSTR, WINAPI, lstrcpynA,
+  _Out_ LPSTR  lpString1,
+  _In_  LPSTR  lpString2,
+  _In_  int    iMaxLength
+);
+
+extern HOOKDEF(int, WINAPI, lstrcmpiA,
+  _In_  LPCSTR   lpString1,
+  _In_  LPCSTR   lpString2
+);
+
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExA,
+  HMODULE hModule,
+  LPCSTR lpType,
+  LPCSTR lpName,
+  WORD wLanguage
+);
+
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExW,
+  HMODULE hModule,
+  LPCWSTR lpType,
+  LPCWSTR lpName,
+  WORD wLanguage
+);
+
+extern HOOKDEF(HGLOBAL, WINAPI, LoadResource,
+  _In_opt_ HMODULE hModule,
+  _In_     HRSRC   hResInfo
+);
+
+extern HOOKDEF(LPVOID, WINAPI, LockResource,
+  _In_ HGLOBAL hResData
+);
+
+extern HOOKDEF(DWORD, WINAPI, SizeofResource,
     _In_opt_ HMODULE hModule,
     _In_     HRSRC   hResInfo
 );
 
-extern HOOKDEF(void, WINAPIV, srand,
-   unsigned int seed
-);   
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExA,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExW,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoA,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoW,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsA,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsW,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCreateTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle,
+  ULONG              CreateOptions,
+  ULONG              IsolationLevel,
+  ULONG              IsolationFlags,
+  PLARGE_INTEGER     Timeout,
+  PUNICODE_STRING    Description
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtOpenTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtRollbackTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCommitTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
+    _In_ HANDLE     TransactionHandle
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtYieldExecution,
+    VOID
+);

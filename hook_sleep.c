@@ -119,7 +119,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtWaitForSingleObject,
 			LOQ_ntstatus("system", "s", "Status", "Small log limit reached");
 			num_wait_small++;
 		}
-		else if (num_wait_small > 20) {
+		else {
 			// likely using a bunch of tiny sleeps to delay execution, so let's suddenly mimic high load and give our
 			// fake passage of time the impression of longer delays to return from sleep
 			time_skipped.QuadPart += (randint(500, 1000) * 10000);
@@ -213,7 +213,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtDelayExecution,
 			LOQ_ntstatus("system", "s", "Status", "Small log limit reached");
 			num_small++;
 		}
-		else if (num_small > 20) {
+		else {
 			// likely using a bunch of tiny sleeps to delay execution, so let's suddenly mimic high load and give our
 			// fake passage of time the impression of longer delays to return from sleep
 			time_skipped.QuadPart += (randint(500, 1000) * 10000);
@@ -267,7 +267,7 @@ HOOKDEF(DWORD, WINAPI, MsgWaitForMultipleObjectsEx,
 			LOQ_msgwait("system", "s", "Status", "Small log limit reached");
 			num_msg_small++;
 		}
-		else if (num_msg_small > 20) {
+		else {
 			// likely using a bunch of tiny sleeps to delay execution, so let's suddenly mimic high load and give our
 			// fake passage of time the impression of longer delays to return from sleep
 			time_skipped.QuadPart += (randint(500, 1000) * 10000);
@@ -585,6 +585,20 @@ HOOKDEF(void, WINAPI, GetSystemTimeAsFileTime,
 	LOQ_void("system", "");
 
 	return;
+}
+
+HOOKDEF(BOOL, WINAPI, CreateTimerQueueTimer,
+  _Out_    PHANDLE             phNewTimer,
+  _In_opt_ HANDLE              TimerQueue,
+  _In_     WAITORTIMERCALLBACK Callback,
+  _In_opt_ PVOID               Parameter,
+  _In_     DWORD               DueTime,
+  _In_     DWORD               Period,
+  _In_     ULONG               Flags
+) {
+    BOOL ret = Old_CreateTimerQueueTimer(phNewTimer, TimerQueue, Callback, Parameter, DueTime, Period, Flags);
+    LOQ_bool("system", "Pphhiii", "phNewTimer", phNewTimer, "TimerQueue", TimerQueue, "Callback", Callback, "Parameter", Parameter, "DueTime", DueTime, "Period", Period, "Flags", Flags);
+	return ret;
 }
 
 static int lastinput_called;

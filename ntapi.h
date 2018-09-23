@@ -59,6 +59,16 @@ typedef LONG NTSTATUS;
 #pragma warning( disable : 4996)
 #endif
 
+#define Suspended 5
+#define OptionShutdownSystem 6
+// NTSTATUS
+#define STATUS_INFO_LENGTH_MISMATCH  0xc0000004
+#define STATUS_CONFLICTING_ADDRESSES 0xc0000018
+#define STATUS_OBJECT_NAME_NOT_FOUND 0xc0000034
+#define STATUS_INVALID_DEVICE_REQUEST 0xc0000010
+#define STATUS_ACCESS_DENIED ((NTSTATUS) 0xc0000022)
+#define STATUS_IMAGE_NOT_AT_BASE ((NTSTATUS) 0x40000003)
+
 typedef struct _STRING {
     USHORT Length;
     USHORT MaximumLength;
@@ -248,12 +258,6 @@ typedef struct _SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION {
 	ULONG InterruptCount;
 } SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, *PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION;
 
-#define Suspended 5
-#define OptionShutdownSystem 6
-#define STATUS_INFO_LENGTH_MISMATCH  0xc0000004
-#define STATUS_CONFLICTING_ADDRESSES 0xc0000018
-#define STATUS_OBJECT_NAME_NOT_FOUND 0xc0000034
-#define STATUS_INVALID_DEVICE_REQUEST 0xc0000010
 typedef struct _INITIAL_TEB {
   PVOID StackBase;
   PVOID StackLimit;
@@ -361,8 +365,6 @@ typedef enum _FILE_INFORMATION_CLASS {
   FileRemoteProtocolInformation,
   FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
-
-#define STATUS_ACCESS_DENIED ((NTSTATUS) 0xc0000022)
 
 typedef struct _FILE_BASIC_INFORMATION {
     LARGE_INTEGER CreationTime;
@@ -768,14 +770,106 @@ typedef enum  {
     FileFsSectorSizeInformation   = 11
 } FS_INFORMATION_CLASS;
 
-typedef enum {
-	ProcessBreakOnTermination	= 29,
-	ProcessInfoDEPPolicy = 34
+typedef enum _PROCESSINFOCLASS {
+    ProcessBasicInformation,
+    ProcessQuotaLimits,
+    ProcessIoCounters,
+    ProcessVmCounters,
+    ProcessTimes,
+    ProcessBasePriority,
+    ProcessRaisePriority,
+    ProcessDebugPort,
+    ProcessExceptionPort,
+    ProcessAccessToken,
+    ProcessLdtInformation,
+    ProcessLdtSize,
+    ProcessDefaultHardErrorMode,
+    ProcessIoPortHandlers,          // Note: this is kernel mode only
+    ProcessPooledUsageAndLimits,
+    ProcessWorkingSetWatch,
+    ProcessUserModeIOPL,
+    ProcessEnableAlignmentFaultFixup,
+    ProcessPriorityClass,
+    ProcessWx86Information,
+    ProcessHandleCount,
+    ProcessAffinityMask,
+    ProcessPriorityBoost,
+    ProcessDeviceMap,
+    ProcessSessionInformation,
+    ProcessForegroundInformation,
+    ProcessWow64Information,
+    ProcessImageFileName,
+    ProcessLUIDDeviceMapsEnabled,
+    ProcessBreakOnTermination,
+    ProcessDebugObjectHandle,
+    ProcessDebugFlags,
+    ProcessHandleTracing,
+    ProcessIoPriority,
+    ProcessExecuteFlags,
+    ProcessTlsInformation,
+    ProcessCookie,
+    ProcessImageInformation,
+    ProcessCycleTime,
+    ProcessPagePriority,
+    ProcessInstrumentationCallback,
+    ProcessThreadStackAllocation,
+    ProcessWorkingSetWatchEx,
+    ProcessImageFileNameWin32,
+    ProcessImageFileMapping,
+    ProcessAffinityUpdateMode,
+    ProcessMemoryAllocationMode,
+    ProcessGroupInformation,
+    ProcessTokenVirtualizationEnabled,
+    ProcessConsoleHostProcess,
+    ProcessWindowInformation,
+    ProcessHandleInformation,
+    ProcessMitigationPolicy,
+    ProcessDynamicFunctionTableInformation,
+    ProcessHandleCheckingMode,
+    ProcessKeepAliveCount,
+    ProcessRevokeFileHandles,
+    ProcessWorkingSetControl,
+    MaxProcessInfoClass             // MaxProcessInfoClass should always be the last enum
 } PROCESSINFOCLASS;
 
-typedef enum {
-	ThreadBasicInformation = 0,
-} THREAD_INFORMATION_CLASS;
+typedef enum _THREADINFOCLASS {
+    ThreadBasicInformation,
+    ThreadTimes,
+    ThreadPriority,
+    ThreadBasePriority,
+    ThreadAffinityMask,
+    ThreadImpersonationToken,
+    ThreadDescriptorTableEntry,
+    ThreadEnableAlignmentFaultFixup,
+    ThreadEventPair_Reusable,
+    ThreadQuerySetWin32StartAddress,
+    ThreadZeroTlsCell,
+    ThreadPerformanceCount,
+    ThreadAmILastThread,
+    ThreadIdealProcessor,
+    ThreadPriorityBoost,
+    ThreadSetTlsArrayAddress,   // Obsolete
+    ThreadIsIoPending,
+    ThreadHideFromDebugger,
+    ThreadBreakOnTermination,
+    ThreadSwitchLegacyState,
+    ThreadIsTerminated,
+    ThreadLastSystemCall,
+    ThreadIoPriority,
+    ThreadCycleTime,
+    ThreadPagePriority,
+    ThreadActualBasePriority,
+    ThreadTebInformation,
+    ThreadCSwitchMon,          // Obsolete
+    ThreadCSwitchPmu,
+    ThreadWow64Context,
+    ThreadGroupInformation,
+    ThreadUmsInformation,      // UMS
+    ThreadCounterProfiling,
+    ThreadIdealProcessorEx,
+    ThreadCpuAccountingInformation,
+    MaxThreadInfoClass
+} THREADINFOCLASS;
 
 typedef struct _FILE_FS_VOLUME_INFORMATION {
     LARGE_INTEGER VolumeCreationTime;
