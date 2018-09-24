@@ -22,9 +22,8 @@ extern CHAR s_szDllPath[MAX_PATH];
 //Global debugger switch
 #define DEBUGGER_ENABLED 1
 
-BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address);
-BOOL GetCurrentFrame(LPVOID* ReturnAddress, LPVOID Address);
 PVOID GetHookCallerBase();
+BOOL InsideHook(LPVOID* ReturnAddress, LPVOID Address);
 PVOID GetPageAddress(PVOID Address);
 PVOID GetAllocationBase(PVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);

@@ -24,11 +24,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hook_sleep.h"
 #include "misc.h"
 #include "config.h"
-#include "CAPE\Debugger.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern int RoutineProcessDump();
 extern ULONG_PTR base_of_dll_of_interest;
+#ifdef CAPE_INJECTION
+extern void CreateProcessHandler(LPWSTR lpApplicationName, LPWSTR lpCommandLine, LPPROCESS_INFORMATION lpProcessInformation);
+#endif
 
 PVOID LastDllUnload;
 
@@ -156,31 +158,24 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
         lpCurrentDirectory, lpStartupInfo, lpProcessInformation, lpUnknown2);
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
-    if(ret != FALSE) {
-        if (DEBUGGER_LAUNCHER) {
-            DebugNewProcess(lpProcessInformation->dwProcessId, lpProcessInformation->dwThreadId, dwCreationFlags);
-            if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
-                ResumeThread(lpProcessInformation->hThread);
-            }
-            else {
-                ChildProcessId = lpProcessInformation->dwProcessId;
-                ChildThreadId = lpProcessInformation->dwThreadId;
-            }
-        }
-        else {
-            BOOL dont_monitor = FALSE;
-            if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
-                dont_monitor = TRUE;
+    if (ret != FALSE) {
+		BOOL dont_monitor = FALSE;
+		if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
+			dont_monitor = TRUE;
 
-            if (!dont_monitor)
-                pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
-                    lpProcessInformation->dwThreadId);
-            // if the CREATE_SUSPENDED flag was not set, then we have to resume
-            // the main thread ourself
-            if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
-                ResumeThread(lpProcessInformation->hThread);
-            }
+		if (!dont_monitor) {
+#ifdef CAPE_INJECTION
+            CreateProcessHandler(lpApplicationName, lpCommandLine, lpProcessInformation);
+#endif
+			pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
+			    lpProcessInformation->dwThreadId);
         }
+
+        // if the CREATE_SUSPENDED flag was not set, then we have to resume the main thread ourself
+        if ((dwCreationFlags & CREATE_SUSPENDED) == 0) {
+            ResumeThread(lpProcessInformation->hThread);
+        }
+
         disable_sleep_skip();
     }
 	

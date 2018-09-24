@@ -31,6 +31,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "unhook.h"
 #include "bson.h"
 
+struct _g_config g_config;
+wchar_t *our_process_path;
+wchar_t *our_commandline;
+BOOL is_64bit_os;
+
 volatile int dummy_val;
 
 extern void init_CAPE();
@@ -308,6 +313,8 @@ static hook_t g_hooks[] = {
 	HOOK(kernel32, CreateToolhelp32Snapshot),
 	HOOK(kernel32, Process32FirstW),
 	HOOK(kernel32, Process32NextW),
+	HOOK(kernel32, Module32FirstW),
+	HOOK(kernel32, Module32NextW),
 	HOOK(ntdll, NtCreateProcess),
     HOOK(ntdll, NtCreateProcessEx),
     HOOK(ntdll, NtCreateUserProcess),
@@ -360,6 +367,7 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, RtlCreateUserThread),
     HOOK(ntdll, NtSetInformationThread),
     HOOK(ntdll, NtQueryInformationThread),
+    HOOK(ntdll, NtYieldExecution),
 
 	//
     // Misc Hooks
@@ -368,7 +376,6 @@ static hook_t g_hooks[] = {
 	HOOK(ntdll, memcpy),
 #endif
 	HOOK(msvcrt, memcpy),
-	//HOOK(kernel32, SizeofResource),
     HOOK(msvcrt, srand),
     
 	// for debugging only
@@ -430,6 +437,28 @@ static hook_t g_hooks[] = {
 	HOOK(user32, SystemParametersInfoW),
 	HOOK(pstorec, PStoreCreateInstance),
 	HOOK(advapi32, SaferIdentifyLevel),
+
+	// PE resource related functions
+	HOOK(kernel32, FindResourceExA),
+	HOOK(kernel32, FindResourceExW),
+	HOOK(kernel32, LoadResource),
+	HOOK(kernel32, LockResource),
+	HOOK(kernel32, SizeofResource),
+
+	// functions with callbacks (abused for control-flow transfer)
+	HOOK(kernel32, EnumResourceTypesExA),
+	HOOK(kernel32, EnumResourceTypesExW),
+	HOOK(kernel32, EnumCalendarInfoA),
+	HOOK(kernel32, EnumCalendarInfoW),
+	HOOK(kernel32, EnumTimeFormatsA),
+	HOOK(kernel32, EnumTimeFormatsW),
+
+	// transaction functions (for process doppel-ganging)
+	HOOK(ntdll, NtCreateTransaction),
+	HOOK(ntdll, NtOpenTransaction),
+	HOOK(ntdll, NtRollbackTransaction),
+	HOOK(ntdll, NtCommitTransaction),
+	HOOK(ntdll, RtlSetCurrentTransaction),
 
 	//
     // Network Hooks
@@ -653,7 +682,7 @@ VOID CALLBACK New_DllLoadNotification(
 	_In_     const PLDR_DLL_NOTIFICATION_DATA NotificationData,
 	_In_opt_ PVOID                       Context)
 {
-	PWCHAR dllname;
+	PWCHAR dllname, rundll_path;
 	COPY_UNICODE_STRING(library, NotificationData->Loaded.FullDllName);
 
 	if (g_config.debug) {
@@ -661,12 +690,34 @@ VOID CALLBACK New_DllLoadNotification(
 		/* Just for debug purposes, gives a stripped fake function name */
 		LOQ_void("system", "sup", "NotificationReason", NotificationReason == 1 ? "load" : "unload", "DllName", library.Buffer, "DllBase", NotificationReason == 1 ? NotificationData->Loaded.DllBase : NotificationData->Unloaded.DllBase);
 	}
-        
-	if (NotificationReason == 1) {
+
+    // for rundll32 only
+    rundll_path = wcschr(our_commandline, ' ');
+	if (rundll_path)
+        if (*rundll_path == L' ') rundll_path++;
+
+    if (NotificationReason == 1) {
 		if (g_config.file_of_interest && !wcsicmp(library.Buffer, g_config.file_of_interest)) {
             if (!base_of_dll_of_interest)
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
             DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+#ifdef CAPE_TRACE
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+#endif
+        }
+        else if (((!wcsnicmp(our_commandline, L"c:\\windows\\system32\\rundll32.exe", 32) ||
+                    !wcsnicmp(our_commandline, L"c:\\windows\\syswow64\\rundll32.exe", 32) ||
+                    !wcsnicmp(our_commandline, L"c:\\windows\\sysnative\\rundll32.exe", 33))) &&
+                    !wcsnicmp(rundll_path, library.Buffer, wcslen(library.Buffer))) {
+            set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
+            if (g_config.file_of_interest == NULL) {
+                g_config.file_of_interest = calloc(1, (wcslen(library.Buffer) + 1) * sizeof(wchar_t));
+                wcsncpy(g_config.file_of_interest, library.Buffer, wcslen(library.Buffer));
+            }
+            DoOutputDebugString("rundll32 target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+#ifdef CAPE_TRACE
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+#endif
         }
         else {
             // unoptimized, but easy
@@ -706,8 +757,7 @@ void set_hooks()
 	// the hooks contain executable code as well, so they have to be RWX
 	DWORD old_protect;
 
-	VirtualProtect(g_hooks, sizeof(g_hooks), PAGE_EXECUTE_READWRITE,
-		&old_protect);
+	VirtualProtect(g_hooks, sizeof(g_hooks), PAGE_EXECUTE_READWRITE, &old_protect);
 
 	memset(&threadInfo, 0, sizeof(threadInfo));
 	threadInfo.dwSize = sizeof(threadInfo);
@@ -874,10 +924,6 @@ static void notify_successful_load(void)
 	pipe("LOADED:%d", GetCurrentProcessId());
 }
 
-struct _g_config g_config;
-wchar_t *our_process_path;
-BOOL is_64bit_os;
-
 void get_our_process_path(void)
 {
 	wchar_t *tmp = calloc(1, 32768 * sizeof(wchar_t));
@@ -890,6 +936,17 @@ void get_our_process_path(void)
 	our_process_path = tmp2;
 
 	free(tmp);
+}
+
+void get_our_commandline(void)
+{
+	wchar_t *tmp = calloc(1, 32768 * sizeof(wchar_t));
+
+    PEB *peb = get_peb();
+
+    ensure_absolute_unicode_path(tmp, peb->ProcessParameters->CommandLine.Buffer);
+
+    our_commandline = tmp;
 }
 
 void set_os_bitness(void)
@@ -932,8 +989,6 @@ void init_private_heap(void)
 }
 
 BOOLEAN g_dll_main_complete;
-
-DWORD g_tls_hook_index;
 
 extern void ignored_threads_init(void);
 
@@ -994,9 +1049,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
 
 		get_our_process_path();
 
-		g_tls_hook_index = TlsAlloc();
-		if (g_tls_hook_index == TLS_OUT_OF_INDEXES)
-			goto abort;
+		get_our_commandline();
 
 		// adds our own DLL range as well, since the hiding is done later
 		add_all_dlls_to_dll_ranges();
