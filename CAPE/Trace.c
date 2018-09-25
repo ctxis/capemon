@@ -96,7 +96,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             if (ExportName)
             {
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                StepOver = TRUE;
+                //StepOver = TRUE;
             }
             else
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
@@ -270,14 +270,14 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 #else
         DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
-        if (TraceDepthCount < 0)
-        {
-            DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
-            
-            ClearSingleStepMode(ExceptionInfo->ContextRecord);
-            
-            return TRUE;
-        }
+        //if (TraceDepthCount < 0)
+        //{
+        //    DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
+        //    
+        //    ClearSingleStepMode(ExceptionInfo->ContextRecord);
+        //    
+        //    return TRUE;
+        //}
         
         TraceDepthCount--;
     }
