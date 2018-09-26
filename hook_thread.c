@@ -553,3 +553,12 @@ HOOKDEF(NTSTATUS, WINAPI, NtQueryInformationThread,
     
     return ret;
 }
+
+HOOKDEF(NTSTATUS, WINAPI, NtYieldExecution,
+    VOID
+) {
+	NTSTATUS ret = 0;
+    LOQ_void("threading", "");
+    ret = Old_NtYieldExecution();
+    return ret;
+}

@@ -370,8 +370,9 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, RtlCreateUserThread),
     HOOK(ntdll, NtSetInformationThread),
     HOOK(ntdll, NtQueryInformationThread),
+    HOOK(ntdll, NtYieldExecution),
 
-	//
+    //
     // Misc Hooks
     //
 #ifndef _WIN64
@@ -704,8 +705,8 @@ VOID CALLBACK New_DllLoadNotification(
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
             DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-//            if (!g_config.base_on_apiname[0])
-//                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+            if (!g_config.base_on_apiname[0])
+                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else if (((!wcsnicmp(our_commandline, L"c:\\windows\\system32\\rundll32.exe", 32) ||
@@ -719,8 +720,8 @@ VOID CALLBACK New_DllLoadNotification(
             }
             DoOutputDebugString("rundll32 target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-//            if (!g_config.base_on_apiname[0])
-//                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+            if (!g_config.base_on_apiname[0])
+                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else {
