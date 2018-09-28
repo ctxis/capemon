@@ -89,23 +89,33 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             }
             __except(EXCEPTION_EXECUTE_HANDLER)
             {
-                DoOutputDebugString("Trace: Error dereferencing CallTarget.\n", CallTarget);
+                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%p.\n", CallTarget);
                 return FALSE;
             }
 
             if (ExportName)
             {
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                //StepOver = TRUE;
+                StepOver = TRUE;
             }
             else
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
 
 #else
-        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5))
+        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5) && strncmp(DecodedInstruction.operands.p, "DWORD [E", 8))
         {
+            PCHAR ExportName;
             PVOID *CallTarget = *(PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4);
-            PCHAR ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
+            __try
+            {
+                ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER)
+            {
+                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%x.\n", CallTarget);
+                return FALSE;
+            }
+
             if (ExportName)
             {
                 DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
@@ -118,18 +128,38 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         else if (DecodedInstruction.size > 4)
         {
 #ifdef _WIN64
+            PCHAR ExportName;
             PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4));
-            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            __try
+            {
+                ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER)
+            {
+                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%p.\n", CallTarget);
+                return FALSE;
+            }
+
             if (ExportName)
             {
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                //StepOver = TRUE;
+                StepOver = TRUE;
             }
             else
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #else
+            PCHAR ExportName;
             PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Eip + (int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4));
-            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            __try
+            {
+                ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER)
+            {
+                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%x.\n", CallTarget);
+                return FALSE;
+            }
+
             if (ExportName)
             {
                 DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
@@ -270,15 +300,15 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 #else
         DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
-        //if (TraceDepthCount < 0)
-        //{
-        //    DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
-        //    
-        //    ClearSingleStepMode(ExceptionInfo->ContextRecord);
-        //    
-        //    return TRUE;
-        //}
-        
+        if (TraceDepthCount < 0)
+        {
+            DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
+
+            ClearSingleStepMode(ExceptionInfo->ContextRecord);
+
+            return TRUE;
+        }
+
         TraceDepthCount--;
     }
     else
