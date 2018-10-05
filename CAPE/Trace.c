@@ -29,6 +29,7 @@ extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 extern int DumpMemory(LPVOID Buffer, SIZE_T Size);
 extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int *offset);
+extern BOOL is_in_dll_range(ULONG_PTR addr);
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 extern DWORD_PTR GetEntryPointVA(DWORD_PTR modBase);
 extern BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize);
@@ -60,7 +61,12 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     _DecodedInst DecodedInstruction;
     unsigned int DecodedInstructionsCount = 0;
 
-    StepCount++;
+#ifdef _WIN64
+    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+#else
+    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+#endif
+        StepCount++;
 
     if (StepCount > StepLimit)
     {
@@ -79,7 +85,10 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     {
         StepOver = FALSE;
 #ifdef _WIN64
-        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "QWORD", 5))
+        if (is_in_dll_range(ExceptionInfo->ContextRecord->Rip)) {
+            StepOver = TRUE;
+        }
+        else if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "QWORD", 5))
         {
             PCHAR ExportName;
             PVOID *CallTarget = (PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4) + DecodedInstruction.size);
@@ -102,7 +111,10 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
                 DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
 
 #else
-        if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5) && strncmp(DecodedInstruction.operands.p, "DWORD [E", 8))
+        if (is_in_dll_range(ExceptionInfo->ContextRecord->Eip)) {
+            StepOver = TRUE;
+        }
+        else if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5) && strncmp(DecodedInstruction.operands.p, "DWORD [E", 8))
         {
             PCHAR ExportName;
             PVOID *CallTarget = *(PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4);
@@ -290,15 +302,21 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 
             return TRUE;
         }
-        else
+#ifdef _WIN64
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+#else
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+#endif
             TraceDepthCount++;
     }
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
     {
 #ifdef _WIN64
-        DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+        if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+            DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
-        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+        if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
         if (TraceDepthCount < 0)
         {
@@ -309,13 +327,20 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             return TRUE;
         }
 
-        TraceDepthCount--;
-    }
-    else
-    {
 #ifdef _WIN64
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+#else
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+#endif
+            TraceDepthCount--;
+    }
+#ifdef _WIN64
+    else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+    {
         DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
+    else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+    {
         DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
     }
@@ -360,10 +385,12 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
 #ifdef _WIN64
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, Decode64Bits, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-    DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+        DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #else
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, Decode32Bits, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-    DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
 
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
@@ -384,7 +411,11 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-        else
+#ifdef _WIN64
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+#else
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+#endif
             TraceDepthCount++;
     }
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
@@ -397,7 +428,11 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-        else
+#ifdef _WIN64
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+#else
+        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+#endif
             TraceDepthCount--;
     }
 

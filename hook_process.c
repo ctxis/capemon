@@ -976,7 +976,9 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 	}
 #endif
 
-	// flush logs prior to handling of an exception without having to register a vectored exception handler
+	//DoOutputDebugString("RtlDispatchException hook: Exception 0x%x reported at address 0x%p (accessing 0x%p).\n", ExceptionRecord->ExceptionCode, ExceptionRecord->ExceptionAddress, ExceptionRecord->ExceptionInformation[1]);
+    
+    // flush logs prior to handling of an exception without having to register a vectored exception handler
 	log_flush();
 
 	return 0;
