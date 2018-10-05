@@ -875,7 +875,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtFreeVirtualMemory,
     IN      ULONG FreeType
 ) {
 #ifdef CAPE_EXTRACTION
-    if (!called_by_hook() && GetCurrentProcessId() == our_getprocessid(ProcessHandle) && *RegionSize == 0 && (FreeType & MEM_RELEASE))
+    if (FreeType & MEM_RELEASE)
         FreeHandler(*BaseAddress);
 #endif
 

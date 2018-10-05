@@ -32,6 +32,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
+#ifdef CAPE_EXTRACTION
+extern void ModloadHandler(HMODULE BaseAddress);
+#endif
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -166,7 +169,14 @@ HOOKDEF(NTSTATUS, WINAPI, LdrGetProcedureAddress,
     __in_opt    WORD Ordinal,
     __out       PVOID *FunctionAddress
 ) {
-    NTSTATUS ret = Old_LdrGetProcedureAddress(ModuleHandle, FunctionName,
+    NTSTATUS ret;
+
+#ifdef CAPE_EXTRACTION
+    if (ModuleHandle)
+        ModloadHandler(ModuleHandle);
+#endif
+
+    ret = Old_LdrGetProcedureAddress(ModuleHandle, FunctionName,
         Ordinal, FunctionAddress);
 
 	if (FunctionName != NULL && FunctionName->Length == 13 && FunctionName->Buffer != NULL &&

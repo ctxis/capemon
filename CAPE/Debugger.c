@@ -316,7 +316,6 @@ BOOL DropTrackedRegion(PTRACKEDREGION TrackedRegion)
             // Clear any breakpoints in this region
             ClearBreakpointsInRange(GetCurrentThreadId(), TrackedRegion->BaseAddress, TrackedRegion->RegionSize);
             
-            DoOutputDebugString("DropTrackedRegion: About to unlink.\n");
             // Unlink this from the list and free the memory
             if (PreviousTrackedRegion && CurrentTrackedRegion->NextTrackedRegion)
             {
@@ -334,7 +333,6 @@ BOOL DropTrackedRegion(PTRACKEDREGION TrackedRegion)
                 TrackedRegionList = NULL;
             }
             
-            DoOutputDebugString("DropTrackedRegion: about to free the memory!\n");
             free(CurrentTrackedRegion);
             
             return TRUE;            

@@ -42,6 +42,9 @@ extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
 extern PVOID GetAllocationBase(PVOID Address);
 extern PVOID GetHookCallerBase();
 extern BOOL ModuleDumped;
+#ifdef CAPE_EXTRACTION
+extern void ExtractionCallback();
+#endif
 #ifdef CAPE_TRACE
 extern BOOL SetInitialBreakpoints(PVOID ImageBase);
 extern BOOL BreakpointsSet;
@@ -222,6 +225,9 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 
 		operate_on_backtrace(sp, ebp_or_rip, NULL, set_caller_info);
 
+#ifdef CAPE_EXTRACTION
+        ExtractionCallback(hookinfo);
+#endif
 #ifdef CAPE_DUMP_ON_API
 		dump_on_api(h);
 #endif

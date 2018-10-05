@@ -1312,6 +1312,8 @@ int IsDisguisedPEHeader(LPVOID Buffer)
 
         if (pDosHeader->e_lfanew && (ULONG)pDosHeader->e_lfanew < PE_HEADER_LIMIT && ((ULONG)pDosHeader->e_lfanew & 3) == 0)
             pNtHeader = (PIMAGE_NT_HEADERS)((PUCHAR)pDosHeader + (ULONG)pDosHeader->e_lfanew);
+        else
+            return 0;
         
         if (!pDosHeader->e_lfanew)
         {
@@ -1410,12 +1412,27 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
     BOOL RetVal = FALSE;
     LPVOID PEPointer = Buffer;
     
-    DoOutputDebugString("DumpPEsInRange: Scanning range 0x%x - 0x%x.\n", Buffer, (BYTE*)Buffer + Size);
+    if (Buffer == NULL)
+    {
+        DoOutputDebugString("DumpPEsInRange: Error, buffer argument NULL.\n");
+        return FALSE;
+    }
+
+    if (Size > 0x40000000)
+    {
+        DoOutputDebugString("DumpPEsInRange: Error, size too large: 0x%x.\n", Size);
+        return FALSE;
+    }
+
+    DoOutputDebugString("DumpPEsInRange: Scanning range 0x%p - 0x%p.\n", Buffer, (BYTE*)Buffer + Size);
 
     while (ScanForDisguisedPE(PEPointer, Size - ((DWORD_PTR)PEPointer - (DWORD_PTR)Buffer), &PEPointer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)PEPointer;
         
+        if (pDosHeader->e_lfanew > PE_HEADER_LIMIT)
+            break;
+
         if (*(WORD*)PEPointer != IMAGE_DOS_SIGNATURE || (*(DWORD*)((BYTE*)pDosHeader + pDosHeader->e_lfanew) != IMAGE_NT_SIGNATURE))
         {       
             DoOutputDebugString("DumpPEsInRange: Disguised PE image (bad MZ and/or PE headers) at 0x%x.\n", PEPointer);
