@@ -39,8 +39,8 @@ BOOL BreakpointsSet, ModuleNamePrinted;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
 BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
-unsigned int DumpCount, Correction, StepCount, StepLimit;
-int StepOverRegister, TraceDepthCount, TraceDepthLimit, EntryPointRegister;
+unsigned int DumpCount, Correction, StepCount, StepLimit, TraceDepthLimit;
+int StepOverRegister, TraceDepthCount, EntryPointRegister;
 
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo);
 BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo);
@@ -277,6 +277,30 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
                 DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
+        else if (!strncmp(DecodedInstruction.operands.p, "EBP", 3))
+        {
+#ifdef _WIN64
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Rbp;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#else
+            PVOID CallTarget = (PVOID)ExceptionInfo->ContextRecord->Ebp;
+            PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
+            if (ExportName)
+            {
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                StepOver = TRUE;
+            }
+            else
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+#endif
+        }
         else
 #ifdef _WIN64
             DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
@@ -284,7 +308,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
         
-        if (TraceDepthCount >= TraceDepthLimit || StepOver == TRUE)
+        if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit || StepOver == TRUE)
         {    
 #ifdef _WIN64
             ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
@@ -318,7 +342,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
             DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
-        if (TraceDepthCount < 0)
+        if (TraceDepthCount < 0 && (unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
         {
             DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
 
@@ -395,7 +419,7 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
-        if (TraceDepthCount >= TraceDepthLimit)
+        if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
         {
 #ifdef _WIN64
             ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
