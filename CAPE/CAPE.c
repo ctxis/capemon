@@ -574,7 +574,10 @@ PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle)
     while (CurrentSectionView)
 	{
         if (CurrentSectionView->SectionHandle == SectionHandle)
+        {
+            DoOutputDebugString("GetSectionView: returning section view pointer 0x%x.\n", CurrentSectionView);
             return CurrentSectionView;
+        }
 
         CurrentSectionView = CurrentSectionView->NextSectionView;
 	}
@@ -1003,7 +1006,7 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 	LONG e_lfanew;
     DWORD NT_Signature;
     unsigned int i, j, k;
-	BYTE* DecryptedBuffer;
+	BYTE* DecryptedBuffer = NULL;
 
     for (i=0; i<=0xFF; i++)
 	{
@@ -1071,7 +1074,8 @@ int DumpXorPE(LPBYTE Buffer, unsigned int Size)
 	}
 	
     // We free can free DecryptedBuffer as it's no longer needed
-    free(DecryptedBuffer);
+	if(DecryptedBuffer)
+        free(DecryptedBuffer);
     
     return FALSE;
 }
@@ -1455,7 +1459,6 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
                             //break;
                         }
                     }
-
                     MachineProbe += sizeof(WORD);
                     
                     if (pNtHeader && (PUCHAR)pNtHeader == (PUCHAR)pDosHeader && pNtHeader->OptionalHeader.SizeOfHeaders)
@@ -1474,9 +1477,7 @@ BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size)
             *(WORD*)pDosHeader = IMAGE_DOS_SIGNATURE;
             *(DWORD*)((PUCHAR)pDosHeader + pDosHeader->e_lfanew) = IMAGE_NT_SIGNATURE;
 
-#ifdef CAPE_INJECTION
             SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)pDosHeader);
-#endif
             
             if (DumpImageInCurrentProcess((LPVOID)pDosHeader))
             {
@@ -1724,11 +1725,7 @@ int DumpModuleInCurrentProcess(LPVOID ModuleBase)
         ModuleBase = PEImage;
     }
 
-#ifdef CAPE_INJECTION
-    SetCapeMetaData(INJECTION_PE, 0, NULL, (PVOID)ModuleBase);
-#else
     SetCapeMetaData(EXTRACTION_PE, 0, NULL, (PVOID)ModuleBase);
-#endif
     
     if (DumpCount < DUMP_MAX && ScyllaDumpProcess(GetCurrentProcess(), (DWORD_PTR)ModuleBase, 0))
     {
@@ -1878,14 +1875,14 @@ void init_CAPE()
     CapeMetaData->Pid = GetCurrentProcessId();    
     CapeMetaData->ProcessPath = (char*)malloc(MAX_PATH);
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_process_path, (int)wcslen(our_process_path)+1, CapeMetaData->ProcessPath, MAX_PATH, NULL, NULL);
-
+    
     CommandLine = (char*)malloc(MAX_PATH);
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)our_commandline, (int)wcslen(our_commandline)+1, CommandLine, MAX_PATH, NULL, NULL);
 
     // Specific to Injection package:
     CapeMetaData->DumpType = INJECTION_SHELLCODE;  // default value for now, may be changed to INJECTION_PE
     CapeMetaData->Address = NULL;
-    
+
     DumpCount = 0;
 
     // This flag controls whether a dump is automatically
@@ -1912,6 +1909,5 @@ void init_CAPE()
 #endif
 
     DoOutputDebugString("Commandline: %s.\n", CommandLine);
-
     return;
 }

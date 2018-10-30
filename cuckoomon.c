@@ -107,7 +107,7 @@ static hook_t g_hooks[] = {
 	HOOK_SPECIAL(ole32, CoCreateInstanceEx),
 	HOOK_SPECIAL(ole32, CoGetClassObject),
 
-	HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
+	HOOK_SPECIAL(ntdll, RtlDispatchException),
 	HOOK_NOTAIL(ntdll, NtRaiseException, 3),
 
 	// lowest variant of MoveFile()
@@ -367,6 +367,7 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, RtlCreateUserThread),
     HOOK(ntdll, NtSetInformationThread),
     HOOK(ntdll, NtQueryInformationThread),
+    HOOK(ntdll, NtYieldExecution),
 
 	//
     // Misc Hooks
@@ -376,7 +377,7 @@ static hook_t g_hooks[] = {
 #endif
 	HOOK(msvcrt, memcpy),
     HOOK(msvcrt, srand),
-    
+
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
 
@@ -430,6 +431,7 @@ static hook_t g_hooks[] = {
 	HOOK(rasapi32, RasConnectionNotificationW),
 	HOOK(kernel32, SystemTimeToTzSpecificLocalTime),
 	HOOK(ole32, CLSIDFromProgID),
+    //HOOK(ole32, OleConvertOLESTREAMToIStorage),
 	HOOK(kernel32, GlobalMemoryStatus),
 	HOOK(kernel32, GlobalMemoryStatusEx),
 	HOOK(user32, SystemParametersInfoA),
@@ -700,6 +702,9 @@ VOID CALLBACK New_DllLoadNotification(
             if (!base_of_dll_of_interest)
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
             DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+#ifdef CAPE_TRACE
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+#endif
         }
         else if (((!wcsnicmp(our_commandline, L"c:\\windows\\system32\\rundll32.exe", 32) ||
                     !wcsnicmp(our_commandline, L"c:\\windows\\syswow64\\rundll32.exe", 32) ||
@@ -711,6 +716,9 @@ VOID CALLBACK New_DllLoadNotification(
                 wcsncpy(g_config.file_of_interest, library.Buffer, wcslen(library.Buffer));
             }
             DoOutputDebugString("rundll32 target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
+#ifdef CAPE_TRACE
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+#endif
         }
         else {
             // unoptimized, but easy
