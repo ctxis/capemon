@@ -33,6 +33,7 @@ extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void GetThreadContextHandler(DWORD Pid, LPCONTEXT Context);
 extern void SetThreadContextHandler(DWORD Pid, const CONTEXT *Context);
 extern void ResumeThreadHandler(DWORD Pid);
+extern void CreateRemoteThreadHandler(DWORD Pid);
 #endif
 
 static lookup_t g_ignored_threads;
@@ -437,8 +438,12 @@ HOOKDEF(HANDLE, WINAPI, CreateRemoteThread,
         lpThreadId);
 
 	if (ret != NULL) {
-        if (pid != GetCurrentProcessId())
+        if (pid != GetCurrentProcessId()) {
             pipe("PROCESS:%d:%d,%d", is_suspended(pid, *lpThreadId), pid, *lpThreadId);
+#ifdef CAPE_INJECTION
+            CreateRemoteThreadHandler(pid);
+#endif
+        }
         else if (DEBUGGER_ENABLED && !called_by_hook()) {
             DoOutputDebugString("CreateRemoteThread: Initialising breakpoints for (local) thread %d.\n", *lpThreadId);
             InitNewThreadBreakpoints(*lpThreadId);

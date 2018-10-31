@@ -53,7 +53,7 @@ void SetThreadContextHandler(DWORD Pid, const CONTEXT *Context)
 #ifdef _WIN64
         if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == Pid)
             CurrentInjectionInfo->EntryPoint = Context->Rcx - CurrentInjectionInfo->ImageBase;  // rcx holds ep on 64-bit
-           
+
         if (Context->Rip == (DWORD_PTR)GetProcAddress(GetModuleHandle("ntdll"), "NtMapViewOfSection"))
             DoOutputDebugString("SetThreadContextHandler: Hollow process entry point set to NtMapViewOfSection (process %d).\n", Pid);
         else
@@ -79,16 +79,16 @@ void ResumeThreadHandler(DWORD Pid)
         DoOutputDebugString("ResumeThreadHandler: CurrentInjectionInfo 0x%x (Pid %d).\n", CurrentInjectionInfo, Pid);
         return;
     }
-    
+
     if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
     {
         CapeMetaData->DumpType = INJECTION_PE;
         CapeMetaData->TargetPid = Pid;
-        
+
         DoOutputDebugString("ResumeThreadHandler: Dumping hollowed process %d, image base 0x%p.\n", Pid, CurrentInjectionInfo->ImageBase);
-        
+
         CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
-        
+
         if (CurrentInjectionInfo->ImageDumped)
         {
             DoOutputDebugString("ResumeThreadHandler: Dumped PE image from buffer.\n");
@@ -96,24 +96,24 @@ void ResumeThreadHandler(DWORD Pid)
         else
             DoOutputDebugString("ResumeThreadHandler: Failed to dump PE image from buffer.\n");
     }
-    
+
     DumpSectionViewsForPid(Pid);
 }
 
 void CreateProcessHandler(LPWSTR lpApplicationName, LPWSTR lpCommandLine, LPPROCESS_INFORMATION lpProcessInformation)
 {
-    WCHAR TargetProcess[MAX_PATH];	
-    struct InjectionInfo *CurrentInjectionInfo;    
+    WCHAR TargetProcess[MAX_PATH];
+    struct InjectionInfo *CurrentInjectionInfo;
 
     // Create 'injection info' struct for the newly created process
     CurrentInjectionInfo = CreateInjectionInfo(lpProcessInformation->dwProcessId);
-    
+
     if (CurrentInjectionInfo == NULL)
     {
         DoOutputDebugString("CreateProcessHandler: Failed to create injection info for new process %d, ImageBase: 0x%p", lpProcessInformation->dwProcessId, CurrentInjectionInfo->ImageBase);
         return;
     }
-    
+
     CurrentInjectionInfo->ProcessHandle = lpProcessInformation->hProcess;
     CurrentInjectionInfo->ImageBase = (DWORD_PTR)get_process_image_base(lpProcessInformation->hProcess);
     CurrentInjectionInfo->EntryPoint = (DWORD_PTR)NULL;
@@ -129,18 +129,49 @@ void CreateProcessHandler(LPWSTR lpApplicationName, LPWSTR lpCommandLine, LPPROC
         DoOutputDebugString("CreateProcessHandler: using lpCommandLine: %ws.\n", lpCommandLine);
         if (*lpCommandLine == L'\"')
             wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine+1, (rsize_t)((wcschr(lpCommandLine+1, '\"') - lpCommandLine)-1));
-        else 
+        else
         {
             if (wcschr(lpCommandLine, ' '))
                 wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, (rsize_t)((wcschr(lpCommandLine, ' ') - lpCommandLine)+1));
-            else 
+            else
                 wcsncpy_s(TargetProcess, MAX_PATH, lpCommandLine, wcslen(lpCommandLine)+1);
         }
     }
 
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)TargetProcess, (int)wcslen(TargetProcess)+1, CapeMetaData->TargetProcess, MAX_PATH, NULL, NULL);
-    
+
     DoOutputDebugString("CreateProcessHandler: Injection info set for new process %d, ImageBase: 0x%p", CurrentInjectionInfo->ProcessId, CurrentInjectionInfo->ImageBase);
+}
+
+void CreateRemoteThreadHandler(DWORD Pid)
+{
+    struct InjectionInfo *CurrentInjectionInfo = GetInjectionInfo(Pid);
+
+    if (!CurrentInjectionInfo)
+    {
+        DoOutputDebugString("CreateRemoteThreadHandler: CurrentInjectionInfo 0x%x (Pid %d).\n", CurrentInjectionInfo, Pid);
+        return;
+    }
+
+    //if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
+    if (CurrentInjectionInfo->ImageDumped == FALSE)
+    {
+        CapeMetaData->DumpType = INJECTION_PE;
+        CapeMetaData->TargetPid = Pid;
+
+        DoOutputDebugString("CreateRemoteThreadHandler: Dumping hollowed process %d, image base 0x%p.\n", Pid, CurrentInjectionInfo->ImageBase);
+
+        CurrentInjectionInfo->ImageDumped = DumpProcess(CurrentInjectionInfo->ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
+
+        if (CurrentInjectionInfo->ImageDumped)
+        {
+            DoOutputDebugString("CreateRemoteThreadHandler: Dumped PE image from buffer.\n");
+        }
+        else
+            DoOutputDebugString("CreateRemoteThreadHandler: Failed to dump PE image from buffer.\n");
+    }
+
+    DumpSectionViewsForPid(Pid);
 }
 
 void OpenProcessHandler(HANDLE ProcessHandle, DWORD Pid)
@@ -151,13 +182,13 @@ void OpenProcessHandler(HANDLE ProcessHandle, DWORD Pid)
     unsigned int PathLength;
 
     CurrentInjectionInfo = GetInjectionInfo(Pid);
-    
+
     if (CurrentInjectionInfo == NULL)
     {   // First call for this process, create new info
         CurrentInjectionInfo = CreateInjectionInfo(Pid);
-        
-        DoOutputDebugString("OpenProcessHandler: Injection info created for Pid %d.\n", Pid);
-    
+
+        DoOutputDebugString("OpenProcessHandler: Injection info created for Pid %d, handle 0x%x.\n", Pid, ProcessHandle);
+
         if (CurrentInjectionInfo == NULL)
         {
             DoOutputDebugString("OpenProcessHandler: Error - cannot create new injection info.\n");
@@ -181,8 +212,8 @@ void OpenProcessHandler(HANDLE ProcessHandle, DWORD Pid)
                 DoOutputErrorString("OpenProcessHandler: Error obtaining target process name");
                 _snprintf(CapeMetaData->TargetProcess, BufferSize, "Error obtaining target process name");
             }
-            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize)) 
-                DoOutputErrorString("OpenProcessHandler: Error translating target process path");                
+            else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize))
+                DoOutputErrorString("OpenProcessHandler: Error translating target process path");
         }
     }
     else if (CurrentInjectionInfo->ImageBase == (DWORD_PTR)NULL)
@@ -199,17 +230,17 @@ void ResumeProcessHandler(HANDLE ProcessHandle, DWORD Pid)
 	struct InjectionInfo *CurrentInjectionInfo;
 
     CurrentInjectionInfo = GetInjectionInfo(Pid);
-    
+
     if (CurrentInjectionInfo)
     {
         if (CurrentInjectionInfo->ImageBase && CurrentInjectionInfo->WriteDetected && CurrentInjectionInfo->ImageDumped == FALSE)
         {
             SetCapeMetaData(INJECTION_PE, Pid, ProcessHandle, NULL);
-            
+
             DoOutputDebugString("ResumeProcessHandler: Dumping hollowed process %d, image base 0x%p.\n", Pid, CurrentInjectionInfo->ImageBase);
-            
+
             CurrentInjectionInfo->ImageDumped = DumpProcess(ProcessHandle, (PVOID)CurrentInjectionInfo->ImageBase);
-            
+
             if (CurrentInjectionInfo->ImageDumped)
             {
                 DoOutputDebugString("ResumeProcessHandler: Dumped PE image from buffer.\n");
@@ -225,23 +256,33 @@ void ResumeProcessHandler(HANDLE ProcessHandle, DWORD Pid)
 void MapSectionViewHandler(HANDLE ProcessHandle, HANDLE SectionHandle, PVOID BaseAddress, SIZE_T ViewSize)
 {
 	struct InjectionInfo *CurrentInjectionInfo;
-    struct InjectionSectionView *CurrentSectionViewInfo;
+    PINJECTIONSECTIONVIEW CurrentSectionView;
     char DevicePath[MAX_PATH];
     unsigned int PathLength;
     DWORD BufferSize = MAX_PATH;
-	
+
     DWORD Pid = pid_from_process_handle(ProcessHandle);
-    
-    CurrentInjectionInfo = GetInjectionInfo(Pid);
+
+    if (!Pid)
+    {
+        DoOutputErrorString("MapSectionViewHandler: Failed to obtain pid from process handle 0x%x", ProcessHandle);
+        CurrentInjectionInfo = GetInjectionInfoFromHandle(ProcessHandle);
+        Pid = CurrentInjectionInfo->ProcessId;
+    }
+    else
+        CurrentInjectionInfo = GetInjectionInfo(Pid);
+
+    if (!Pid)
+        DoOutputDebugString("MapSectionViewHandler: Failed to find injection info pid from process handle 0x%x.\n", ProcessHandle);
 
     if (Pid == GetCurrentProcessId())
     {
-        PINJECTIONSECTIONVIEW CurrentSectionView = GetSectionView(SectionHandle);
-        
+        CurrentSectionView = GetSectionView(SectionHandle);
+
         if (!CurrentSectionView)
         {
-            AddSectionView(SectionHandle, BaseAddress, ViewSize);
-            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x and local view 0x%p to global list.\n", SectionHandle, BaseAddress);
+            CurrentSectionView = AddSectionView(SectionHandle, BaseAddress, ViewSize);
+            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x and local view 0x%p to global list (%ws).\n", SectionHandle, BaseAddress, CurrentSectionView->SectionName);
         }
         else
         {
@@ -249,28 +290,28 @@ void MapSectionViewHandler(HANDLE ProcessHandle, HANDLE SectionHandle, PVOID Bas
             {
                 CurrentSectionView->LocalView = BaseAddress;
                 CurrentSectionView->ViewSize = ViewSize;
-                DoOutputDebugString("MapSectionViewHandler: Updated local view to 0x%p for section view with handle 0x%x.\n", BaseAddress, SectionHandle);
+                DoOutputDebugString("MapSectionViewHandler: Updated local view to 0x%p for section view with handle 0x%x (%ws).\n", BaseAddress, SectionHandle, CurrentSectionView->SectionName);
             }
         }
     }
     else if (CurrentInjectionInfo && CurrentInjectionInfo->ProcessId == Pid)
     {
-        CurrentSectionViewInfo = AddSectionView(SectionHandle, BaseAddress, ViewSize);
+        CurrentSectionView = AddSectionView(SectionHandle, BaseAddress, ViewSize);
 
-        if (CurrentSectionViewInfo)
+        if (CurrentSectionView)
         {
-	        CurrentSectionViewInfo->TargetProcessId = Pid;
-            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d.\n", SectionHandle, Pid);
+	        CurrentSectionView->TargetProcessId = Pid;
+            DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d (%ws).\n", SectionHandle, Pid, CurrentSectionView->SectionName);
         }
         else
         {
-            DoOutputDebugString("MapSectionViewHandler: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, Pid);
+            DoOutputDebugString("MapSectionViewHandler: Error, failed to add section view with handle 0x%x and target process %d (%ws).\n", SectionHandle, Pid, CurrentSectionView->SectionName);
         }
-    }    
+    }
     else if (!CurrentInjectionInfo && Pid != GetCurrentProcessId())
     {
         CurrentInjectionInfo = CreateInjectionInfo(Pid);
-        
+
         if (CurrentInjectionInfo == NULL)
         {
             DoOutputDebugString("MapSectionViewHandler: Cannot create new injection info - error.\n");
@@ -297,23 +338,23 @@ void MapSectionViewHandler(HANDLE ProcessHandle, HANDLE SectionHandle, PVOID Bas
             }
             else if (!TranslatePathFromDeviceToLetter(DevicePath, CapeMetaData->TargetProcess, &BufferSize))
                 DoOutputErrorString("MapSectionViewHandler: Error translating target process path");
-                
-            CurrentSectionViewInfo = AddSectionView(SectionHandle, BaseAddress, ViewSize);
 
-            if (CurrentSectionViewInfo)
+            CurrentSectionView = AddSectionView(SectionHandle, BaseAddress, ViewSize);
+
+            if (CurrentSectionView)
             {
-                CurrentSectionViewInfo->TargetProcessId = Pid;
-                DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d.\n", SectionHandle, Pid);
+                CurrentSectionView->TargetProcessId = Pid;
+                DoOutputDebugString("MapSectionViewHandler: Added section view with handle 0x%x to target process %d (%ws).\n", SectionHandle, Pid, CurrentSectionView->SectionName);
             }
             else
-                DoOutputDebugString("MapSectionViewHandler: Error, failed to add section view with handle 0x%x and target process %d.\n", SectionHandle, Pid);
+                DoOutputDebugString("MapSectionViewHandler: Error, failed to add section view with handle 0x%x and target process %d (%ws).\n", SectionHandle, Pid, CurrentSectionView->SectionName);
         }
     }
 }
 
 void UnmapSectionViewHandler(PVOID BaseAddress)
 {
-    PINJECTIONSECTIONVIEW CurrentSectionView; 
+    PINJECTIONSECTIONVIEW CurrentSectionView;
 
     CurrentSectionView = SectionViewList;
 
@@ -342,9 +383,9 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
     DWORD BufferSize = MAX_PATH;
 
 	Pid = pid_from_process_handle(ProcessHandle);
-    
+
     CurrentInjectionInfo = GetInjectionInfo(Pid);
-    
+
     if (NumberOfBytesWritten == 0)
         return;
 
@@ -385,16 +426,16 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
         return;
 
     CurrentInjectionInfo->WriteDetected = TRUE;
-    
+
     // Check if we have a valid DOS and PE header at the beginning of Buffer
     if (IsDisguisedPEHeader((PVOID)Buffer))
     {
         pDosHeader = (PIMAGE_DOS_HEADER)((char*)Buffer);
-        
+
         pNtHeader = (PIMAGE_NT_HEADERS)((char*)Buffer + pDosHeader->e_lfanew);
-        
+
         CurrentInjectionInfo->ImageBase = (DWORD_PTR)BaseAddress;
-        
+
         DoOutputDebugString("WriteMemoryHandler: Executable binary injected into process %d (ImageBase 0x%x)\n", Pid, CurrentInjectionInfo->ImageBase);
 
         if (CurrentInjectionInfo->ImageDumped == FALSE)
@@ -402,7 +443,7 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
             SetCapeMetaData(INJECTION_PE, Pid, ProcessHandle, NULL);
 
             CurrentInjectionInfo->ImageDumped = DumpImageInCurrentProcess((PVOID)Buffer);
-            
+
             if (CurrentInjectionInfo->ImageDumped)
             {
                 CurrentInjectionInfo->BufferBase = (LPVOID)Buffer;
@@ -412,23 +453,23 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
             else
             {
                 DoOutputDebugString("WriteMemoryHandler: Failed to dump PE image from buffer, attempting raw dump.\n");
-                
+
                 CapeMetaData->DumpType = INJECTION_SHELLCODE;
                 CapeMetaData->TargetPid = Pid;
                 if (DumpMemory((LPVOID)Buffer, NumberOfBytesWritten))
                     DoOutputDebugString("WriteMemoryHandler: Dumped malformed PE image from buffer.");
                 else
-                    DoOutputDebugString("WriteMemoryHandler: Failed to dump malformed PE image from buffer.");                    
+                    DoOutputDebugString("WriteMemoryHandler: Failed to dump malformed PE image from buffer.");
             }
-        }                    
+        }
     }
     else
-    {   
+    {
         if (NumberOfBytesWritten > 0x10)    // We assign some lower limit
         {
-            if (CurrentInjectionInfo->BufferBase && Buffer > CurrentInjectionInfo->BufferBase && 
+            if (CurrentInjectionInfo->BufferBase && Buffer > CurrentInjectionInfo->BufferBase &&
                 Buffer < (LPVOID)((UINT_PTR)CurrentInjectionInfo->BufferBase + CurrentInjectionInfo->BufferSizeOfImage) && CurrentInjectionInfo->ImageDumped == TRUE)
-            {   
+            {
                 // Looks like a previously dumped PE image is being written a section at a time to the target process.
                 // We don't want to dump these writes.
                 DoOutputDebugString("WriteMemoryHandler: injection of section of PE image which has already been dumped.\n");
@@ -436,7 +477,7 @@ void WriteMemoryHandler(HANDLE ProcessHandle, LPVOID BaseAddress, LPCVOID Buffer
             else
             {
                 DoOutputDebugString("WriteMemoryHandler: shellcode at 0x%p (size 0x%x) injected into process %d.\n", Buffer, NumberOfBytesWritten, Pid);
-            
+
                 // dump injected code/data
                 CapeMetaData->DumpType = INJECTION_SHELLCODE;
                 CapeMetaData->TargetPid = Pid;

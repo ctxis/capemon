@@ -362,6 +362,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtClose,
     if(NT_SUCCESS(ret)) {
 		remove_file_from_log_tracking(Handle);
         file_close(Handle);
+#ifdef CAPE_INJECTION
+        DumpSectionViewsForHandle(Handle);
+#endif
     }
     return ret;
 }
