@@ -884,7 +884,13 @@ void DumpSectionView(PINJECTIONSECTIONVIEW SectionView)
 
     if (!SectionView->TargetProcessId)
     {
-        DoOutputDebugString("DumpSectionView: Section view has no target process - error.\n");
+        DoOutputDebugString("DumpSectionView: Section with local view 0x%p has no target process - error.\n", SectionView->LocalView);
+        return;
+    }
+
+    if (!SectionView->ViewSize)
+    {
+        DoOutputDebugString("DumpSectionView: Section with local view 0x%p has zero size - error.\n", SectionView->LocalView);
         return;
     }
 
@@ -935,7 +941,7 @@ void DumpSectionViewsForHandle(HANDLE SectionHandle)
             path_from_handle(SectionHandle, SectionViewList->SectionName, MAX_UNICODE_PATH);
             if ((!wcscmp(CurrentSectionView->SectionName, SectionName)))
             {
-                DoOutputDebugString("AddSectionView: New section handle for existing named section %ws.\n", SectionHandle, SectionName);
+                DoOutputDebugString("DumpSectionViewsForHandle: New section handle for existing named section %ws.\n", SectionHandle, SectionName);
                 free(SectionName);
                 break;
             }
@@ -945,8 +951,11 @@ void DumpSectionViewsForHandle(HANDLE SectionHandle)
         CurrentSectionView = CurrentSectionView->NextSectionView;
 	}
 
-	if (CurrentSectionView)
+	if (CurrentSectionView && CurrentSectionView->TargetProcessId)
+    {
+        DoOutputDebugString("DumpSectionViewsForHandle: Dumping section view at 0x%p for handle 0x%x (target process %d).\n", CurrentSectionView->LocalView, SectionHandle, CurrentSectionView->TargetProcessId);
         DumpSectionView(CurrentSectionView);
+    }
 
     return;
 }

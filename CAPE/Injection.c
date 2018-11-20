@@ -97,6 +97,8 @@ void ResumeThreadHandler(DWORD Pid)
             DoOutputDebugString("ResumeThreadHandler: Failed to dump PE image from buffer.\n");
     }
 
+    DoOutputDebugString("ResumeThreadHandler: Dumping section view for process %d.\n", Pid);
+
     DumpSectionViewsForPid(Pid);
 }
 
