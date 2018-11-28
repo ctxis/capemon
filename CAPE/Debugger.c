@@ -107,6 +107,9 @@ unsigned int TrapIndex;
 
 unsigned int DepthCount;
 extern int operate_on_backtrace(ULONG_PTR _esp, ULONG_PTR _ebp, void *extra, int(*func)(void *, ULONG_PTR));
+#ifdef CAPE_TRACE
+extern BOOL TraceRunning;
+#endif
 
 //**************************************************************************************
 BOOL CountDepth(LPVOID* ReturnAddress, LPVOID Address)
@@ -1036,6 +1039,9 @@ LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
             DoOutputDebugString("CAPEExceptionFilter: Anomaly detected: Trap index set on non-single-step: %d\n", TrapIndex);
         }
 
+#ifdef CAPE_TRACE
+        if (!TraceRunning)
+#endif
         DoOutputDebugString("CAPEExceptionFilter: breakpoint hit by instruction at 0x%p\n", ExceptionInfo->ExceptionRecord->ExceptionAddress);
 
         for (bp = 0; bp < NUMBER_OF_DEBUG_REGISTERS; bp++)
@@ -1271,6 +1277,9 @@ BOOL ContextSetDebugRegister
         return FALSE;
     }
 
+#ifdef CAPE_TRACE
+    if (!TraceRunning)
+#endif
 	DoOutputDebugString("ContextSetDebugRegister: Setting breakpoint %i within Context, Size=0x%x, Address=0x%p and Type=0x%x.\n", Register, Size, Address, Type);
 
     Length  = LengthMask[Size];

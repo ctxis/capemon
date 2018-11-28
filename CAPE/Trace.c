@@ -38,7 +38,7 @@ extern PCHAR ScyllaGetExportNameByAddress(PVOID Address, PCHAR* ModuleName);
 BOOL BreakpointsSet, ModuleNamePrinted;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
-BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
+BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped, TraceRunning;
 unsigned int DumpCount, Correction, StepCount, StepLimit, TraceDepthLimit;
 int StepOverRegister, TraceDepthCount, EntryPointRegister;
 
@@ -58,6 +58,8 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 #ifdef BRANCH_TRACE
     PVOID BranchTarget;
 #endif
+
+    TraceRunning = TRUE;
 
     _DecodeType DecodeType;
     _DecodeResult Result;
@@ -303,6 +305,8 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     }
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
+
+    TraceRunning = FALSE;
 
     return TRUE;
 }

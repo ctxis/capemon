@@ -2129,6 +2129,8 @@ void init_CAPE()
     // or upon submission. (This overrides submission.)
     g_config.procdump = 0;
 
+    InitializeCriticalSection(&ProcessDumpCriticalSection);
+
     // Cuckoo debug output level for development (0=none, 2=max)
     // g_config.debug = 2;
 #endif
