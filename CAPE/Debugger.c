@@ -1798,12 +1798,18 @@ BOOL ClearZeroFlag(PCONTEXT Context)
 BOOL SetSingleStepMode(PCONTEXT Context, PVOID Handler)
 //**************************************************************************************
 {
-	if (Context == NULL)
+    if (Context == NULL)
         return FALSE;
 
     // set the trap flag
     Context->EFlags |= FL_TF;
 
+#ifdef BRANCH_TRACE
+    // set bits 8 & 9, LBR & BTF bits for branch trace
+	PDR7 Dr7 = (PDR7)&(Context->Dr7);
+    //Dr7->LE = 1;
+    Dr7->GE = 1;
+#endif
     SingleStepHandler = (SINGLE_STEP_HANDLER)Handler;
 
     return TRUE;

@@ -53,19 +53,26 @@ BOOL DoSetSingleStepMode(int Register, PCONTEXT Context, PVOID Handler)
 
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	PVOID ReturnAddress;
+	PVOID ReturnAddress, CIP;
     BOOL StepOver;
+#ifdef BRANCH_TRACE
+    PVOID BranchTarget;
+#endif
 
+    _DecodeType DecodeType;
     _DecodeResult Result;
     _OffsetType Offset = 0;
     _DecodedInst DecodedInstruction;
     unsigned int DecodedInstructionsCount = 0;
 
 #ifdef _WIN64
-    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+    CIP = (PVOID)ExceptionInfo->ContextRecord->Rip;
+    DecodeType = Decode64Bits;
 #else
-    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
+    CIP = (PVOID)ExceptionInfo->ContextRecord->Eip;
+    DecodeType = Decode32Bits;
 #endif
+    if (!is_in_dll_range((ULONG_PTR)CIP))
         StepCount++;
 
     if (StepCount > StepLimit)
@@ -75,49 +82,23 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         return TRUE;
     }
 
-#ifdef _WIN64
-    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, Decode64Bits, &DecodedInstruction, 1, &DecodedInstructionsCount);
-#else
-    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, Decode32Bits, &DecodedInstruction, 1, &DecodedInstructionsCount);
+#ifdef BRANCH_TRACE
+    BranchTarget = CIP;
+    CIP = (PVOID)ExceptionInfo->ExceptionRecord->ExceptionInformation[0];
+    DoOutputDebugString("Trace: Branch trace hit with EIP 0x%p, BranchTarget 0x%p.\n", CIP, BranchTarget);
 #endif
+    Result = distorm_decode(Offset, (const unsigned char*)CIP, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount);
 
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
         StepOver = FALSE;
-#ifdef _WIN64
-        if (is_in_dll_range(ExceptionInfo->ContextRecord->Rip)) {
-            StepOver = TRUE;
-        }
-        else if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "QWORD", 5))
-        {
-            PCHAR ExportName;
-            PVOID *CallTarget = (PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4) + DecodedInstruction.size);
-            __try
-            {
-                ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
-            }
-            __except(EXCEPTION_EXECUTE_HANDLER)
-            {
-                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%p.\n", CallTarget);
-                return FALSE;
-            }
-
-            if (ExportName)
-            {
-                DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                StepOver = TRUE;
-            }
-            else
-                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
-
-#else
-        if (is_in_dll_range(ExceptionInfo->ContextRecord->Eip)) {
+        if (is_in_dll_range((ULONG_PTR)CIP)) {
             StepOver = TRUE;
         }
         else if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5) && strncmp(DecodedInstruction.operands.p, "DWORD [E", 8))
         {
             PCHAR ExportName;
-            PVOID *CallTarget = *(PVOID*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4);
+            PVOID *CallTarget = *(PVOID*)((PUCHAR)CIP + DecodedInstruction.size - 4);
             __try
             {
                 ExportName = ScyllaGetExportNameByAddress(*CallTarget, NULL);
@@ -125,43 +106,20 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             __except(EXCEPTION_EXECUTE_HANDLER)
             {
                 DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%x.\n", CallTarget);
-                return FALSE;
             }
 
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
-#endif
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", *CallTarget);
         }
         else if (DecodedInstruction.size > 4)
         {
-#ifdef _WIN64
             PCHAR ExportName;
-            PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Rip + (unsigned int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size - 4));
-            __try
-            {
-                ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
-            }
-            __except(EXCEPTION_EXECUTE_HANDLER)
-            {
-                DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%p.\n", CallTarget);
-                return FALSE;
-            }
-
-            if (ExportName)
-            {
-                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
-                StepOver = TRUE;
-            }
-            else
-                DoOutputDebugString("0x%p (%02d) %-24s %s%s0x%p\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
-#else
-            PCHAR ExportName;
-            PVOID CallTarget = (PVOID)(ExceptionInfo->ContextRecord->Eip + (int)*(DWORD*)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size - 4));
+            PVOID CallTarget = (PVOID)((PUCHAR)CIP + (int)*(DWORD*)((PUCHAR)CIP + DecodedInstruction.size - 4));
             __try
             {
                 ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
@@ -169,17 +127,15 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             __except(EXCEPTION_EXECUTE_HANDLER)
             {
                 DoOutputDebugString("Trace: Error dereferencing CallTarget 0x%x.\n", CallTarget);
-                return FALSE;
             }
 
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
-#endif
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EAX", 3))
         {
@@ -198,11 +154,11 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EBX", 3))
@@ -222,11 +178,11 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
         else if (!strncmp(DecodedInstruction.operands.p, "ECX", 3))
@@ -246,11 +202,11 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EDX", 3))
@@ -270,11 +226,11 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
         else if (!strncmp(DecodedInstruction.operands.p, "EBP", 3))
@@ -294,90 +250,68 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
             PCHAR ExportName = ScyllaGetExportNameByAddress(CallTarget, NULL);
             if (ExportName)
             {
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", ExportName);
                 StepOver = TRUE;
             }
             else
-                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
+                DoOutputDebugString("0x%x (%02d) %-24s %s%s0x%x\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", CallTarget);
 #endif
         }
         else
-#ifdef _WIN64
-            DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+#ifdef BRANCH_TRACE
+        if (!is_in_dll_range((ULONG_PTR)CIP))
+            TraceDepthCount++;
 #else
-            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#endif
-        
         if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit || StepOver == TRUE)
-        {    
-#ifdef _WIN64
-            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
-#else
-            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size);
-#endif
+        {
+            ReturnAddress = (PVOID)((PUCHAR)CIP + DecodedInstruction.size);
             if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, StepOverRegister, 0, (BYTE*)ReturnAddress, BP_EXEC, BreakpointCallback))
             {
                 DoOutputDebugString("Trace: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
             }
-            else
-                DoOutputDebugString("Trace: Successfully set breakpoint on return address 0x%p\n", ReturnAddress);
+            //else
+            //    DoOutputDebugString("Trace: Successfully set breakpoint on return address 0x%p\n", ReturnAddress);
 
             ClearSingleStepMode(ExceptionInfo->ContextRecord);
 
             return TRUE;
         }
-#ifdef _WIN64
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-#else
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-#endif
+        else if (!is_in_dll_range((ULONG_PTR)CIP))
             TraceDepthCount++;
+#endif
     }
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
     {
-#ifdef _WIN64
-        if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-            DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#else
-        if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#endif
-        if (TraceDepthCount < 0 && (unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
-        {
-            DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
+        if (!is_in_dll_range((ULONG_PTR)CIP))
+            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+        //if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
+        //{
+        //    DoOutputDebugString("Trace: Stepping out of initial depth, releasing.");
+        //
+        //    ClearSingleStepMode(ExceptionInfo->ContextRecord);
+        //
+        //    return TRUE;
+        //}
 
-            ClearSingleStepMode(ExceptionInfo->ContextRecord);
-
-            return TRUE;
-        }
-
-#ifdef _WIN64
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-#else
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-#endif
+        else if (!is_in_dll_range((ULONG_PTR)CIP))
             TraceDepthCount--;
     }
-#ifdef _WIN64
-    else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
+    else if (!is_in_dll_range((ULONG_PTR)CIP))
     {
-        DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#else
-    else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-    {
-        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#endif
+        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
     }
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
-    
+
     return TRUE;
 }
 
 BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINTERS* ExceptionInfo)
 {
-	PVOID ReturnAddress;
+	PVOID ReturnAddress, CIP;
     char* ModuleName;
+    _DecodeType DecodeType;
     _DecodeResult Result;
     _OffsetType Offset = 0;
     _DecodedInst DecodedInstruction;
@@ -388,7 +322,7 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 		DoOutputDebugString("BreakpointCallback executed with pBreakpointInfo NULL.\n");
 		return FALSE;
 	}
-	
+
 	if (pBreakpointInfo->ThreadHandle == NULL)
 	{
 		DoOutputDebugString("BreakpointCallback executed with NULL thread handle.\n");
@@ -396,10 +330,13 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 	}
 
 #ifdef _WIN64
-    ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Rip, &DllRVA);
+    CIP = (PVOID)ExceptionInfo->ContextRecord->Rip;
+    DecodeType = Decode64Bits;
 #else
-    ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)ExceptionInfo->ContextRecord->Eip, &DllRVA);
+    CIP = (PVOID)ExceptionInfo->ContextRecord->Eip;
+    DecodeType = Decode32Bits;
 #endif
+    ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)CIP, &DllRVA);
 
     if (!ModuleNamePrinted && ModuleName)
     {
@@ -407,25 +344,19 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
         ModuleNamePrinted = TRUE;
     }
 
-#ifdef _WIN64
-    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Rip, CHUNKSIZE, Decode64Bits, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-        DoOutputDebugString("0x%p (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Rip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#else
-    Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, Decode32Bits, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-    if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
-#endif
+    Result = distorm_decode(Offset, (const unsigned char*)CIP, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount);
+    if (!is_in_dll_range((ULONG_PTR)CIP))
+        DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
+#ifdef BRANCH_TRACE
+        if (!is_in_dll_range((ULONG_PTR)CIP))
+            TraceDepthCount++;
+#else
         if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
         {
-#ifdef _WIN64
-            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Rip + DecodedInstruction.size);
-#else
-            ReturnAddress = (PVOID)((PUCHAR)ExceptionInfo->ContextRecord->Eip + DecodedInstruction.size);
-#endif
+            ReturnAddress = (PVOID)((PUCHAR)CIP + DecodedInstruction.size);
             if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo->Register, 0, (BYTE*)ReturnAddress, BP_EXEC, BreakpointCallback))
             {
                 DoOutputDebugString("BreakpointCallback: Failed to set breakpoint on return address 0x%p\n", ReturnAddress);
@@ -435,13 +366,10 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-#ifdef _WIN64
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-#else
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-#endif
+        else if (!is_in_dll_range((ULONG_PTR)CIP))
             TraceDepthCount++;
-    }
+#endif
+}
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
     {
         if (TraceDepthCount < 0)
@@ -452,18 +380,14 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-#ifdef _WIN64
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Rip))
-#else
-        else if (!is_in_dll_range(ExceptionInfo->ContextRecord->Eip))
-#endif
+        else if (!is_in_dll_range((ULONG_PTR)CIP))
             TraceDepthCount--;
     }
 
     StepOverExecutionBreakpoint(ExceptionInfo->ContextRecord, pBreakpointInfo);
 
     DoSetSingleStepMode(pBreakpointInfo->Register, ExceptionInfo->ContextRecord, Trace);
-    
+
     return TRUE;
 }
 
@@ -477,13 +401,16 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
 
     if (!StepLimit)
         StepLimit = SINGLE_STEP_LIMIT;
-    
+
 	if (!bp0 && !bp1 && !bp2 && !bp3 && !EntryPointRegister)
 	{
 		DoOutputDebugString("SetInitialBreakpoints: No address specified for Trace breakpoints, defaulting to bp0 on entry point.\n");
 		EntryPointRegister = 1;
 	}
-    
+
+#ifdef STANALONE
+    TraceDepthLimit = 5;
+#endif
     if (!ImageBase)
     {
         ImageBase = GetModuleHandle(NULL);
@@ -492,7 +419,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     }
     else
         DoOutputDebugString("SetInitialBreakpoints: ImageBase set to 0x%p.\n", ImageBase);
-    
+
     if (EntryPointRegister)
     {
         PVOID EntryPoint = (PVOID)GetEntryPointVA((DWORD_PTR)ImageBase);
@@ -518,7 +445,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp0)
     {
         Register = 0;
-        
+
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp0;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -537,7 +464,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp1)
     {
         Register = 1;
-        
+
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp1;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -556,7 +483,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp2)
     {
         Register = 2;
-        
+
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp2;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -575,7 +502,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (bp3)
     {
         Register = 3;
-        
+
         BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp3;
 
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
@@ -590,6 +517,6 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
             return FALSE;
         }
     }
-    
+
     return BreakpointsSet;
 }
