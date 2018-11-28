@@ -50,7 +50,8 @@ extern void ProcessTrackedRegion();
 #endif
 
 extern void file_handle_terminate();
-extern int RoutineProcessDump();
+extern int DoProcessDump(PVOID CallerBase);
+extern PVOID GetHookCallerBase();
 extern BOOL ProcessDumped;
 
 HOOKDEF(HANDLE, WINAPI, CreateToolhelp32Snapshot,
@@ -427,7 +428,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
         if (g_config.procdump && !ProcessDumped)
         {
             DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
-            RoutineProcessDump();
+            DoProcessDump(GetHookCallerBase());
         }
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
@@ -440,7 +441,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtTerminateProcess,
         if (g_config.procdump && !ProcessDumped)
         {
             DoOutputDebugString("NtTerminateProcess hook: Attempting to dump process %d\n", GetCurrentProcessId());
-            RoutineProcessDump();
+            DoProcessDump(GetHookCallerBase());
         }
 		process_shutting_down = 1;
 		LOQ_ntstatus("process", "ph", "ProcessHandle", ProcessHandle, "ExitCode", ExitStatus);
@@ -773,6 +774,18 @@ HOOKDEF(NTSTATUS, WINAPI, NtProtectVirtualMemory,
     PTRACKEDREGION TrackedRegion;
 #endif
 
+	if (NewAccessProtection == PAGE_EXECUTE_READWRITE && BaseAddress && NumberOfBytesToProtect &&
+		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress)) {
+		unsigned int offset;
+		char *dllname = convert_address_to_dll_name_and_offset((ULONG_PTR)*BaseAddress, &offset);
+		if (dllname && !strcmp(dllname, "ntdll.dll")) {
+			// don't allow writes, this will cause memory access violations
+			// that we are going to handle in the RtlDispatchException hook
+			NewAccessProtection = PAGE_EXECUTE_READ;
+		}
+		if (dllname) free(dllname);
+	}
+
 	if (NewAccessProtection == PAGE_EXECUTE_READ && BaseAddress && NumberOfBytesToProtect &&
 		GetCurrentProcessId() == our_getprocessid(ProcessHandle) && is_in_dll_range((ULONG_PTR)*BaseAddress))
 		restore_hooks_on_range((ULONG_PTR)*BaseAddress, (ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect);
@@ -958,11 +971,24 @@ HOOKDEF(NTSTATUS, WINAPI, DbgUiWaitStateChange,
 	return ret;
 }
 
-HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
+HOOKDEF(BOOLEAN, WINAPI, RtlDispatchException,
 	__in PEXCEPTION_RECORD ExceptionRecord,
 	__in PCONTEXT Context)
 {
 #ifndef _WIN64
+	if (ExceptionRecord && ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && ExceptionRecord->ExceptionFlags == 0 &&
+		ExceptionRecord->NumberParameters == 2 && ExceptionRecord->ExceptionInformation[0] == 1) {
+		unsigned int offset;
+		char *dllname = convert_address_to_dll_name_and_offset(ExceptionRecord->ExceptionInformation[1], &offset);
+		if (dllname && !strcmp(dllname, "ntdll.dll")) {
+			free(dllname);
+			// if trying to write to ntdll.dll, then just skip the instruction
+			Context->Eip += lde((void *)Context->Eip);
+			return TRUE;
+		}
+		if (dllname) free(dllname);
+	}
+
 	if (ExceptionRecord && (ULONG_PTR)ExceptionRecord->ExceptionAddress >= g_our_dll_base && (ULONG_PTR)ExceptionRecord->ExceptionAddress < (g_our_dll_base + g_our_dll_size)) {
 		char buf[160];
 		ULONG_PTR seh = 0;
@@ -971,17 +997,15 @@ HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
 			seh = ((DWORD *)tebtmp[0])[1];
 		if (seh < g_our_dll_base || seh >= (g_our_dll_base + g_our_dll_size)) {
 			_snprintf(buf, sizeof(buf), "Exception 0x%x reported at offset 0x%x in capemon itself while accessing 0x%x from hook %s", ExceptionRecord->ExceptionCode, (DWORD)((ULONG_PTR)ExceptionRecord->ExceptionAddress - g_our_dll_base), ExceptionRecord->ExceptionInformation[1], hook_info()->current_hook ? hook_info()->current_hook->funcname : "unknown");
-			log_anomaly("cuckoocrash", buf);
+			log_anomaly("capemon crash", buf);
 		}
 	}
 #endif
 
-	//DoOutputDebugString("RtlDispatchException hook: Exception 0x%x reported at address 0x%p (accessing 0x%p).\n", ExceptionRecord->ExceptionCode, ExceptionRecord->ExceptionAddress, ExceptionRecord->ExceptionInformation[1]);
-    
-    // flush logs prior to handling of an exception without having to register a vectored exception handler
+	// flush logs prior to handling of an exception without having to register a vectored exception handler
 	log_flush();
 
-	return 0;
+	return Old_RtlDispatchException(ExceptionRecord, Context);
 }
 
 HOOKDEF_NOTAIL(WINAPI, NtRaiseException,

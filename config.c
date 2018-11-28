@@ -25,8 +25,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern PVOID bp0, bp1, bp2, bp3;
+#ifdef CAPE_TRACE
 extern int TraceDepthLimit, EntryPointRegister;
 extern unsigned int StepLimit;
+#endif
 
 int read_config(void)
 {
@@ -53,8 +55,11 @@ int read_config(void)
 	g_config.hook_type = HOOK_HOTPATCH_JMP_INDIRECT;
 #endif
     g_config.procdump = 0;
+    g_config.procmemdump = 0;
 
+#ifdef CAPE_TRACE
     EntryPointRegister = 0;
+#endif
 
 	memset(buf, 0, sizeof(buf));
 	while (fgets(buf, sizeof(buf), fp) != NULL)
@@ -254,13 +259,14 @@ int read_config(void)
 					p = p2 + 1;
 				}
 			}
+#ifdef CAPE_TRACE
             else if (!strcmp(key, "bp0")) {
                 if (!strncmp(value, "ep", 2)) {
                     DoOutputDebugString("bp0 set to entry point.\n", bp0);
                     EntryPointRegister = 1;
                 }
                 else {
-                    bp0 = (PVOID)strtoul(value, NULL, 0);
+                    bp0 = (PVOID)(DWORD_PTR)strtoul(value, NULL, 0);
                     DoOutputDebugString("bp0 set to 0x%x.\n", bp0);
                 }
 			}
@@ -270,7 +276,7 @@ int read_config(void)
                     EntryPointRegister = 2;
                 }
                 else {
-                    bp1 = (PVOID)strtoul(value, NULL, 0);
+                    bp1 = (PVOID)(DWORD_PTR)strtoul(value, NULL, 0);
                     DoOutputDebugString("bp1 set to 0x%x.\n", bp1);
                 }
 			}
@@ -280,7 +286,7 @@ int read_config(void)
                     EntryPointRegister = 3;
                 }
                 else {
-                    bp2 = (PVOID)strtoul(value, NULL, 0);
+                    bp2 = (PVOID)(DWORD_PTR)strtoul(value, NULL, 0);
                     DoOutputDebugString("bp2 set to 0x%x.\n", bp2);
                 }
 			}
@@ -290,7 +296,7 @@ int read_config(void)
                     EntryPointRegister = 4;
                 }
                 else {
-                    bp3 = (PVOID)strtoul(value, NULL, 0);
+                    bp3 = (PVOID)(DWORD_PTR)strtoul(value, NULL, 0);
                     DoOutputDebugString("bp3 set to 0x%x.\n", bp3);
                 }
 			}
@@ -302,12 +308,24 @@ int read_config(void)
 				StepLimit = (unsigned int)strtoul(value, NULL, 10);
                 DoOutputDebugString("Trace instruction count set to 0x%x", StepLimit);
 			}
+#endif
             else if (!strcmp(key, "procdump")) {
 				g_config.procdump = value[0] == '1';
                 if (g_config.procdump)
-                    DoOutputDebugString("Process memory dumps enabled.\n");
+                    DoOutputDebugString("Process dumps enabled.\n");
                 else
-                    DoOutputDebugString("Process memory dumps disabled.\n");
+                    DoOutputDebugString("Process dumps disabled.\n");
+			}
+            else if (!strcmp(key, "procmemdump")) {
+				// for backwards compatibility with spender
+                if (!strcmp(value, "yes"))
+                    g_config.procmemdump = 1;
+                else
+                    g_config.procmemdump = value[0] == '1';
+                if (g_config.procmemdump)
+                    DoOutputDebugString("Full process memory dumps enabled.\n");
+                else
+                    DoOutputDebugString("Full process memory dumps disabled.\n");
 			}
             else if (!strcmp(key, "import_reconstruction")) {
 				g_config.import_reconstruction = value[0] == '1';
@@ -315,6 +333,13 @@ int read_config(void)
                     DoOutputDebugString("Import reconstruction of process dumps enabled.\n");
                 else
                     DoOutputDebugString("Import reconstruction of process dumps disabled.\n");
+			}
+            else if (!strcmp(key, "terminate-processes")) {
+				g_config.terminate_processes = value[0] == '1';
+                if (g_config.terminate_processes)
+                    DoOutputDebugString("Terminate processes on terminate_event enabled.\n");
+                else
+                    DoOutputDebugString("Terminate processes on terminate_event disabled.\n");
 			}
             else DoOutputDebugString("CAPE debug - unrecognised key %s.\n", key);
 		}

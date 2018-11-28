@@ -35,10 +35,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 static lookup_t g_hook_info;
+lookup_t g_caller_regions;
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern BOOL DumpRegion(PVOID Address);
-extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
+extern int DumpImageInCurrentProcess(LPVOID ImageBase);
 extern PVOID GetAllocationBase(PVOID Address);
 extern PVOID GetHookCallerBase();
 extern BOOL ModuleDumped;
@@ -50,6 +51,7 @@ extern BOOL BreakpointsSet;
 void hook_init()
 {
     lookup_init(&g_hook_info);
+    lookup_init(&g_caller_regions);
 }
 
 void emit_rel(unsigned char *buf, unsigned char *source, unsigned char *target)
@@ -65,6 +67,11 @@ static int set_caller_info(void *unused, ULONG_PTR addr)
 	hook_info_t *hookinfo = hook_info();
 
 	if (!is_in_dll_range(addr)) {
+        PVOID AllocationBase = GetAllocationBase((PVOID)addr);
+        if (AllocationBase && !lookup_get(&g_caller_regions, (ULONG_PTR)AllocationBase, 0)) {
+            DoOutputDebugString("set_caller_info: Adding region at 0x%p to caller regions list.\n", AllocationBase);
+            lookup_add(&g_caller_regions, (ULONG_PTR)AllocationBase, 0);
+        }
 		if (hookinfo->main_caller_retaddr == 0)
 			hookinfo->main_caller_retaddr = addr;
 		else {
@@ -130,7 +137,7 @@ void dump_on_api(hook_t *h)
                 if (!AllocationBase)
                     AllocationBase = GetAllocationBase((PVOID)hookinfo->parent_caller_retaddr);
                 if (AllocationBase) {
-                    if (DumpModuleInCurrentProcess(AllocationBase)) {
+                    if (DumpImageInCurrentProcess(AllocationBase)) {
                         ModuleDumped = TRUE;
                         DoOutputDebugString("Dump-on-API: Dumped module at 0x%p due to %s call.\n", AllocationBase, h->funcname);
                     }

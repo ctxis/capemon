@@ -42,9 +42,6 @@ extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern ULONG_PTR base_of_dll_of_interest;
-#ifdef CAPE_TRACE
-extern BOOL SetInitialBreakpoints(PVOID ImageBase);
-#endif
 
 void disable_tail_call_optimization(void)
 {
@@ -110,7 +107,7 @@ static hook_t g_hooks[] = {
 	HOOK_SPECIAL(ole32, CoCreateInstanceEx),
 	HOOK_SPECIAL(ole32, CoGetClassObject),
 
-	HOOK_NOTAIL(ntdll, RtlDispatchException, 2),
+	HOOK_SPECIAL(ntdll, RtlDispatchException),
 	HOOK_NOTAIL(ntdll, NtRaiseException, 3),
 
 	// lowest variant of MoveFile()
@@ -372,7 +369,7 @@ static hook_t g_hooks[] = {
     HOOK(ntdll, NtQueryInformationThread),
     HOOK(ntdll, NtYieldExecution),
 
-    //
+	//
     // Misc Hooks
     //
 #ifndef _WIN64
@@ -380,7 +377,7 @@ static hook_t g_hooks[] = {
 #endif
 	HOOK(msvcrt, memcpy),
     HOOK(msvcrt, srand),
-    
+
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
 
@@ -434,6 +431,7 @@ static hook_t g_hooks[] = {
 	HOOK(rasapi32, RasConnectionNotificationW),
 	HOOK(kernel32, SystemTimeToTzSpecificLocalTime),
 	HOOK(ole32, CLSIDFromProgID),
+    //HOOK(ole32, OleConvertOLESTREAMToIStorage),
 	HOOK(kernel32, GlobalMemoryStatus),
 	HOOK(kernel32, GlobalMemoryStatusEx),
 	HOOK(user32, SystemParametersInfoA),
@@ -705,8 +703,7 @@ VOID CALLBACK New_DllLoadNotification(
                 set_dll_of_interest((ULONG_PTR)NotificationData->Loaded.DllBase);
             DoOutputDebugString("Target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-            if (!g_config.base_on_apiname[0])
-                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else if (((!wcsnicmp(our_commandline, L"c:\\windows\\system32\\rundll32.exe", 32) ||
@@ -720,8 +717,7 @@ VOID CALLBACK New_DllLoadNotification(
             }
             DoOutputDebugString("rundll32 target DLL loaded at 0x%p: %ws (0x%x bytes).\n", NotificationData->Loaded.DllBase, library.Buffer, NotificationData->Loaded.SizeOfImage);
 #ifdef CAPE_TRACE
-            if (!g_config.base_on_apiname[0])
-                SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
+            SetInitialBreakpoints((PVOID)base_of_dll_of_interest);
 #endif
         }
         else {
