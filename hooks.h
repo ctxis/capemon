@@ -1096,7 +1096,7 @@ extern HOOKDEF(NTSTATUS, WINAPI, DbgUiWaitStateChange,
 	__in_opt PLARGE_INTEGER Timeout
 );
 
-extern HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
+extern HOOKDEF(BOOLEAN, WINAPI, RtlDispatchException,
 	__in PEXCEPTION_RECORD ExceptionRecord,
 	__in PCONTEXT Context
 );
@@ -3011,4 +3011,10 @@ extern HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtYieldExecution,
     VOID
+);
+
+extern HOOKDEF(HRESULT, WINAPI, OleConvertOLESTREAMToIStorage,
+    IN LPOLESTREAM          lpolestream,
+    OUT LPSTORAGE           pstg,
+    IN const DVTARGETDEVICE *ptd
 );

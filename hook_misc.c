@@ -32,9 +32,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-#ifdef CAPE_EXTRACTION
-extern void ModloadHandler(HMODULE BaseAddress);
-#endif
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
     __in  int idHook,
@@ -169,14 +166,7 @@ HOOKDEF(NTSTATUS, WINAPI, LdrGetProcedureAddress,
     __in_opt    WORD Ordinal,
     __out       PVOID *FunctionAddress
 ) {
-    NTSTATUS ret;
-
-#ifdef CAPE_EXTRACTION
-    if (ModuleHandle)
-        ModloadHandler(ModuleHandle);
-#endif
-
-    ret = Old_LdrGetProcedureAddress(ModuleHandle, FunctionName,
+    NTSTATUS ret = Old_LdrGetProcedureAddress(ModuleHandle, FunctionName,
         Ordinal, FunctionAddress);
 
 	if (FunctionName != NULL && FunctionName->Length == 13 && FunctionName->Buffer != NULL &&
@@ -1412,4 +1402,75 @@ HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
 	BOOL ret = Old_RtlSetCurrentTransaction(TransactionHandle);
 	LOQ_bool("misc", "p", "TransactionHandle", TransactionHandle);
 	return ret;
+}
+
+HOOKDEF(HRESULT, WINAPI, OleConvertOLESTREAMToIStorage,
+    IN LPOLESTREAM          lpolestream,
+    OUT LPSTORAGE           pstg,
+    IN const DVTARGETDEVICE *ptd
+) {
+    void *buf = NULL; uintptr_t len = 0;
+
+    HRESULT ret = Old_OleConvertOLESTREAMToIStorage(lpolestream, pstg, ptd);
+
+#ifndef _WIN64
+    if (lpolestream != NULL) {
+        buf = (PVOID)*((uint8_t *) lpolestream + 8);
+        len = *((uint8_t *) lpolestream + 12);
+    }
+#endif
+
+	LOQ_bool("misc", "b", "OLE2", len, buf);
+	return ret;
+}
+HOOKDEF(BOOL, WINAPI, FlsAlloc,
+	_In_ PFLS_CALLBACK_FUNCTION lpCallback
+) {
+	BOOL ret = Old_FlsAlloc(lpCallback);
+	LOQ_bool("misc", "p", "Callback", lpCallback);
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsSetValue,
+	_In_     DWORD dwFlsIndex,
+	_In_opt_ PVOID lpFlsData
+) {
+	BOOL ret = Old_FlsSetValue(dwFlsIndex, lpFlsData);
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex, "Data", lpFlsData);
+	return ret;
+}
+
+
+HOOKDEF(PVOID, WINAPI, FlsGetValue,
+	_In_     DWORD dwFlsIndex
+) {
+	PVOID ret = Old_FlsGetValue(dwFlsIndex);
+	LOQ_nonnull("misc", "ip", "Index", dwFlsIndex, "ReturnValue", ret);
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsFree,
+	_In_     DWORD dwFlsIndex
+) {
+	BOOL ret = Old_FlsFree(dwFlsIndex);
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex);
+	return ret;
+}
+
+
+HOOKDEF(PVOID, WINAPI, LocalAlloc,
+	_In_ UINT uFlags,
+	_In_ SIZE_T uBytes)
+{
+	PVOID ret = Old_LocalAlloc(uFlags, uBytes);
+	LOQ_nonnull("misc", "ii", "Flags", uFlags, "Bytes", uBytes);
+	return ret;
+}
+
+HOOKDEF(VOID, WINAPI, LocalFree,
+	HLOCAL hMem)
+{
+	int ret = 0;
+	Old_LocalFree(hMem);
+	LOQ_void("misc", "p", "SourceBuffer", hMem);
 }
