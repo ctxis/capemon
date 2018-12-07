@@ -39,52 +39,9 @@ int ScanForPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int ScanForDisguisedPE(LPVOID Buffer, SIZE_T Size, LPVOID* Offset);
 int IsDisguisedPEHeader(LPVOID Buffer);
 int DumpImageInCurrentProcess(LPVOID ImageBase);
-void DumpSectionViewsForPid(DWORD Pid);
-void DumpSectionViewsForHandle(HANDLE SectionHandle);
 
 SYSTEM_INFO SystemInfo;
 PVOID CallingModule;
-
-typedef struct InjectionSectionView
-{
-    HANDLE                          SectionHandle;
-    PVOID                           LocalView;
-    SIZE_T                          ViewSize;
-	int                             TargetProcessId;
-    wchar_t                         *SectionName;
-    struct InjectionSectionView     *NextSectionView;
-} INJECTIONSECTIONVIEW, *PINJECTIONSECTIONVIEW;
-
-PINJECTIONSECTIONVIEW AddSectionView(HANDLE SectionHandle, PVOID LocalView, SIZE_T ViewSize);
-PINJECTIONSECTIONVIEW GetSectionView(HANDLE SectionHandle);
-BOOL DropSectionView(PINJECTIONSECTIONVIEW SectionView);
-void DumpSectionViewsForPid(DWORD Pid);
-void DumpSectionView(PINJECTIONSECTIONVIEW SectionView);
-
-typedef struct InjectionInfo
-{
-    int                         ProcessId;
-	HANDLE	                    ProcessHandle;
-    DWORD_PTR                   ImageBase;
-    DWORD_PTR                   EntryPoint;
-    BOOL                        WriteDetected;
-    BOOL                        ImageDumped;
-    LPVOID                      BufferBase;
-    LPVOID                      StackPointer;
-    unsigned int                BufferSizeOfImage;
-    HANDLE                      SectionHandle;
-//    struct InjectionSectionView *SectionViewList;
-    struct InjectionInfo        *NextInjectionInfo;
-} INJECTIONINFO, *PINJECTIONINFO;
-
-struct InjectionInfo *InjectionInfoList;
-
-PINJECTIONINFO GetInjectionInfo(DWORD ProcessId);
-PINJECTIONINFO GetInjectionInfoFromHandle(HANDLE ProcessHandle);
-PINJECTIONINFO CreateInjectionInfo(DWORD ProcessId);
-BOOL DropInjectionInfo(HANDLE ProcessHandle);
-
-struct InjectionSectionView *SectionViewList;
 
 //
 // MessageId: STATUS_SUCCESS

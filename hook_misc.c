@@ -31,6 +31,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define STATUS_BAD_COMPRESSION_BUFFER    ((NTSTATUS)0xC0000242L)
 
+#ifdef CAPE_INJECTION
+extern void DuplicationHandler(HANDLE SourceProcessHandle, HANDLE TargetHandle);
+#endif
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 
 HOOKDEF(HHOOK, WINAPI, SetWindowsHookExA,
@@ -357,14 +361,14 @@ HOOKDEF(NTSTATUS, WINAPI, NtClose,
 		LOQ_ntstatus("system", "ps", "Handle", Handle, "Alert", "Tried to close Cuckoo's log handle");
 		return ret;
 	}
+#ifdef CAPE_INJECTION
+        DumpSectionViewsForHandle(Handle);
+#endif
 	ret = Old_NtClose(Handle);
     LOQ_ntstatus("system", "p", "Handle", Handle);
     if(NT_SUCCESS(ret)) {
 		remove_file_from_log_tracking(Handle);
         file_close(Handle);
-#ifdef CAPE_INJECTION
-        DumpSectionViewsForHandle(Handle);
-#endif
     }
     return ret;
 }
@@ -394,6 +398,9 @@ HOOKDEF(NTSTATUS, WINAPI, NtDuplicateObject,
 			remove_file_from_log_tracking(SourceHandle);
 			file_close(SourceHandle);
 		}
+#ifdef CAPE_INJECTION
+        DuplicationHandler(SourceHandle, TargetProcessHandle);
+#endif        
 	}
 	return ret;
 }
