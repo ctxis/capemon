@@ -417,6 +417,8 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
             Delta += DecodedInstructions[i].size;
         }
     }
+    else
+        DoOutputDebugString("SetInitialBreakpoint: No breakpoint supplied for QakBot anti-sandbox bypass.\n");
 
     if (bp1)
     {
@@ -452,6 +454,8 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
             Delta += DecodedInstructions[i].size;
         }
     }
+    else
+        DoOutputDebugString("SetInitialBreakpoint: No breakpoint supplied for QakBot config dump.\n");
 /*
     if (bp2)
     {
