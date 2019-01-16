@@ -527,7 +527,9 @@ bool ApiReader::isModuleLoadedInOwnProcess(ModuleInfo * module)
 			return true;
 		}
 	}
+#ifdef DEBUG_COMMENTS
     DoOutputDebugString("isModuleLoadedInOwnProcess returned false: %s\n",module->fullPath);
+#endif
 	return false;
 }
 
