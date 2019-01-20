@@ -734,11 +734,10 @@ BOOL EntryPointExecCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_P
         else
         {
             DoOutputDebugString("EntryPointExecCallback: failed to dump PE module.\n");
+            ContextClearAllBreakpoints(ExceptionInfo->ContextRecord);            
             return FALSE;
         }
     }
-	
-    DoOutputDebugString("EntryPointExecCallback executed successfully.\n");
 	
 	return TRUE;
 }
