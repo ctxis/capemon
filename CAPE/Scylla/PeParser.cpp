@@ -5,7 +5,7 @@
 
 #pragma comment(lib, "Imagehlp.lib")
 
-#define DEBUG_COMMENTS
+//#define DEBUG_COMMENTS
 #define SIZE_LIMIT  0x1000000
 
 extern "C" void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
@@ -1478,121 +1478,6 @@ DWORD_PTR PeParser::convertOffsetToRVAVector(DWORD_PTR dwOffset)
 	return 0;
 }
 
-BOOL PeParser::reBasePEImage(DWORD_PTR NewBase)
-{
-	PIMAGE_RELOCATION    pR;
-	DWORD_PTR            dwDelta;
-	DWORD                *pdwAddr, dwRva, dwType;
-	UINT                 iItems, i;
-	WORD                 *pW;
-	PIMAGE_NT_HEADERS    pNT;
-
-	if (isPE32())    
-        pNT = (PIMAGE_NT_HEADERS)pNTHeader32;
-    else
-        pNT = (PIMAGE_NT_HEADERS)pNTHeader64;
-
-	// NewBase valid ?
-	if (NewBase & 0xFFFF)
-	{
-		DoOutputDebugString("reBasePEImage: Error, invalid image base 0x%p.\n", NewBase);
-        return FALSE;
-	}
-
-	if (pNT->OptionalHeader.ImageBase == NewBase)
-	{
-		DoOutputDebugString("reBasePEImage: Error, image base already 0x%p.\n", NewBase);
-        return FALSE;
-	}
-
-	if (!pNT->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress)
-	{
-		DoOutputDebugString("reBasePEImage: Image has no relocation sextion.\n");
-        return FALSE;
-	}
-
-	//pR = (PIMAGE_RELOCATION)ImageRvaToVa(
-	//	pNT,
-	//	pPE,
-	//	pNT->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress,
-	//	NULL);
-	pR = (PIMAGE_RELOCATION)(NewBase + pNT->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-#ifdef DEBUG_COMMENTS
-    DoOutputDebugString("reBasePEImage: pR set to 0x%p.\n", pR);
-#endif
-
-    pW = (WORD*)((DWORD_PTR)pR + 8);
-
-	// add delta to relocation items
-	dwDelta = NewBase - pNT->OptionalHeader.ImageBase;
-#ifdef DEBUG_COMMENTS
-    DoOutputDebugString("reBasePEImage: dwDelta set to 0x%x.\n", dwDelta);
-#endif
-
-	__try
-	{
-		do
-		{
-			// get number of items
-			if (pR->SymbolTableIndex)
-            {
-				iItems = (pR->SymbolTableIndex - 8) / 2;
-#ifdef DEBUG_COMMENTS
-                DoOutputDebugString("reBasePEImage: Items in block %d: %d.\n", *pW, iItems);
-#endif
-            }
-			else
-            {
-#ifdef DEBUG_COMMENTS
-                DoOutputDebugString("reBasePEImage: Block %d has no items.\n", *pW);
-#endif
-				break; // no items in this block
-            }
-
-			// trace/list block items...
-			pW = (WORD*)((DWORD_PTR)pR + 8);
-
-			for (i = 0; i < iItems; i++)
-			{
-				dwRva  = (*pW & 0xFFF) + pR->VirtualAddress;
-
-				if (!dwRva)
-                    return FALSE;
-
-                dwType = *pW >> 12;
-
-				if (dwType != 0) // fully compatible ???
-				{
-					// add delta
-					//pdwAddr = (PDWORD)ImageRvaToVa(
-					//	pNT,
-					//	pPE,
-					//	dwRva,
-					//	NULL);
-                    pdwAddr = (PDWORD)(NewBase + dwRva);
-					*pdwAddr += dwDelta;
-#ifdef DEBUG_COMMENTS
-                    DoOutputDebugString("reBasePEImage: Item %d pdwAddr 0x%p updated to 0x%p.\n", pW, pdwAddr, *pdwAddr);
-#endif                    
-				}
-				// next item
-				++pW;
-			}
-
-			pR = (PIMAGE_RELOCATION)pW; // pR -> next block header
-		} while ( *(DWORD*)pW );
-	}
-	__except(EXCEPTION_EXECUTE_HANDLER)
-	{
-		DoOutputDebugString("reBasePEImage: Exception rebasing image at 0x%p.\n", NewBase);
-        return FALSE;
-	}
-
-	pNT->OptionalHeader.ImageBase = NewBase;
-
-	return TRUE;
-}
-
 void PeParser::fixPeHeader()
 {
 	DWORD dwSize = pDosHeader->e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER);
@@ -1617,17 +1502,13 @@ void PeParser::fixPeHeader()
 
 		pNTHeader32->OptionalHeader.SizeOfHeaders = alignValue(dwSize + pNTHeader32->FileHeader.SizeOfOptionalHeader + (getNumberOfSections() * sizeof(IMAGE_SECTION_HEADER)), pNTHeader32->OptionalHeader.FileAlignment);
 
-		if (moduleBaseAddress && moduleBaseAddress != pNTHeader32->OptionalHeader.ImageBase)
-		{
-			if (reBasePEImage(moduleBaseAddress))
-            {
-#ifdef DEBUG_COMMENTS
-                DoOutputDebugString("fixPeHeader: Image relocated back to header image base 0x%p.\n", pNTHeader32->OptionalHeader.ImageBase);
-#endif
-            }
-            else
-                DoOutputDebugString("fixPeHeader: Failed to relocate image back to header image base 0x%p.\n", pNTHeader32->OptionalHeader.ImageBase);
-		}
+//		if (moduleBaseAddress && moduleBaseAddress != pNTHeader32->OptionalHeader.ImageBase)
+//		{
+//			pNTHeader32->OptionalHeader.ImageBase = (DWORD)moduleBaseAddress;
+//#ifdef DEBUG_COMMENTS
+//            DoOutputDebugString("fixPeHeader: ImageBase set to 0x%x.\n", pNTHeader32->OptionalHeader.ImageBase);
+//#endif
+//		}
 	}
 	else
 	{
