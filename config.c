@@ -26,8 +26,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern PVOID bp0, bp1, bp2, bp3;
 #ifdef CAPE_TRACE
+#define DoClearZeroFlag 1
+#define DoSetZeroFlag   2
 extern int TraceDepthLimit, EntryPointRegister;
-extern unsigned int StepLimit;
+extern unsigned int StepLimit, Action0, Action1, Action2, Action3;
+extern char *Instruction0, *Instruction1, *Instruction2, *Instruction3;
 #endif
 
 int read_config(void)
@@ -307,6 +310,34 @@ int read_config(void)
             else if (!strcmp(key, "count")) {
 				StepLimit = (unsigned int)strtoul(value, NULL, 10);
                 DoOutputDebugString("Trace instruction count set to 0x%x", StepLimit);
+			}
+            else if (!strcmp(key, "action0")) {
+				if (!strcmp(value, "ClearZeroFlag")){
+                    Action0 = DoClearZeroFlag;
+                    DoOutputDebugString("Action0 set to DoClearZeroFlag.");
+                }
+				else if (!strcmp(value, "SetZeroFlag")){
+                    Action0 = DoSetZeroFlag;
+                    DoOutputDebugString("Action0 set to DoSetZeroFlag.");
+                }
+			}
+            else if (!strcmp(key, "action1")) {
+				if (!strcmp(value, "ClearZeroFlag")){
+                    Action1 = DoClearZeroFlag;
+                    DoOutputDebugString("Action1 set to DoClearZeroFlag.");
+                }
+				else if (!strcmp(value, "SetZeroFlag")){
+                    Action1 = DoSetZeroFlag;
+                    DoOutputDebugString("Action1 set to DoSetZeroFlag.");
+                }
+			}
+            else if (!strcmp(key, "instruction0")) {
+                Instruction0 = value;
+                DoOutputDebugString("Instruction0 set to %s.", value);
+			}
+            else if (!strcmp(key, "break-on-return")) {
+				strncpy(g_config.break_on_return, value, ARRAYSIZE(g_config.break_on_return));
+                DoOutputDebugString("Break-on-return set to %s.", g_config.break_on_return);
 			}
 #endif
             else if (!strcmp(key, "procdump")) {

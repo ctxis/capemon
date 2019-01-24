@@ -45,6 +45,7 @@ extern PVOID GetHookCallerBase();
 extern BOOL ModuleDumped;
 #ifdef CAPE_TRACE
 extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+extern BOOL BreakpointOnReturn(PVOID Address);
 extern BOOL BreakpointsSet;
 #endif
 
@@ -185,6 +186,24 @@ void base_on_api(hook_t *h)
 
 	return;
 }
+
+void break_on_return(hook_t *h)
+{
+	hook_info_t *hookinfo = hook_info();
+
+    if (!g_config.break_on_return)
+        return;
+    if (!called_by_hook() && !stricmp(h->funcname, g_config.break_on_return)) {
+        DoOutputDebugString("Break-on-return: %s call detected in thread %d.\n", g_config.break_on_return, GetCurrentThreadId());
+        BOOL BreakpointsSet = BreakpointOnReturn((PVOID)hookinfo->return_address);
+        if (BreakpointsSet)
+            DoOutputDebugString("Break-on-return: Breakpoint set on return from %s.\n", g_config.break_on_return);
+        else
+            DoOutputDebugString("Break-on-return: Breakpoint set on return from %s.\n", g_config.break_on_return);
+    }
+
+	return;
+}
 #endif
 
 extern BOOLEAN is_ignored_thread(DWORD tid);
@@ -234,6 +253,7 @@ int WINAPI enter_hook(hook_t *h, ULONG_PTR sp, ULONG_PTR ebp_or_rip)
 #endif
 #ifdef CAPE_TRACE
 		base_on_api(h);
+		break_on_return(h);
 #endif
 
 		return 1;

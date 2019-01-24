@@ -116,6 +116,8 @@ struct _g_config {
 
     // should we terminate processes after dumping on terminate_event?
     int terminate_processes;
+
+    char break_on_return[MAX_PATH];
 };
 
 extern struct _g_config g_config;

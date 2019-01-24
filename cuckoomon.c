@@ -42,6 +42,9 @@ extern void init_CAPE();
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern LONG WINAPI CAPEExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo);
 extern ULONG_PTR base_of_dll_of_interest;
+#ifdef CAPE_TRACE
+extern BOOL SetInitialBreakpoints(PVOID ImageBase);
+#endif
 
 void disable_tail_call_optimization(void)
 {
@@ -622,6 +625,7 @@ static hook_t g_hooks[] = {
 	HOOK(advapi32, CryptCreateHash),
 	HOOK(advapi32, CryptEnumProvidersA),
 	HOOK(advapi32, CryptEnumProvidersW),
+	HOOK(advapi32, QueryUsersOnEncryptedFile),
 
 	HOOK(wintrust, HTTPSCertificateTrust),
 	HOOK(wintrust, HTTPSFinalProv),
@@ -648,6 +652,7 @@ static hook_t g_hooks[] = {
 	HOOK(cryptsp, CryptCreateHash),
 	HOOK(cryptsp, CryptEnumProvidersA),
 	HOOK(cryptsp, CryptEnumProvidersW),
+	HOOK(cryptsp, CryptHashSessionKey),
 };
 
 void set_hooks_dll(const wchar_t *library)

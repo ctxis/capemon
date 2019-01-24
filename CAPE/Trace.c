@@ -24,6 +24,9 @@ along with this program.If not, see <http://www.gnu.org/licenses/>.
 #define SINGLE_STEP_LIMIT 0x200  // default unless specified in web ui
 #define CHUNKSIZE 0x10 * MAX_INSTRUCTIONS
 
+#define DoClearZeroFlag 1
+#define DoSetZeroFlag   2
+
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...);
 extern int DumpModuleInCurrentProcess(LPVOID ModuleBase);
@@ -35,11 +38,12 @@ extern DWORD_PTR GetEntryPointVA(DWORD_PTR modBase);
 extern BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize);
 extern PCHAR ScyllaGetExportNameByAddress(PVOID Address, PCHAR* ModuleName);
 
-BOOL BreakpointsSet, ModuleNamePrinted;
+BOOL BreakpointsSet, ModuleNamePrinted, FilterTrace, TraceAll;
 PVOID ModuleBase, DumpAddress;
 SIZE_T DumpSize;
 BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped, TraceRunning;
-unsigned int DumpCount, Correction, StepCount, StepLimit, TraceDepthLimit;
+unsigned int DumpCount, Correction, StepCount, StepLimit, TraceDepthLimit, Action0, Action1, Action2, Action3;
+char *Instruction0, *Instruction1, *Instruction2, *Instruction3;
 int StepOverRegister, TraceDepthCount, EntryPointRegister;
 
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo);
@@ -74,8 +78,13 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     CIP = (PVOID)ExceptionInfo->ContextRecord->Eip;
     DecodeType = Decode32Bits;
 #endif
-    if (!is_in_dll_range((ULONG_PTR)CIP))
+    if (!is_in_dll_range((ULONG_PTR)CIP) || TraceAll)
+    {
+        FilterTrace = FALSE;
         StepCount++;
+    }
+    else
+        FilterTrace = TRUE;
 
     if (StepCount > StepLimit)
     {
@@ -94,9 +103,8 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
         StepOver = FALSE;
-        if (is_in_dll_range((ULONG_PTR)CIP)) {
+        if (FilterTrace)
             StepOver = TRUE;
-        }
         else if (DecodedInstruction.size > 4 && DecodedInstruction.operands.length && !strncmp(DecodedInstruction.operands.p, "DWORD", 5) && strncmp(DecodedInstruction.operands.p, "DWORD [E", 8))
         {
             PCHAR ExportName;
@@ -262,7 +270,7 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         else
             DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #ifdef BRANCH_TRACE
-        if (!is_in_dll_range((ULONG_PTR)CIP))
+        if (!FilterTrace)
             TraceDepthCount++;
 #else
         if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit || StepOver == TRUE)
@@ -279,13 +287,13 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
 
             return TRUE;
         }
-        else if (!is_in_dll_range((ULONG_PTR)CIP))
+        else if (!FilterTrace)
             TraceDepthCount++;
 #endif
     }
     else if (!strcmp(DecodedInstruction.mnemonic.p, "RET"))
     {
-        if (!is_in_dll_range((ULONG_PTR)CIP))
+        if (!FilterTrace)
             DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
         //if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
         //{
@@ -296,12 +304,28 @@ BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo)
         //    return TRUE;
         //}
 
-        else if (!is_in_dll_range((ULONG_PTR)CIP))
+        else if (!FilterTrace)
             TraceDepthCount--;
     }
-    else if (!is_in_dll_range((ULONG_PTR)CIP))
+    else if (!FilterTrace)
     {
         DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+    }
+
+    if (Instruction0 && !strcmp(DecodedInstruction.mnemonic.p, Instruction0))
+    {
+        if (Action0 == DoClearZeroFlag)
+        {
+            ClearZeroFlag(ExceptionInfo->ContextRecord);
+            DoOutputDebugString("Trace: %s detected, clearing zero flag.\n", Instruction0);
+        }
+        else if (Action0 == DoSetZeroFlag)
+        {
+            SetZeroFlag(ExceptionInfo->ContextRecord);
+            DoOutputDebugString("Trace: %s detected, setting zero flag.\n", Instruction0);
+        }
+        else
+            DoOutputDebugString("Trace: %s detected, doing nothing (Action = %d, DoClearZeroFlag = %d).\n", Instruction0, Action0, DoClearZeroFlag);
     }
 
     SetSingleStepMode(ExceptionInfo->ContextRecord, Trace);
@@ -340,6 +364,11 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     CIP = (PVOID)ExceptionInfo->ContextRecord->Eip;
     DecodeType = Decode32Bits;
 #endif
+    if (!is_in_dll_range((ULONG_PTR)CIP) || TraceAll)
+        FilterTrace = FALSE;
+    else
+        FilterTrace = TRUE;
+
     ModuleName = convert_address_to_dll_name_and_offset((ULONG_PTR)CIP, &DllRVA);
 
     if (!ModuleNamePrinted && ModuleName)
@@ -349,13 +378,13 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     }
 
     Result = distorm_decode(Offset, (const unsigned char*)CIP, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount);
-    if (!is_in_dll_range((ULONG_PTR)CIP))
+    if (!FilterTrace)
         DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", CIP, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 
     if (!strcmp(DecodedInstruction.mnemonic.p, "CALL"))
     {
 #ifdef BRANCH_TRACE
-        if (!is_in_dll_range((ULONG_PTR)CIP))
+        if (!FilterTrace)
             TraceDepthCount++;
 #else
         if ((unsigned int)abs(TraceDepthCount) >= TraceDepthLimit)
@@ -370,7 +399,7 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-        else if (!is_in_dll_range((ULONG_PTR)CIP))
+        else if (!FilterTrace)
             TraceDepthCount++;
 #endif
 }
@@ -384,7 +413,7 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
 
             return TRUE;
         }
-        else if (!is_in_dll_range((ULONG_PTR)CIP))
+        else if (!FilterTrace)
             TraceDepthCount--;
     }
 
@@ -395,6 +424,19 @@ BOOL BreakpointCallback(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POINT
     return TRUE;
 }
 
+BOOL BreakpointOnReturn(PVOID Address)
+{
+    unsigned int Register;
+    if (!SetNextAvailableBreakpoint(GetCurrentThreadId(), &Register, 0, Address, BP_EXEC, BreakpointCallback))
+    {
+        DoOutputDebugString("BreakpointOnReturn: failed to set breakpoint.\n");
+        return FALSE;
+    }
+    strncpy(g_config.break_on_return, "\0", 2);
+    DoOutputDebugString("BreakpointOnReturn: breakpoint set with register %d.", Register);
+    return TRUE;
+
+}
 BOOL SetInitialBreakpoints(PVOID ImageBase)
 {
     DWORD_PTR BreakpointVA;
@@ -403,10 +445,12 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     StepCount = 0;
     TraceDepthCount = 0;
 
+    TraceAll = FALSE;
+
     if (!StepLimit)
         StepLimit = SINGLE_STEP_LIMIT;
 
-	if (!bp0 && !bp1 && !bp2 && !bp3 && !EntryPointRegister)
+	if (!bp0 && !bp1 && !bp2 && !bp3 && !EntryPointRegister && !g_config.break_on_return)
 	{
 		DoOutputDebugString("SetInitialBreakpoints: No address specified for Trace breakpoints, defaulting to bp0 on entry point.\n");
 		EntryPointRegister = 1;
