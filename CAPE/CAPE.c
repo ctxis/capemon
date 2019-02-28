@@ -1148,7 +1148,7 @@ int ScanForDisguisedPE(LPVOID Buffer, unsigned int Size, LPVOID* Offset)
             if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
             {
                 DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
-                continue;
+                //continue;
             }
 
             if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
@@ -1225,7 +1225,7 @@ int IsDisguisedPE(LPVOID Buffer, unsigned int Size)
         if (!(pNtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) 
         {
             DoOutputDebugString("ScanForDisguisedPE: Characteristics bad.");
-            return 0;
+            //return 0;
         }
 
         if (pNtHeader->FileHeader.SizeOfOptionalHeader & (sizeof (ULONG_PTR) - 1)) 
