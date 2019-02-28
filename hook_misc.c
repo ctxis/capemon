@@ -1094,3 +1094,19 @@ HOOKDEF(void, WINAPIV, srand,
 
 	LOQ_void("misc", "h", "seed", seed);
 }
+
+#define MSGFLT_ADD 1
+#define MSGFLT_REMOVE 2
+HOOKDEF(BOOL, WINAPI, ChangeWindowMessageFilter,
+  UINT  message,
+  DWORD dwFlag
+)
+{
+	BOOL ret;
+    if (dwFlag != MSGFLT_REMOVE && dwFlag != MSGFLT_ADD)
+        ret = FALSE;
+    else
+        ret = Old_ChangeWindowMessageFilter(message, dwFlag);
+	LOQ_bool("misc", "ii", "message", message, "dwFlag", dwFlag);
+	return ret;
+}

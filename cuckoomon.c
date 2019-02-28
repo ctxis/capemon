@@ -359,6 +359,7 @@ static hook_t g_hooks[] = {
 	// for debugging only
 	//HOOK(kernel32, GetLastError),
 
+    HOOK(user32, ChangeWindowMessageFilter),
 	HOOK(user32, SetWindowsHookExA),
     HOOK(user32, SetWindowsHookExW),
     HOOK(user32, UnhookWindowsHookEx),

@@ -2822,3 +2822,8 @@ HOOKDEF(DWORD, WINAPI, QueryUsersOnEncryptedFile,
   LPCWSTR   lpFileName,
   PVOID     *pUsers
 );
+
+extern HOOKDEF(BOOL, WINAPI, ChangeWindowMessageFilter,
+  UINT  message,
+  DWORD dwFlag
+);
