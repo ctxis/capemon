@@ -32,12 +32,17 @@ extern char *convert_address_to_dll_name_and_offset(ULONG_PTR addr, unsigned int
 extern DWORD_PTR FileOffsetToVA(DWORD_PTR modBase, DWORD_PTR dwOffset);
 extern BOOL ScyllaGetSectionByName(PVOID ImageBase, char* Name, PVOID* SectionData, SIZE_T* SectionSize);
 
-BOOL BreakpointSet, DllPrinted;
+char *ModuleName, *PreviousModuleName;
+BOOL BreakpointsSet, BreakpointsHit, FilterTrace, TraceAll, StopTrace, DllPrinted;
 PVOID ModuleBase, DumpAddress;
-SIZE_T DumpSize;
-BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped;
-unsigned int DumpCount, Correction, StepCount, StepLimit;
-int StepOverRegister, TraceDepthCount, TraceDepthLimit;
+BOOL GetSystemTimeAsFileTimeImported, PayloadMarker, PayloadDumped, TraceRunning;
+unsigned int DumpCount, Correction, StepCount, StepLimit, TraceDepthLimit;
+char Action0[MAX_PATH], Action1[MAX_PATH], Action2[MAX_PATH], Action3[MAX_PATH], *Instruction0, *Instruction1, *Instruction2, *Instruction3;
+unsigned int Type0, Type1, Type2, Type3;
+int StepOverRegister, TraceDepthCount, EntryPointRegister;
+CONTEXT LastContext;
+SIZE_T DumpSize, LastWriteLength;
+char DumpSizeString[MAX_PATH], DebuggerBuffer[MAX_PATH];
 
 BOOL Trace(struct _EXCEPTION_POINTERS* ExceptionInfo);
 BOOL Trace2(struct _EXCEPTION_POINTERS* ExceptionInfo);
@@ -288,7 +293,7 @@ BOOL BreakpointCallback2(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
         
         DoOutputDebugString("Trace: CALL detected, grabbing size 0x%x and buffer 0x%x from stack.\n", DumpSize, DumpAddress);
         
-        if (DumpSize > 0x400)
+        if (DumpSize > 0x1000)
             DoOutputDebugString("Trace: Size too big, not the config.\n");
         else if (!ContextSetThreadBreakpoint(ExceptionInfo->ContextRecord, 2, 0, ((BYTE*)ExceptionInfo->ContextRecord->Eip)+5, BP_EXEC, BreakpointCallback3))
             DoOutputDebugString("Trace: failed to set breakpoint on call return at 0x%x", ((BYTE*)ExceptionInfo->ContextRecord->Eip)+5);
@@ -325,7 +330,7 @@ BOOL BreakpointCallback3(PBREAKPOINTINFO pBreakpointInfo, struct _EXCEPTION_POIN
 #else
     _DecodeType DecodeType = Decode32Bits;
     Result = distorm_decode(Offset, (const unsigned char*)ExceptionInfo->ContextRecord->Eip, CHUNKSIZE, DecodeType, &DecodedInstruction, 1, &DecodedInstructionsCount); 
-    DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
+    DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", ExceptionInfo->         ContextRecord->Eip, DecodedInstruction.size, (char*)DecodedInstruction.instructionHex.p, (char*)DecodedInstruction.mnemonic.p, DecodedInstruction.operands.length != 0 ? " " : "", (char*)DecodedInstruction.operands.p);
 #endif
     
     if (DumpSize && DumpAddress && DumpCount < 1)
@@ -366,7 +371,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     if (!StepLimit)
         StepLimit = SINGLE_STEP_LIMIT;
     
-	if (!bp0 && !bp1)// && !bp2 && !bp3)
+	if (!bp0 && !bp1 && !bp2)// && !bp3)
 	{
 		DoOutputDebugString("SetInitialBreakpoints: Error - No address specified for QakBot breakpoints.\n");
 		return FALSE;
@@ -381,7 +386,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
     else
         DoOutputDebugString("SetInitialBreakpoints: ImageBase set to 0x%p.\n", ImageBase);
     
-    BreakpointSet = FALSE;
+    BreakpointsSet = FALSE;
 
     if (bp0)
     {
@@ -395,7 +400,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
         _DecodeType DecodeType = Decode32Bits;
         Result = distorm_decode(Offset, (const unsigned char*)BreakpointVA, ChunkSize, DecodeType, DecodedInstructions, 1, &DecodedInstructionsCount); 
 
-        for (unsigned int i = 0; i < DecodedInstructionsCount; i++) 
+        for (unsigned int i = 0; i < DecodedInstructionsCount; i++)
         {
             DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", BreakpointVA + Delta, DecodedInstructions[i].size, (char*)DecodedInstructions[i].instructionHex.p, (char*)DecodedInstructions[i].mnemonic.p, DecodedInstructions[i].operands.length != 0 ? " " : "", (char*)DecodedInstructions[i].operands.p); 
         
@@ -404,7 +409,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
                 if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA + Delta, BP_EXEC, BreakpointCallback1))
                 {
                     DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on jle instruction at 0x%x.\n", Register, (BYTE*)BreakpointVA + Delta);
-                    BreakpointSet = TRUE;
+                    BreakpointsSet = TRUE;
                     break;
                 }
                 else
@@ -441,7 +446,7 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
                 if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA + Delta, BP_EXEC, BreakpointCallback2))
                 {
                     DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on call instruction at 0x%x.\n", Register, (BYTE*)BreakpointVA + Delta);
-                    BreakpointSet = TRUE;
+                    BreakpointsSet = TRUE;
                     break;
                 }
                 else
@@ -455,27 +460,45 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
         }
     }
     else
-        DoOutputDebugString("SetInitialBreakpoint: No breakpoint supplied for QakBot config dump.\n");
-/*
+        DoOutputDebugString("SetInitialBreakpoint: No breakpoint supplied for QakBot primary config dump.\n");
+
     if (bp2)
     {
+        Delta = 0;
         Register = 2;
+        BreakpointVA = FileOffsetToVA((DWORD_PTR)ImageBase, (DWORD_PTR)bp2);        
         
-        BreakpointVA = (DWORD_PTR)ImageBase + (DWORD_PTR)bp2;
+        ChunkSize = 0x80;    // Size of code to disassemble
+        memset(&DecodedInstructions, 0, sizeof(DecodedInstructions));
+        
+        _DecodeType DecodeType = Decode32Bits;
+        Result = distorm_decode(Offset, (const unsigned char*)BreakpointVA, ChunkSize, DecodeType, DecodedInstructions, 1, &DecodedInstructionsCount); 
 
-        if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
+        for (unsigned int i = 0; i < DecodedInstructionsCount; i++) 
         {
-            DoOutputDebugString("SetInitialBreakpoints: Breakpoint %d set on address 0x%p (RVA 0x%x)\n", Register, BreakpointVA, bp2);
-            BreakpointSet = TRUE;
-        }
-        else
-        {
-            DoOutputDebugString("SetInitialBreakpoints: SetBreakpoint failed.\n");
-            BreakpointSet = FALSE;
-            return FALSE;
+            DoOutputDebugString("0x%x (%02d) %-24s %s%s%s\n", BreakpointVA + Delta, DecodedInstructions[i].size, (char*)DecodedInstructions[i].instructionHex.p, (char*)DecodedInstructions[i].mnemonic.p, DecodedInstructions[i].operands.length != 0 ? " " : "", (char*)DecodedInstructions[i].operands.p); 
+        
+            if (!strcmp(DecodedInstructions[i].mnemonic.p, "CALL"))
+            {
+                if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA + Delta, BP_EXEC, BreakpointCallback2))
+                {
+                    DoOutputDebugString("SetInitialBreakpoint: Breakpoint %d set on call instruction at 0x%x.\n", Register, (BYTE*)BreakpointVA + Delta);
+                    BreakpointsSet = TRUE;
+                    break;
+                }
+                else
+                {
+                    DoOutputDebugString("SetInitialBreakpoint: SetBreakpoint failed #2.\n");
+                    return FALSE;
+                }
+            }
+            
+            Delta += DecodedInstructions[i].size;
         }
     }
-
+    else
+        DoOutputDebugString("SetInitialBreakpoint: No breakpoint supplied for QakBot secondary config dump.\n");
+/*
     if (bp3)
     {
         Register = 3;
@@ -485,15 +508,15 @@ BOOL SetInitialBreakpoints(PVOID ImageBase)
         if (SetBreakpoint(Register, 0, (BYTE*)BreakpointVA, BP_EXEC, BreakpointCallback))
         {
             DoOutputDebugString("SetInitialBreakpoints: Breakpoint %d set on address 0x%p (RVA 0x%x)\n", Register, BreakpointVA, bp3);
-            BreakpointSet = TRUE;
+            BreakpointsSet = TRUE;
         }
         else
         {
             DoOutputDebugString("SetInitialBreakpoints: SetBreakpoint failed.\n");
-            BreakpointSet = FALSE;
+            BreakpointsSet = FALSE;
             return FALSE;
         }
     }
 */    
-    return BreakpointSet;
+    return BreakpointsSet;
 }

@@ -25,7 +25,9 @@ extern CHAR s_szDllPath[MAX_PATH];
 PVOID GetHookCallerBase();
 PVOID GetPageAddress(PVOID Address);
 PVOID GetAllocationBase(PVOID Address);
+BOOL InsideMonitor(LPVOID* ReturnAddress, LPVOID Address);
 BOOL TranslatePathFromDeviceToLetter(__in TCHAR *DeviceFilePath, __out TCHAR* DriveLetterFilePath, __inout LPDWORD lpdwBufferSize);
+void PrintHexBytes(__in char* TextBuffer, __in BYTE* HexBuffer, __in unsigned int Count);
 BOOL DumpPEsInRange(LPVOID Buffer, SIZE_T Size);
 BOOL DumpRegion(PVOID Address);
 int DumpMemory(LPVOID Buffer, SIZE_T Size);
@@ -112,7 +114,7 @@ struct InjectionSectionView *SectionViewList;
 
 #define PLUGX_SIGNATURE		0x5658	// 'XV'
 
-typedef struct CapeMetadata 
+typedef struct CapeMetadata
 {
 	char*	ProcessPath;
 	char*	ModulePath;
@@ -130,27 +132,27 @@ BOOL SetCapeMetaData(DWORD DumpType, DWORD TargetPid, HANDLE hTargetProcess, PVO
 
 enum {
     PROCDUMP                = 0,
-    
+
     COMPRESSION             = 1,
-    
+
     INJECTION_PE            = 3,
     INJECTION_SHELLCODE     = 4,
     //INJECTION_RUNPE         = 5,
 
     EXTRACTION_PE           = 8,
     EXTRACTION_SHELLCODE    = 9,
-    
+
     PLUGX_PAYLOAD           = 0x10,
     PLUGX_CONFIG            = 0x11,
-    
+
     EVILGRAB_PAYLOAD        = 0x14,
     EVILGRAB_DATA           = 0x15,
-    
+
     SEDRECO_DATA            = 0x20,
-    
+
     URSNIF_CONFIG           = 0x24,
     URSNIF_PAYLOAD          = 0x25,
-	
+
     CERBER_CONFIG           = 0x30,
     CERBER_PAYLOAD          = 0x31,
 

@@ -64,6 +64,10 @@ HOOKDEF(LONG, WINAPI, RegOpenKeyExA,
 				break;
 			}
 		}
+
+		// fake some values
+		if (lpSubKey && !g_config.no_stealth)
+			perform_ascii_registry_fakery(keypath, (LPVOID)lpSubKey, (ULONG)strlen(lpSubKey));
 		free(keybuf);
     }
 
@@ -113,6 +117,10 @@ HOOKDEF(LONG, WINAPI, RegOpenKeyExW,
 				break;
 			}
 		}
+
+		// fake some values
+		if (lpSubKey && !g_config.no_stealth)
+			perform_unicode_registry_fakery(keypath, lpSubKey, (ULONG)wcslen(lpSubKey));
 		free(keybuf);
 	}
 
@@ -255,13 +263,14 @@ HOOKDEF(LONG, WINAPI, RegEnumKeyW,
 		wchar_t *parent_keys[] = {
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\DSDT",
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\FADT",
-			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\RSDT",
+			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\RSDT"
+			L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum\\IDE"
 		};
 
 		wchar_t *replace_subkeys[] = {
 			L"VBOX__", L"DELL__",
-			L"VBOX__", L"DELL__",
-			L"VBOX__", L"DELL__"
+			L"VMware_", L"Dell_",
+			L"VMWar_", L"Dell_",
 		};
 
 		for (i = 0, j = 0; i < _countof(parent_keys); i += 1, j += 2) {
@@ -303,12 +312,13 @@ HOOKDEF(LONG, WINAPI, RegEnumKeyExA,
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\DSDT",
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\FADT",
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\RSDT"
+			L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum\\IDE"
 		};
 
 		char *replace_subkeys[] = {
 			"VBOX__", "DELL__",
-			"VBOX__", "DELL__",
-			"VBOX__", "DELL__"
+			"VMware_", "Dell_",
+			"VMWar_", "Dell_",
 		};
 
 		for (i = 0, j = 0; i < _countof(parent_keys); i += 1, j += 2) {
@@ -317,6 +327,10 @@ HOOKDEF(LONG, WINAPI, RegEnumKeyExA,
 				break;
 			}
 		}
+
+		// fake some values
+		if (lpName && !g_config.no_stealth)
+			perform_ascii_registry_fakery(keypath, lpName, (ULONG)strlen(lpName));
 		free(keybuf);
 	}
 
@@ -348,13 +362,13 @@ HOOKDEF(LONG, WINAPI, RegEnumKeyExW,
 		wchar_t *parent_keys[] = {
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\DSDT",
 			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\FADT",
-			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\RSDT",
+			L"HKEY_LOCAL_MACHINE\\HARDWARE\\ACPI\\RSDT"
 		};
 
 		wchar_t *replace_subkeys[] = {
 			L"VBOX__", L"DELL__",
-			L"VBOX__", L"DELL__",
-			L"VBOX__", L"DELL__"
+			L"VMware_", L"Dell_",
+			L"VMWar_", L"Dell_",
 		};
 
 		for (i = 0, j = 0; i < _countof(parent_keys); i += 1, j += 2) {
@@ -363,6 +377,10 @@ HOOKDEF(LONG, WINAPI, RegEnumKeyExW,
 				break;
 			}
 		}
+
+		// fake some values
+		if (lpName && !g_config.no_stealth)
+			perform_unicode_registry_fakery(keypath, lpName, (ULONG)wcslen(lpName));
 		free(keybuf);
 	}
 
@@ -489,14 +507,14 @@ HOOKDEF(LONG, WINAPI, RegQueryValueExA,
 		PKEY_NAME_INFORMATION keybuf = malloc(allocsize);
 		wchar_t *keypath = get_full_keyvalue_pathA(hKey, lpValueName, keybuf, allocsize);
 
+		// fake some values
+		if (lpData && !g_config.no_stealth)
+			perform_ascii_registry_fakery(keypath, lpData, *lpcbData);
+		free(keybuf);
+
 		LOQ_zero("registry", "psru", "Handle", hKey, "ValueName", lpValueName,
 			"Data", *lpType, *lpcbData, lpData,
 			"FullName", keypath);
-
-		// fake some values
-		if (!g_config.no_stealth)
-			perform_ascii_registry_fakery(keypath, lpData, *lpcbData);
-		free(keybuf);
 	}
     else if (ret == ERROR_MORE_DATA) {
         LOQ_zero("registry", "psPIv", "Handle", hKey, "ValueName", lpValueName,
@@ -533,7 +551,7 @@ HOOKDEF(LONG, WINAPI, RegQueryValueExW,
 			"FullName", keypath);
 
         // fake some values
-		if (!g_config.no_stealth)
+		if (lpData && !g_config.no_stealth)
 			perform_unicode_registry_fakery(keypath, lpData, *lpcbData);
 		free(keybuf);
 	}

@@ -30,8 +30,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
 extern void file_handle_terminate();
-extern int RoutineProcessDump();
+extern int DoProcessDump(PVOID CallerBase);
 extern BOOL ProcessDumped;
+#ifdef CAPE_TRACE
+extern BOOL StopTrace;
+#endif
 
 static HANDLE g_unhook_thread_handle, g_watcher_thread_handle;
 
@@ -254,18 +257,42 @@ static DWORD WINAPI _terminate_event_thread(LPVOID param)
 {
 	hook_disable();
 
-	while (1) {
-		WaitForSingleObject(g_terminate_event_handle, INFINITE);
-        if (g_config.procdump && !ProcessDumped)
-        {
-            DoOutputDebugString("Terminate Event: Attempting to dump process %d\n", GetCurrentProcessId());
-            RoutineProcessDump();
-        }
-        file_handle_terminate();
-		log_flush();
-	}
+    DWORD ProcessId = GetCurrentProcessId();
 
-	return 0;
+    WaitForSingleObject(g_terminate_event_handle, INFINITE);
+
+    CloseHandle(g_terminate_event_handle);
+
+    if (g_config.procdump) {
+        if (!ProcessDumped) {
+            DoOutputDebugString("Terminate Event: Attempting to dump process %d\n", ProcessId);
+            DoProcessDump(NULL);
+        }
+        else
+            DoOutputDebugString("Terminate Event: Process %d has already been dumped(!)\n", ProcessId);
+    }
+#ifdef CAPE_EXTRACTION
+    DoOutputDebugString("Terminate Event: Processing tracked regions before shutdown (process %d).\n", ProcessId);
+    ProcessTrackedRegions();
+    ClearAllBreakpoints();
+#else
+    else
+        DoOutputDebugString("Terminate Event: Skipping dump of process %d\n", ProcessId);
+#endif
+#ifdef CAPE_TRACE
+    StopTrace = TRUE;
+#endif
+    file_handle_terminate();
+    g_terminate_event_handle = OpenEventA(EVENT_MODIFY_STATE, FALSE, g_config.terminate_event_name);
+    if (g_terminate_event_handle) {
+        SetEvent(g_terminate_event_handle);
+        CloseHandle(g_terminate_event_handle);
+    }
+    DoOutputDebugString("Terminate Event: CAPE shutdown complete for process %d\n", ProcessId);
+    log_flush();
+    if (g_config.terminate_processes)
+        ExitProcess(0);
+    return 0;
 }
 
 DWORD g_terminate_event_thread_id;
@@ -344,7 +371,7 @@ int procname_watch_init()
 	if (g_procname_watch_thread_handle != NULL)
 		return 0;
 
-	pipe("CRITICAL:Error initializing terminate event thread!");
+	pipe("CRITICAL:Error initializing procname watch thread!");
 	return -1;
 }
 

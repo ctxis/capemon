@@ -880,6 +880,11 @@ extern HOOKDEF(NTSTATUS, WINAPI, NtOpenMutant,
     __in        POBJECT_ATTRIBUTES ObjectAttributes
 );
 
+extern HOOKDEF(NTSTATUS, WINAPI, NtReleaseMutant,
+    __in        HANDLE MutantHandle,
+    __out_opt   PLONG PreviousCount
+);
+
 extern HOOKDEF(NTSTATUS, WINAPI, NtCreateEvent,
 	__out		PHANDLE EventHandle,
 	__in		ACCESS_MASK DesiredAccess,
@@ -959,6 +964,16 @@ extern HOOKDEF(BOOL, WINAPI, Process32FirstW,
 extern HOOKDEF(BOOL, WINAPI, Process32NextW,
 	__in HANDLE hSnapshot,
 	__out LPPROCESSENTRY32W lppe
+);
+
+extern HOOKDEF(BOOL, WINAPI, Module32FirstW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
+);
+
+extern HOOKDEF(BOOL, WINAPI, Module32NextW,
+	__in HANDLE hSnapshot,
+	__out LPMODULEENTRY32W lpme
 );
 
 extern HOOKDEF(NTSTATUS, WINAPI, NtCreateProcess,
@@ -1086,7 +1101,7 @@ extern HOOKDEF(NTSTATUS, WINAPI, DbgUiWaitStateChange,
 	__in_opt PLARGE_INTEGER Timeout
 );
 
-extern HOOKDEF_NOTAIL(WINAPI, RtlDispatchException,
+extern HOOKDEF(BOOLEAN, WINAPI, RtlDispatchException,
 	__in PEXCEPTION_RECORD ExceptionRecord,
 	__in PCONTEXT Context
 );
@@ -2782,6 +2797,23 @@ extern HOOKDEF(BOOL, WINAPI, CryptImportPublicKeyInfo,
 	_Out_ HCRYPTKEY             *phKey
 );
 
+extern HOOKDEF(BOOL, WINAPI, CryptHashSessionKey,
+    _In_     HCRYPTHASH hHash,
+    _In_     HCRYPTKEY hKey,
+    _In_     DWORD dwFlags
+);
+
+extern HOOKDEF(DWORD, WINAPI, QueryUsersOnEncryptedFile,
+  LPCWSTR   lpFileName,
+  PVOID     *pUsers
+);
+
+extern HOOKDEF(BOOL, WINAPI, CryptGenRandom,
+    HCRYPTPROV hProv,
+    DWORD      dwLen,
+    BYTE       *pbBuffer
+);
+
 //
 // Special Hooks
 //
@@ -2894,16 +2926,18 @@ extern HOOKDEF(int, WINAPI, lstrcmpiA,
   _In_  LPCSTR   lpString2
 );
 
-extern HOOKDEF(HRSRC, WINAPI, FindResourceA,
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExA,
   HMODULE hModule,
+  LPCSTR lpType,
   LPCSTR lpName,
-  LPCSTR lpType
+  WORD wLanguage
 );
 
-extern HOOKDEF(HRSRC, WINAPI, FindResourceW,
+extern HOOKDEF(HRSRC, WINAPI, FindResourceExW,
   HMODULE hModule,
+  LPCWSTR lpType,
   LPCWSTR lpName,
-  LPCWSTR lpType
+  WORD wLanguage
 );
 
 extern HOOKDEF(HGLOBAL, WINAPI, LoadResource,
@@ -2918,4 +2952,119 @@ extern HOOKDEF(LPVOID, WINAPI, LockResource,
 extern HOOKDEF(DWORD, WINAPI, SizeofResource,
     _In_opt_ HMODULE hModule,
     _In_     HRSRC   hResInfo
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExA,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumResourceTypesExW,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoA,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumCalendarInfoW,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsA,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(BOOL, WINAPI, EnumTimeFormatsW,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCreateTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle,
+  ULONG              CreateOptions,
+  ULONG              IsolationLevel,
+  ULONG              IsolationFlags,
+  PLARGE_INTEGER     Timeout,
+  PUNICODE_STRING    Description
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtOpenTransaction,
+  PHANDLE            TransactionHandle,
+  ACCESS_MASK        DesiredAccess,
+  POBJECT_ATTRIBUTES ObjectAttributes,
+  LPGUID             Uow,
+  HANDLE             TmHandle
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtRollbackTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtCommitTransaction,
+  HANDLE  TransactionHandle,
+  BOOLEAN Wait
+);
+
+extern HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
+    _In_ HANDLE     TransactionHandle
+);
+
+extern HOOKDEF(NTSTATUS, WINAPI, NtYieldExecution,
+    VOID
+);
+
+extern HOOKDEF(HRESULT, WINAPI, OleConvertOLESTREAMToIStorage,
+    IN LPOLESTREAM          lpolestream,
+    OUT LPSTORAGE           pstg,
+    IN const DVTARGETDEVICE *ptd
+);
+
+extern HOOKDEF(BOOL, WINAPI, ChangeWindowMessageFilter,
+	UINT  message,
+	DWORD dwFlag
+);
+
+extern HOOKDEF(LPWSTR, WINAPI, rtcEnvironBstr,
+	struct envstruct *es
+);
+
+extern HOOKDEF(BOOL, WINAPI, CryptImportKey,
+    HCRYPTPROV hProv,
+    const BYTE *pbData,
+    DWORD      dwDataLen,
+    HCRYPTKEY  hPubKey,
+    DWORD      dwFlags,
+    HCRYPTKEY  *phKey
+);
+
+extern HOOKDEF(HANDLE, WINAPI, HeapCreate,
+  _In_ DWORD  flOptions,
+  _In_ SIZE_T dwInitialSize,
+  _In_ SIZE_T dwMaximumSize
+);
+
+extern HOOKDEF(HKL, WINAPI, GetKeyboardLayout,
+  _In_ DWORD idThread
 );

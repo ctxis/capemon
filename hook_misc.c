@@ -62,7 +62,7 @@ HOOKDEF(HHOOK, WINAPI, SetWindowsHookExW,
 ) {
 
 	HHOOK ret;
-	
+
 	if (hMod && lpfn && dwThreadId) {
 		DWORD pid = get_pid_by_tid(dwThreadId);
 		if (pid && pid != GetCurrentProcessId())
@@ -172,14 +172,14 @@ HOOKDEF(NTSTATUS, WINAPI, LdrGetProcedureAddress,
 	if (FunctionName != NULL && FunctionName->Length == 13 && FunctionName->Buffer != NULL &&
 		(!strncmp(FunctionName->Buffer, "EncodePointer", 13) || !strncmp(FunctionName->Buffer, "DecodePointer", 13)))
 		return ret;
-    
+
     LOQ_ntstatus("system", "opSiP", "ModuleName", get_basename_of_module(ModuleHandle), "ModuleHandle", ModuleHandle,
         "FunctionName", FunctionName != NULL ? FunctionName->Length : 0,
             FunctionName != NULL ? FunctionName->Buffer : NULL,
         "Ordinal", Ordinal, "FunctionAddress", FunctionAddress);
 
 	if (hook_info()->main_caller_retaddr && g_config.first_process && FunctionName != NULL && (ret == 0xc000007a || ret == 0xc0000139) && FunctionName->Length == 7 &&
-		!strncmp(FunctionName->Buffer, "DllMain", 7) && wcsicmp(our_process_path, g_config.file_of_interest)) {
+		!strncmp(FunctionName->Buffer, "DllMain", 7) && wcsicmp(our_process_path_w, g_config.file_of_interest)) {
 		log_flush();
 		ExitThread(0);
 	}
@@ -199,7 +199,7 @@ HOOKDEF(BOOL, WINAPI, DeviceIoControl,
 ) {
 	BOOL ret;
 	ENSURE_DWORD(lpBytesReturned);
-	
+
 	ret = Old_DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer,
 		nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned,
 		lpOverlapped);
@@ -593,6 +593,7 @@ HOOKDEF(SHORT, WINAPI, GetAsyncKeyState,
 	return ret;
 }
 
+#ifndef CAPE_COMPRESSION
 HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 	__in USHORT CompressionFormat,
 	__out PUCHAR UncompressedBuffer,
@@ -615,6 +616,7 @@ HOOKDEF(NTSTATUS, WINAPI, RtlDecompressBuffer,
 
 	return ret;
 }
+#endif
 
 HOOKDEF(NTSTATUS, WINAPI, RtlCompressBuffer,
 	_In_  USHORT CompressionFormatAndEngine,
@@ -840,7 +842,7 @@ HOOKDEF(HDEVINFO, WINAPI, SetupDiGetClassDevsW,
 			LOQ_handle("misc", "ss", "ClassGuid", idbuf, "Known", known);
 		else
 			LOQ_handle("misc", "s", "ClassGuid", idbuf);
-            
+
         set_lasterrors(&lasterror);
 	}
 	return ret;
@@ -1095,15 +1097,15 @@ HOOKDEF(void, WINAPIV, memcpy,
    void *dest,
    const void *src,
    size_t count
-) 
+)
 {
 	int ret = 0;	// needed for LOQ_void
 
 	Old_memcpy(dest, src, count);
-	
+
     if (count > 0xa00)
         LOQ_void("misc", "bppi", "DestinationBuffer", count, dest, "source", src, "destination", dest, "count", count);
-	
+
 	return;
 }
 
@@ -1147,33 +1149,59 @@ HOOKDEF(int, WINAPI, lstrcmpiA,
     return ret;
 }
 
-HOOKDEF(HRSRC, WINAPI, FindResourceA,
-  HMODULE hModule,
-  LPCSTR lpName,
-  LPCSTR lpType
+HOOKDEF(HRSRC, WINAPI, FindResourceExA,
+    HMODULE hModule,
+    LPCSTR lpType,
+    LPCSTR lpName,
+    WORD wLanguage
 )
 {
-    HRSRC ret = Old_FindResourceA(hModule, lpName, lpType);
+    HRSRC ret = Old_FindResourceExA(hModule, lpType, lpName, wLanguage);
 
-    LOQ_handle("misc", "ps", "Module", hModule, "Name", lpName);
+    char type_id[8];
+    if (IS_INTRESOURCE(lpType)) {
+        snprintf(type_id, sizeof type_id, "#%hu", (WORD)lpType);
+        lpType = type_id;
+    }
+
+    char name_id[8];
+    if (IS_INTRESOURCE(lpName)) {
+        snprintf(name_id, sizeof name_id, "#%hu", (WORD)lpName);
+        lpName = name_id;
+    }
+
+    LOQ_handle("misc", "pssh", "Module", hModule, "Type", lpType, "Name", lpName, "Language", wLanguage);
 
     return ret;
 }
 
- HOOKDEF(HRSRC, WINAPI, FindResourceW,
-  HMODULE hModule,
-  LPCWSTR lpName,
-  LPCWSTR lpType
+HOOKDEF(HRSRC, WINAPI, FindResourceExW,
+    HMODULE hModule,
+    LPCWSTR lpType,
+    LPCWSTR lpName,
+    WORD wLanguage
 )
 {
-    HRSRC ret = Old_FindResourceW(hModule, lpName, lpType);
+    HRSRC ret = Old_FindResourceExW(hModule, lpType, lpName, wLanguage);
 
-    LOQ_handle("misc", "pu", "Module", hModule, "Name", lpName);
+    wchar_t type_id[8];
+    if (IS_INTRESOURCE(lpType)) {
+        swprintf(type_id, sizeof type_id, L"#%hu", (WORD)lpType);
+        lpType = type_id;
+    }
+
+    wchar_t name_id[8];
+    if (IS_INTRESOURCE(lpName)) {
+        swprintf(name_id, sizeof name_id, L"#%hu", (WORD)lpName);
+        lpName = name_id;
+    }
+
+    LOQ_handle("misc", "puuh", "Module", hModule, "Type", lpType, "Name", lpName, "Language", wLanguage);
 
     return ret;
 }
 
- HOOKDEF(HGLOBAL, WINAPI, LoadResource,
+HOOKDEF(HGLOBAL, WINAPI, LoadResource,
   _In_opt_ HMODULE hModule,
   _In_     HRSRC   hResInfo
 )
@@ -1205,5 +1233,296 @@ HOOKDEF(DWORD, WINAPI, SizeofResource,
 
 	LOQ_nonzero("misc", "pp", "ModuleHandle", hModule, "ResourceInfo", hResInfo);
 
+    return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, EnumResourceTypesExA,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "ppphh",
+		"ModuleHandle", hModule,
+		"EnumFunc", lpEnumFunc,
+		"Parameter", lParam,
+		"Flags", dwFlags,
+		"LangId", LangId
+	);
+	return Old_EnumResourceTypesExA(hModule, lpEnumFunc, lParam, dwFlags, LangId);;
+}
+
+HOOKDEF(BOOL, WINAPI, EnumResourceTypesExW,
+	_In_opt_ HMODULE         hModule,
+	_In_     ENUMRESTYPEPROC lpEnumFunc,
+	_In_     LONG_PTR        lParam,
+	_In_     DWORD           dwFlags,
+	_In_     LANGID          LangId
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "ppphh",
+		"ModuleHandle", hModule,
+		"EnumFunc", lpEnumFunc,
+		"Parameter", lParam,
+		"Flags", dwFlags,
+		"LangId", LangId
+	);
+	return Old_EnumResourceTypesExW(hModule, lpEnumFunc, lParam, dwFlags, LangId);;
+}
+
+HOOKDEF(BOOL, WINAPI, EnumCalendarInfoA,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "phhh",
+		"CalInfoEnumProc", lpCalInfoEnumProc,
+		"Locale", Locale,
+		"Calendar", Calendar,
+		"CalType", CalType
+	);
+	return Old_EnumCalendarInfoA(lpCalInfoEnumProc, Locale, Calendar, CalType);
+}
+
+HOOKDEF(BOOL, WINAPI, EnumCalendarInfoW,
+	CALINFO_ENUMPROCA lpCalInfoEnumProc,
+	LCID              Locale,
+	CALID             Calendar,
+	CALTYPE           CalType
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "phhh",
+		"CalInfoEnumProc", lpCalInfoEnumProc,
+		"Locale", Locale,
+		"Calendar", Calendar,
+		"CalType", CalType
+	);
+	return Old_EnumCalendarInfoW(lpCalInfoEnumProc, Locale, Calendar, CalType);
+}
+
+HOOKDEF(BOOL, WINAPI, EnumTimeFormatsA,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "phh",
+		"TimeFmtEnumProc", lpTimeFmtEnumProc,
+		"Locale", Locale,
+		"Flags", dwFlags
+	);
+	return Old_EnumTimeFormatsA(lpTimeFmtEnumProc, Locale, dwFlags);
+}
+
+HOOKDEF(BOOL, WINAPI, EnumTimeFormatsW,
+	TIMEFMT_ENUMPROCA lpTimeFmtEnumProc,
+	LCID              Locale,
+	DWORD             dwFlags
+) {
+	BOOL ret = TRUE;
+	LOQ_bool("misc", "phh",
+		"TimeFmtEnumProc", lpTimeFmtEnumProc,
+		"Locale", Locale,
+		"Flags", dwFlags
+	);
+	return Old_EnumTimeFormatsW(lpTimeFmtEnumProc, Locale, dwFlags);
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtCreateTransaction,
+	PHANDLE            TransactionHandle,
+	ACCESS_MASK        DesiredAccess,
+	POBJECT_ATTRIBUTES ObjectAttributes,
+	LPGUID             Uow,
+	HANDLE             TmHandle,
+	ULONG              CreateOptions,
+	ULONG              IsolationLevel,
+	ULONG              IsolationFlags,
+	PLARGE_INTEGER     Timeout,
+	PUNICODE_STRING    Description
+) {
+	NTSTATUS ret = Old_NtCreateTransaction(TransactionHandle, DesiredAccess, ObjectAttributes, Uow, TmHandle, CreateOptions, IsolationLevel, IsolationFlags, Timeout, Description);
+	LOQ_ntstatus("misc", "PhObphhhio",
+		"TransactionHandle", TransactionHandle,
+		"DesiredAccess", DesiredAccess,
+		"ObjectAttributes", ObjectAttributes,
+		"UnitOfWork", sizeof (GUID), Uow,
+		"TmHandle", TmHandle,
+		"CreateOptions", CreateOptions,
+		"IsolationLevel", IsolationLevel,
+		"IsolationFlags", IsolationFlags,
+		"Timeout", Timeout,
+		"Description", Description
+	);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtOpenTransaction,
+	PHANDLE            TransactionHandle,
+	ACCESS_MASK        DesiredAccess,
+	POBJECT_ATTRIBUTES ObjectAttributes,
+	LPGUID             Uow,
+	HANDLE             TmHandle
+) {
+	NTSTATUS ret = Old_NtOpenTransaction(TransactionHandle, DesiredAccess, ObjectAttributes, Uow, TmHandle);
+	LOQ_ntstatus("misc", "PhObp",
+		"TransactionHandle", TransactionHandle,
+		"DesiredAccess", DesiredAccess,
+		"ObjectAttributes", ObjectAttributes,
+		"UnitOfWork", sizeof (GUID), Uow,
+		"TmHandle", TmHandle
+	);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtRollbackTransaction,
+	HANDLE  TransactionHandle,
+	BOOLEAN Wait
+) {
+	NTSTATUS ret = Old_NtRollbackTransaction(TransactionHandle, Wait);
+	LOQ_ntstatus("misc", "pi", "TransactionHandle", TransactionHandle, "Wait", Wait);
+	return ret;
+}
+
+HOOKDEF(NTSTATUS, WINAPI, NtCommitTransaction,
+	HANDLE  TransactionHandle,
+	BOOLEAN Wait
+) {
+	NTSTATUS ret = Old_NtCommitTransaction(TransactionHandle, Wait);
+	LOQ_ntstatus("misc", "pi", "TransactionHandle", TransactionHandle, "Wait", Wait);
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, RtlSetCurrentTransaction,
+	_In_ HANDLE     TransactionHandle
+) {
+	BOOL ret = Old_RtlSetCurrentTransaction(TransactionHandle);
+	LOQ_bool("misc", "p", "TransactionHandle", TransactionHandle);
+	return ret;
+}
+
+HOOKDEF(HRESULT, WINAPI, OleConvertOLESTREAMToIStorage,
+    IN LPOLESTREAM          lpolestream,
+    OUT LPSTORAGE           pstg,
+    IN const DVTARGETDEVICE *ptd
+) {
+    void *buf = NULL; uintptr_t len = 0;
+
+    HRESULT ret = Old_OleConvertOLESTREAMToIStorage(lpolestream, pstg, ptd);
+
+#ifndef _WIN64
+    if (lpolestream != NULL) {
+        buf = (PVOID)*((uint8_t *) lpolestream + 8);
+        len = *((uint8_t *) lpolestream + 12);
+    }
+#endif
+
+	LOQ_bool("misc", "b", "OLE2", len, buf);
+	return ret;
+}
+
+HOOKDEF(HANDLE, WINAPI, HeapCreate,
+  _In_ DWORD  flOptions,
+  _In_ SIZE_T dwInitialSize,
+  _In_ SIZE_T dwMaximumSize
+)
+{
+    HANDLE ret;
+    ret = Old_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
+    LOQ_nonnull("misc", "ihh", "Options", flOptions, "InitialSize", dwInitialSize, "MaximumSize", dwMaximumSize);
+    return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsAlloc,
+	_In_ PFLS_CALLBACK_FUNCTION lpCallback
+) {
+	BOOL ret = Old_FlsAlloc(lpCallback);
+	LOQ_bool("misc", "p", "Callback", lpCallback);
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsSetValue,
+	_In_     DWORD dwFlsIndex,
+	_In_opt_ PVOID lpFlsData
+) {
+	BOOL ret = Old_FlsSetValue(dwFlsIndex, lpFlsData);
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex, "Data", lpFlsData);
+	return ret;
+}
+
+
+HOOKDEF(PVOID, WINAPI, FlsGetValue,
+	_In_     DWORD dwFlsIndex
+) {
+	PVOID ret = Old_FlsGetValue(dwFlsIndex);
+	LOQ_nonnull("misc", "ip", "Index", dwFlsIndex, "ReturnValue", ret);
+	return ret;
+}
+
+HOOKDEF(BOOL, WINAPI, FlsFree,
+	_In_     DWORD dwFlsIndex
+) {
+	BOOL ret = Old_FlsFree(dwFlsIndex);
+	LOQ_bool("misc", "ip", "Index", dwFlsIndex);
+	return ret;
+}
+
+
+HOOKDEF(PVOID, WINAPI, LocalAlloc,
+	_In_ UINT uFlags,
+	_In_ SIZE_T uBytes)
+{
+	PVOID ret = Old_LocalAlloc(uFlags, uBytes);
+	LOQ_nonnull("misc", "ii", "Flags", uFlags, "Bytes", uBytes);
+	return ret;
+}
+
+HOOKDEF(VOID, WINAPI, LocalFree,
+	HLOCAL hMem)
+{
+	int ret = 0;
+	Old_LocalFree(hMem);
+	LOQ_void("misc", "p", "SourceBuffer", hMem);
+}
+
+#define MSGFLT_ADD 1
+#define MSGFLT_REMOVE 2
+HOOKDEF(BOOL, WINAPI, ChangeWindowMessageFilter,
+  UINT  message,
+  DWORD dwFlag
+)
+{
+	BOOL ret;
+    if (dwFlag != MSGFLT_REMOVE && dwFlag != MSGFLT_ADD) {
+        ret = FALSE;
+        SetLastError(ERROR_INVALID_PARAMETER);
+    }
+    else
+        ret = Old_ChangeWindowMessageFilter(message, dwFlag);
+	LOQ_bool("misc", "ii", "message", message, "dwFlag", dwFlag);
+	return ret;
+}
+
+HOOKDEF(LPWSTR, WINAPI, rtcEnvironBstr,
+	struct envstruct *es
+)
+{
+	LPWSTR ret = Old_rtcEnvironBstr(es);
+	LOQ_bool("misc", "uu", "EnvVar", es->envstr, "EnvStr", ret);
+	if (ret && !wcsicmp(es->envstr, L"userdomain"))
+        // replace first char so it differs from computername
+        *ret = '#';
+	return ret;
+}
+
+HOOKDEF(HKL, WINAPI, GetKeyboardLayout,
+  DWORD idThread
+)
+{
+    HKL ret = Old_GetKeyboardLayout(idThread);
+    LOQ_nonnull("misc", "p", "KeyboardLayout", (DWORD)ret & 0xFFFF);
     return ret;
 }

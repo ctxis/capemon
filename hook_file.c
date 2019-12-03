@@ -34,6 +34,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNILEN(x) (sizeof(x) / sizeof(wchar_t) - 1)
 
 extern BOOL FilesDumped;
+#ifdef CAPE_TRACE
+extern HANDLE DebuggerLog;
+#endif
 
 typedef struct _file_record_t {
     unsigned int attributes;
@@ -213,7 +216,7 @@ static void __handle_duplicate(lookup_t *d, HANDLE old_handle, HANDLE new_handle
 {
 	unsigned int size;
 	void *rdata;
-	
+
 	lasterror_t lasterror;
 
 	get_lasterrors(&lasterror);
@@ -281,7 +284,11 @@ void file_handle_terminate()
         }
     }
 
-	set_lasterrors(&lasterror);
+	CloseHandle(DebuggerLog);
+
+    DebuggerLog = NULL;
+
+    set_lasterrors(&lasterror);
 }
 
 static BOOLEAN is_protected_objattr(POBJECT_ATTRIBUTES obj)
@@ -325,7 +332,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtCreateFile,
 		return STATUS_ACCESS_DENIED;
 
 	file_existed = file_exists(ObjectAttributes);
-	
+
 	ret = Old_NtCreateFile(FileHandle, DesiredAccess,
         ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes,
         ShareAccess | FILE_SHARE_READ, CreateDisposition, CreateOptions, EaBuffer, EaLength);
@@ -349,7 +356,7 @@ HOOKDEF(NTSTATUS, WINAPI, NtOpenFile,
     __in   ULONG OpenOptions
 ) {
 	NTSTATUS ret;
-	
+
 	check_for_logging_resumption(ObjectAttributes);
 
 	if (is_protected_objattr(ObjectAttributes))
@@ -635,10 +642,10 @@ HOOKDEF(NTSTATUS, WINAPI, NtQueryVolumeInformationFile,
 ) {
     NTSTATUS ret = Old_NtQueryVolumeInformationFile
 	(
-		FileHandle, 
+		FileHandle,
 		IoStatusBlock,
-		FsInformation, 
-		Length, 
+		FsInformation,
+		Length,
 		FsInformationClass
 	);
 	LOQ_ntstatus("filesystem", "pib", "FileHandle", FileHandle, "FsInformationClass", FsInformationClass,
@@ -691,13 +698,13 @@ HOOKDEF(NTSTATUS, WINAPI, NtSetInformationFile,
         wcsncpy(fname + ((FILE_RENAME_INFORMATION*)FileInformation)->FileNameLength/sizeof(WCHAR), L"\0", 1);
 		ensure_absolute_unicode_path(renamepath, fname);
 	}
-	
+
     ret = Old_NtSetInformationFile(FileHandle, IoStatusBlock,
         FileInformation, Length, FileInformationClass);
-        
+
 	if (FileInformation != NULL && FileInformationClass == FileRenameInformation) {
         if(NT_SUCCESS(ret))
-                pipe("FILE_MOVE:%Z::%Z", absolutepath, renamepath);        
+                pipe("FILE_MOVE:%Z::%Z", absolutepath, renamepath);
         LOQ_ntstatus("filesystem", "puiu", "FileHandle", FileHandle, "HandleName", absolutepath, "FileInformationClass", FileInformationClass,
         "FileName", renamepath);
     }
@@ -925,7 +932,7 @@ HOOKDEF (HANDLE, WINAPI, CreateFileTransactedA,
   __in_opt   PUSHORT               pusMiniVersion,
   __reserved PVOID                 pExtendedParameter
 ) {
-    HANDLE ret = Old_CreateFileTransactedA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+    HANDLE ret = Old_CreateFileTransactedA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
         dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
 
     LOQ_handle("filesystem", "hfhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
@@ -945,7 +952,7 @@ HOOKDEF (HANDLE, WINAPI, CreateFileTransactedW,
   __in_opt   PUSHORT               pusMiniVersion,
   __reserved PVOID                 pExtendedParameter
 ) {
-    HANDLE ret = Old_CreateFileTransactedW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
+    HANDLE ret = Old_CreateFileTransactedW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
         dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile, hTransaction, pusMiniVersion, pExtendedParameter);
 
     LOQ_handle("filesystem", "hFhh", "FileHandle", ret, "FileName", lpFileName, "TransactionHandle", hTransaction, "FlagsAndAttributes", dwFlagsAndAttributes);
@@ -1177,7 +1184,7 @@ HOOKDEF(BOOL, WINAPI, DeleteFileA,
 	BOOL ret;
 
 	ensure_absolute_ascii_path(path, lpFileName);
-	
+
 	pipe("FILE_DEL:%z", path);
 
     ret = Old_DeleteFileA(lpFileName);
@@ -1217,7 +1224,7 @@ HOOKDEF(BOOL, WINAPI, GetDiskFreeSpaceExA,
 ) {
     BOOL ret = Old_GetDiskFreeSpaceExA(lpDirectoryName, lpFreeBytesAvailable, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes);
 	LOQ_bool("filesystem", "s", "DirectoryName", lpDirectoryName);
-	
+
 	/* Fake harddrive size to 256GB */
 	if (!g_config.no_stealth && ret && lpTotalNumberOfBytes) {
 		lpTotalNumberOfBytes->QuadPart = 256060514304L;
@@ -1384,7 +1391,7 @@ HOOKDEF(HRESULT, WINAPI, SHGetKnownFolderPath,
 	IID id1;
 	char idbuf[40];
 	HRESULT ret = Old_SHGetKnownFolderPath(rfid, dwFlags, hToken, ppszPath);
-	
+
 	get_lasterrors(&lasterrors);
 	memcpy(&id1, rfid, sizeof(id1));
 	sprintf(idbuf, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", id1.Data1, id1.Data2, id1.Data3,

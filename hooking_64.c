@@ -28,13 +28,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pipe.h"
 #include "config.h"
 
-extern DWORD g_tls_hook_index;
-
-// do not change this number
-#define TLS_LAST_ERROR 0x34
-
 // length disassembler engine
-static int lde(void *addr)
+int lde(void *addr)
 {
 	// the length of an instruction is 16 bytes max, but there can also be
 	// 16 instructions of length one, so.. we support "decomposing" 16

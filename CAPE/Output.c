@@ -15,41 +15,55 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <http://www.gnu.org/licenses/>.
 */
+#include <time.h>
 #include <stdio.h>
 #include <tchar.h>
 #include <windows.h>
+#include <Shlwapi.h>
 #include "cape.h"
 #include "..\pipe.h"
 #include "..\config.h"
 
 #define MAX_INT_STRING_LEN 10 // 4294967294
 
-TCHAR DebugOutput[MAX_PATH];
-TCHAR PipeOutput[MAX_PATH];
-TCHAR ErrorOutput[MAX_PATH];
+CHAR DebugOutput[MAX_PATH];
+CHAR PipeOutput[MAX_PATH];
+CHAR ErrorOutput[MAX_PATH];
+CHAR DebuggerLine[MAX_PATH];
 
+extern char* GetResultsPath(char* FolderName);
 extern struct CapeMetadata *CapeMetaData;
 extern ULONG_PTR base_of_dll_of_interest;
+#ifdef CAPE_TRACE
+HANDLE DebuggerLog;
+extern SIZE_T LastWriteLength;
+extern BOOL StopTrace;
+#endif
+
+//**************************************************************************************
+void OutputString(_In_ LPCTSTR lpOutputString, va_list args)
+//**************************************************************************************
+{
+    memset(DebugOutput, 0, MAX_PATH*sizeof(CHAR));
+    _vsntprintf_s(DebugOutput, MAX_PATH, _TRUNCATE, lpOutputString, args);
+#ifdef STANDALONE
+    OutputDebugString(DebugOutput);
+#else
+    memset(PipeOutput, 0, MAX_PATH*sizeof(CHAR));
+    _sntprintf_s(PipeOutput, MAX_PATH, _TRUNCATE, "DEBUG:%s", DebugOutput);
+    pipe(PipeOutput, strlen(PipeOutput));
+#endif
+    return;
+}
 
 //**************************************************************************************
 void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...)
 //**************************************************************************************
 {
     va_list args;
-
     va_start(args, lpOutputString);
-
-    memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _vsntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, lpOutputString, args);
-#ifdef STANDALONE
-    OutputDebugString(DebugOutput);
-#else
-    memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", DebugOutput);
-    pipe(PipeOutput, strlen(PipeOutput));
-#endif
+    OutputString(lpOutputString, args);
     va_end(args);
-
 	return;
 }
 
@@ -59,9 +73,9 @@ void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...)
 {
     va_list args;
     LPVOID lpMsgBuf;
-    DWORD ErrorCode; 
+    DWORD ErrorCode;
 
-    ErrorCode = GetLastError(); 
+    ErrorCode = GetLastError();
     va_start(args, lpOutputString);
 
     FormatMessage(
@@ -70,22 +84,22 @@ void DoOutputErrorString(_In_ LPCTSTR lpOutputString, ...)
         ErrorCode,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         (LPTSTR)&lpMsgBuf,
-        0, 
+        0,
 		NULL);
-    
-    memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _vsntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, lpOutputString, args);
-    
-    memset(ErrorOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _sntprintf_s(ErrorOutput, MAX_PATH, MAX_PATH, "Error %d (0x%x) - %s: %s", ErrorCode, ErrorCode, DebugOutput, (char*)lpMsgBuf);
+
+    memset(DebugOutput, 0, MAX_PATH*sizeof(CHAR));
+    _vsntprintf_s(DebugOutput, MAX_PATH, _TRUNCATE, lpOutputString, args);
+
+    memset(ErrorOutput, 0, MAX_PATH*sizeof(CHAR));
+    _sntprintf_s(ErrorOutput, MAX_PATH, _TRUNCATE, "Error %d (0x%x) - %s: %s", ErrorCode, ErrorCode, DebugOutput, (char*)lpMsgBuf);
 #ifdef STANDALONE
     OutputDebugString(ErrorOutput);
 #else
-    memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
-    _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "DEBUG:%s", ErrorOutput);
+    memset(PipeOutput, 0, MAX_PATH*sizeof(CHAR));
+    _sntprintf_s(PipeOutput, MAX_PATH, _TRUNCATE, "DEBUG:%s", ErrorOutput);
     pipe(PipeOutput, strlen(PipeOutput));
 #endif
-    
+
     va_end(args);
 
 	return;
@@ -103,7 +117,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 
     if (CapeMetaData && CapeMetaData->DumpType == PROCDUMP)
 	{
-		memset(MetadataPath, 0, MAX_PATH * sizeof(TCHAR));
+		memset(MetadataPath, 0, MAX_PATH * sizeof(CHAR));
 		_sntprintf_s(MetadataPath, MAX_PATH, MAX_PATH, "%s_info.txt", lpOutputFile);
 		hMetadata = CreateFile(MetadataPath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -116,8 +130,8 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
         if (hMetadata == INVALID_HANDLE_VALUE)
         {
             DoOutputErrorString("Could not create CAPE metadata file");
-            return;		
-        }	
+            return;
+        }
 
 		BufferSize = 3 * (MAX_PATH + MAX_INT_STRING_LEN + 2) + 2; //// max size string can be
 
@@ -131,13 +145,13 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
                 DoOutputDebugString("CAPE Error: g_config.file_of_interest is NULL.\n", g_config.file_of_interest);
                 return;
             }
-            
+
             CapeMetaData->ModulePath = (char*)malloc(MAX_PATH);
             WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, (LPCWSTR)g_config.file_of_interest, (int)wcslen(g_config.file_of_interest)+1, CapeMetaData->ModulePath, MAX_PATH, NULL, NULL);
         }
         else
             CapeMetaData->ModulePath = CapeMetaData->ProcessPath;
-            
+
 		// This metadata format is specific to process dumps
 		_snprintf_s(Buffer, BufferSize, BufferSize, "%d\n%d\n%s\n%s\n", CapeMetaData->DumpType, CapeMetaData->Pid, CapeMetaData->ProcessPath, CapeMetaData->ModulePath);
 
@@ -150,13 +164,13 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 		}
 
 		CloseHandle(hMetadata);
-        
-        memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+
+        memset(DebugOutput, 0, MAX_PATH*sizeof(CHAR));
         _sntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, "Process dump output file: %s", lpOutputFile);
 #ifdef STANDALONE
         OutputDebugString(DebugOutput);
 #else
-        memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
+        memset(PipeOutput, 0, MAX_PATH*sizeof(CHAR));
         _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "FILE_DUMP:%s", lpOutputFile);
         pipe(PipeOutput, strlen(PipeOutput));
 #endif
@@ -164,7 +178,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 	}
 	else if (CapeMetaData && CapeMetaData->DumpType != PROCDUMP)
 	{
-		memset(MetadataPath, 0, MAX_PATH * sizeof(TCHAR));
+		memset(MetadataPath, 0, MAX_PATH * sizeof(CHAR));
 		_sntprintf_s(MetadataPath, MAX_PATH, MAX_PATH, "%s_info.txt", lpOutputFile);
 		hMetadata = CreateFile(MetadataPath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -177,8 +191,8 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
         if (hMetadata == INVALID_HANDLE_VALUE)
         {
             DoOutputErrorString("Could not create CAPE metadata file");
-            return;		
-        }	
+            return;
+        }
 
 		BufferSize = 3 * (MAX_PATH + MAX_INT_STRING_LEN + 2) + 2; //// max size string can be
 
@@ -187,7 +201,7 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
         if (!CapeMetaData->ProcessPath)
             CapeMetaData->ProcessPath = "Unknown path";
         CapeMetaData->ModulePath = CapeMetaData->ProcessPath;
-        
+
 		if (CapeMetaData->DumpType == EXTRACTION_PE || CapeMetaData->DumpType == EXTRACTION_SHELLCODE)
         {
             // Extraction-specific format
@@ -217,19 +231,99 @@ void CapeOutputFile(_In_ LPCTSTR lpOutputFile)
 		}
 
 		CloseHandle(hMetadata);
-        
-        memset(DebugOutput, 0, MAX_PATH*sizeof(TCHAR));
+
+        memset(DebugOutput, 0, MAX_PATH*sizeof(CHAR));
         _sntprintf_s(DebugOutput, MAX_PATH, MAX_PATH, "CAPE Output file: %s", lpOutputFile);
 #ifdef STANDALONE
         OutputDebugString(DebugOutput);
 #else
-        memset(PipeOutput, 0, MAX_PATH*sizeof(TCHAR));
+        memset(PipeOutput, 0, MAX_PATH*sizeof(CHAR));
         _sntprintf_s(PipeOutput, MAX_PATH, MAX_PATH, "FILE_CAPE:%s", lpOutputFile);
         pipe(PipeOutput, strlen(PipeOutput));
 #endif
 	}
 	else
 		DoOutputDebugString("No CAPE metadata (or wrong type) for file: %s\n", lpOutputFile);
-    
+
 	return;
 }
+
+#ifdef CAPE_TRACE
+//**************************************************************************************
+void DebuggerOutput(_In_ LPCTSTR lpOutputString, ...)
+//**************************************************************************************
+{
+    va_list args;
+
+    va_start(args, lpOutputString);
+
+    if (g_config.divert_debugger_log)
+    {
+        OutputString(lpOutputString, args);
+        va_end(args);
+        return;
+    }
+
+    char *FullPathName, *OutputFilename, *Character;
+
+    FullPathName = GetResultsPath("debugger");
+
+    OutputFilename = (char*)malloc(MAX_PATH);
+
+    if (OutputFilename == NULL)
+    {
+        DoOutputErrorString("DebuggerOutput: failed to allocate memory for file name string");
+        return;
+    }
+
+    sprintf_s(OutputFilename, MAX_PATH, "%d.log", GetCurrentProcessId());
+
+	PathAppend(FullPathName, OutputFilename);
+
+    free(OutputFilename);
+
+    if (!DebuggerLog && !StopTrace)
+    {
+        time_t Time;
+        CHAR TimeBuffer[64];
+
+        DebuggerLog = CreateFile(FullPathName, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        if (DebuggerLog == INVALID_HANDLE_VALUE)
+        {
+            DoOutputErrorString("DebuggerOutput: Unable to open debugger logfile %s.\n", FullPathName);
+            return;
+        }
+        DoOutputDebugString("DebuggerOutput: Debugger logfile %s.\n", FullPathName);
+
+        time(&Time);
+        memset(DebuggerLine, 0, MAX_PATH*sizeof(CHAR));
+        ctime_s(TimeBuffer, 64, (const time_t *)&Time);
+        _snprintf_s(DebuggerLine, MAX_PATH, _TRUNCATE, "CAPE Sandbox - Debugger log: %s" , TimeBuffer);
+        WriteFile(DebuggerLog, DebuggerLine, (DWORD)strlen(DebuggerLine), (LPDWORD)&LastWriteLength, NULL);
+        while (*lpOutputString == 0x0a)
+            lpOutputString++;
+    }
+    else if (StopTrace)
+    {
+        CloseHandle(DebuggerLog);
+        va_end(args);
+        return;
+    }
+
+    memset(DebuggerLine, 0, MAX_PATH*sizeof(CHAR));
+    _vsnprintf_s(DebuggerLine, MAX_PATH, _TRUNCATE, lpOutputString, args);
+    Character = DebuggerLine;
+    while (*Character)
+    {   // Restrict to ASCII range
+        if (*Character < 0x0a || *Character > 0x7E)
+            *Character = 0x3F;  // '?'
+        Character++;
+    }
+    WriteFile(DebuggerLog, DebuggerLine, (DWORD)strlen(DebuggerLine), (LPDWORD)&LastWriteLength, NULL);
+
+    va_end(args);
+
+	return;
+}
+#endif

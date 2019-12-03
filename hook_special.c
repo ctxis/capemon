@@ -26,8 +26,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 
 extern void DoOutputDebugString(_In_ LPCTSTR lpOutputString, ...);
-extern int RoutineProcessDump();
+extern int DoProcessDump(PVOID CallerBase);
 extern ULONG_PTR base_of_dll_of_interest;
+extern PVOID GetHookCallerBase(hook_info_t *hookinfo);
+#ifdef CAPE_INJECTION
+extern void CreateProcessHandler(LPWSTR lpApplicationName, LPWSTR lpCommandLine, LPPROCESS_INFORMATION lpProcessInformation);
+#endif
 
 PVOID LastDllUnload;
 
@@ -120,7 +124,7 @@ HOOKDEF_NOTAIL(WINAPI, LdrUnloadDll,
 	PVOID DllImageBase
 ) {
     if (DllImageBase && DllImageBase == (PVOID)base_of_dll_of_interest)
-        RoutineProcessDump();
+        DoProcessDump(GetHookCallerBase(NULL));
 
     if (DllImageBase && DllImageBase != LastDllUnload)
     {
@@ -155,17 +159,21 @@ HOOKDEF(BOOL, WINAPI, CreateProcessInternalW,
         lpCurrentDirectory, lpStartupInfo, lpProcessInformation, lpUnknown2);
 	memcpy(hook_info(), &saved_hookinfo, sizeof(saved_hookinfo));
 
-    if(ret != FALSE) {
+    if (ret != FALSE) {
 		BOOL dont_monitor = FALSE;
 		if (g_config.file_of_interest && g_config.suspend_logging && lpApplicationName && !wcsicmp(lpApplicationName, L"c:\\windows\\splwow64.exe"))
 			dont_monitor = TRUE;
 
-		if (!dont_monitor)
+		if (!dont_monitor) {
+#ifdef CAPE_INJECTION
+            CreateProcessHandler(lpApplicationName, lpCommandLine, lpProcessInformation);
+#endif
 			pipe("PROCESS:%d:%d,%d", (dwCreationFlags & CREATE_SUSPENDED) ? 1 : 0, lpProcessInformation->dwProcessId,
 			    lpProcessInformation->dwThreadId);
+        }
 
         // if the CREATE_SUSPENDED flag was not set, then we have to resume the main thread ourself
-        if((dwCreationFlags & CREATE_SUSPENDED) == 0) {
+        if ((dwCreationFlags & CREATE_SUSPENDED) == 0) {
             ResumeThread(lpProcessInformation->hThread);
         }
 
